@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Arnav Brand Mark</title>
+<link rel="icon" href="svg/favicon.svg" type="image/svg+xml">
+<style>
+  :root {
+    --bg: #03060B; --panel: rgba(14, 29, 56, .55); --line: rgba(155, 216, 255, .12);
+    --ice: #F4F8FF; --silver: #8DA2BC; --cyan: #5CE1FF; --amber: #FFB547;
+    --r-lg: 28px; --r-md: 18px;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  body { margin: 0; min-height: 100vh; background: radial-gradient(1200px 700px at 50% -10%, #10223F, var(--bg) 60%) no-repeat var(--bg); color: var(--ice); }
+  main { max-width: 1120px; margin: 0 auto; padding: 56px 16px 80px; }
+  .eyebrow { font-size: 12px; letter-spacing: .24em; text-transform: uppercase; color: var(--cyan); }
+  h1 { font-size: clamp(28px, 4vw, 44px); font-weight: 600; letter-spacing: -.02em; margin: 10px 0 8px; }
+  h2 { font-size: 13px; font-weight: 600; letter-spacing: .18em; text-transform: uppercase; color: var(--silver); margin: 56px 0 16px; }
+  p { color: var(--silver); line-height: 1.6; max-width: 68ch; margin: 0; }
+  .grid { display: grid; gap: 16px; }
+  .g2 { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+  .g4 { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 28px;
+          backdrop-filter: blur(24px) saturate(140%); box-shadow: inset 0 1px 0 rgba(255,255,255,.06), 0 30px 60px -30px rgba(0,0,0,.6);
+          display: grid; place-items: center; min-height: 220px; position: relative; }
+  .card.light { background: #F2F5FA; border-color: rgba(11, 20, 38, .08); }
+  .card .tag { position: absolute; left: 20px; bottom: 14px; font-size: 11px; letter-spacing: .08em; color: var(--silver); }
+  .card.light .tag { color: #5B6B80; }
+  .hero { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 40px; align-items: center; margin-top: 32px; }
+  .hero img { width: 100%; max-width: 420px; justify-self: center; filter: drop-shadow(0 40px 60px rgba(0,0,0,.55)); }
+  .sizes { display: flex; align-items: end; gap: 22px; flex-wrap: wrap; }
+  .sizes figure { margin: 0; text-align: center; font-size: 11px; color: var(--silver); }
+  .sizes img { display: block; margin: 0 auto 8px; }
+  .swatch { border-radius: var(--r-md); height: 96px; padding: 12px; display: flex; flex-direction: column; justify-content: flex-end;
+            font-size: 12px; border: 1px solid var(--line); }
+  .swatch b { font-weight: 600; }
+  ol { color: var(--silver); line-height: 1.7; padding-left: 20px; margin: 0; }
+  ol b { color: var(--ice); font-weight: 600; }
+  @media (max-width: 760px) { .hero { grid-template-columns: 1fr; } main { padding-top: 32px; } }
+</style>
+</head>
+<body>
+<main>
+  <div class="eyebrow">Brand mark · v1</div>
+  <h1>Arnav Flight Radar</h1>
+  <section class="hero">
+    <img src="svg/arnav-mark-animated.svg" alt="Arnav Flight Radar animated app icon">
+    <div>
+      <p>The <b style="color:var(--ice)">Apex Vector</b>. The letter A is drawn as an aviation heading chevron, and its apex is also the radar origin. The crossbar isn’t a line: it is a <b style="color:var(--cyan)">range ring</b> centred on that apex, rendered as a time-faded flight trail. The trail ends at one <b style="color:var(--amber)">amber aircraft</b>, the tracked target. The mark says letter, radar and live flight at once, with no stock icons.</p>
+      <ol style="margin-top:20px">
+        <li><b>Chevron:</b> heading bug and the letter A</li>
+        <li><b>Apex:</b> radar origin; all rings share this centre</li>
+        <li><b>Crossbar:</b> range ring as a flight trail, older positions fade</li>
+        <li><b>Aircraft:</b> original silhouette, heading tangent to the ring</li>
+        <li><b>Beam:</b> a soft cyan scan lighting the inside of the A</li>
+      </ol>
+    </div>
+  </section>
+
+  <h2>Lockups</h2>
+  <div class="grid g2">
+    <div class="card"><img src="svg/arnav-lockup-dark.svg" alt="Horizontal lockup, dark" style="width:100%;max-width:440px"><span class="tag">arnav-lockup-dark.svg</span></div>
+    <div class="card light"><img src="svg/arnav-lockup-light.svg" alt="Horizontal lockup, light" style="width:100%;max-width:440px"><span class="tag">arnav-lockup-light.svg</span></div>
+  </div>
+
+  <h2>Glyph variants</h2>
+  <div class="grid g4">
+    <div class="card"><img src="svg/arnav-mark.svg" alt="App icon" width="150"><span class="tag">arnav-mark.svg</span></div>
+    <div class="card"><img src="svg/arnav-glyph-dark.svg" alt="Glyph on dark" width="130"><span class="tag">arnav-glyph-dark.svg</span></div>
+    <div class="card light"><img src="svg/arnav-glyph-light.svg" alt="Glyph on light" width="130"><span class="tag">arnav-glyph-light.svg</span></div>
+    <div class="card light"><img src="svg/arnav-glyph-mono.svg" alt="Monochrome glyph" width="130"><span class="tag">arnav-glyph-mono.svg</span></div>
+  </div>
+
+  <h2>Small sizes</h2>
+  <div class="card" style="min-height:0">
+    <div class="sizes">
+      <figure><img src="svg/favicon.svg" width="16" height="16" alt="">16</figure>
+      <figure><img src="svg/favicon.svg" width="24" height="24" alt="">24</figure>
+      <figure><img src="svg/favicon.svg" width="32" height="32" alt="">32</figure>
+      <figure><img src="svg/favicon.svg" width="48" height="48" alt="">48</figure>
+      <figure><img src="svg/arnav-mark.svg" width="64" height="64" alt="">64</figure>
+      <figure><img src="svg/arnav-mark.svg" width="96" height="96" alt="">96</figure>
+      <figure><img src="svg/arnav-mark.svg" width="128" height="128" alt="">128</figure>
+    </div>
+  </div>
+  <p style="margin-top:12px">Below 64 px use <code>favicon.svg</code>. It drops the rings, thickens the strokes and turns the aircraft into a beacon dot so the A, crossbar and amber target still read at 16 px.</p>
+
+  <h2>Palette</h2>
+  <div class="grid g4">
+    <div class="swatch" style="background:#03060B"><b>Obsidian</b>#03060B</div>
+    <div class="swatch" style="background:#081122"><b>Midnight</b>#081122</div>
+    <div class="swatch" style="background:#0C1D38"><b>Deep Ocean</b>#0C1D38</div>
+    <div class="swatch" style="background:#F4F8FF;color:#081122"><b>Ice</b>#F4F8FF</div>
+    <div class="swatch" style="background:#5CE1FF;color:#03060B"><b>Radar Cyan</b>#5CE1FF</div>
+    <div class="swatch" style="background:#2E8BFF;color:#03060B"><b>Trail Blue</b>#2E8BFF</div>
+    <div class="swatch" style="background:#FFB547;color:#03060B"><b>Target Amber</b>#FFB547</div>
+    <div class="swatch" style="background:#8DA2BC;color:#03060B"><b>Arctic Silver</b>#8DA2BC</div>
+  </div>
+
+  <h2>Share card</h2>
+  <div class="card" style="padding:0;overflow:hidden;min-height:0"><img src="svg/arnav-og.svg" alt="Open Graph share image" style="width:100%;display:block"></div>
+</main>
+</body>
+</html>

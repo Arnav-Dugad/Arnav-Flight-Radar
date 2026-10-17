@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="96 80 320 340" width="320" height="340" role="img" aria-labelledby="t"><title id="t">Arnav Flight Radar</title>
+  <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M122,398L256,110L390,398" stroke-width="46"/>
+    <path d="M178.4,276.8A184,184 0 0 0 233.6,292.6" stroke-width="24"/>
+  </g>
+  <path d="M0,-20C1.9,-20 2.7,-17.4 2.7,-14.2L2.7,-5.4L18.5,2.6L18.5,6.4L2.7,2.6L2.2,11.6L7.2,15.2L7.2,17.8L0,16.2L-7.2,17.8L-7.2,15.2L-2.2,11.6L-2.7,2.6L-18.5,6.4L-18.5,2.6L-2.7,-5.4L-2.7,-14.2C-2.7,-17.4 -1.9,-20 0,-20Z" transform="translate(275.2 293) rotate(84) scale(1.4)" fill="currentColor"/>
+</svg>
