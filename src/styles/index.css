@@ -1,0 +1,425 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/inter';
+@import 'maplibre-gl/dist/maplibre-gl.css';
+
+/* =====================================================================
+   Arnav design tokens
+   Surfaces are layered glass over a live map; every color has a dark and
+   a light value driven by [data-theme] on <html>.
+   ===================================================================== */
+
+@theme {
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', 'JetBrains Mono', Menlo, monospace;
+
+  /* Brand palette (static) */
+  --color-obsidian: #03060b;
+  --color-midnight: #081122;
+  --color-ocean: #0c1d38;
+  --color-ice: #f4f8ff;
+  --color-silver: #8da2bc;
+  --color-graphite: #5b6b80;
+  --color-cyan: #5ce1ff;
+  --color-trail: #2e8bff;
+  --color-amber: #ffb547;
+  --color-ok: #3ddc97;
+  --color-warn: #ffb547;
+  --color-danger: #ff5d73;
+
+  /* Semantic (theme-aware, see :root below) */
+  --color-fg: var(--fg);
+  --color-fg-2: var(--fg-2);
+  --color-fg-3: var(--fg-3);
+  --color-accent: var(--accent);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-canvas: var(--canvas);
+
+  /* Radii */
+  --radius-xs: 8px;
+  --radius-sm: 12px;
+  --radius-md: 16px;
+  --radius-lg: 22px;
+  --radius-xl: 28px;
+  --radius-2xl: 34px;
+
+  /* Motion */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-in-out-quint: cubic-bezier(0.83, 0, 0.17, 1);
+
+  /* Breakpoints */
+  --breakpoint-xs: 380px;
+}
+
+:root {
+  color-scheme: dark;
+  --canvas: #03060b;
+  --fg: #f4f8ff;
+  --fg-2: #b4c2d4;
+  --fg-3: #7d8ea5;
+  --accent: #5ce1ff;
+  --surface: rgba(10, 18, 34, 0.62);
+  --surface-2: rgba(22, 34, 56, 0.55);
+  --surface-solid: #0b1426;
+  --line: rgba(160, 205, 255, 0.1);
+  --line-strong: rgba(160, 205, 255, 0.2);
+  --glass-highlight: rgba(255, 255, 255, 0.07);
+  --glass-shadow: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 0 0 1px rgba(0, 0, 0, 0.25),
+    0 18px 50px -12px rgba(0, 0, 0, 0.65), 0 4px 14px -4px rgba(0, 0, 0, 0.4);
+  --glass-blur: 22px;
+  --glass-saturate: 160%;
+  --focus: 0 0 0 2px var(--canvas), 0 0 0 4px rgba(92, 225, 255, 0.85);
+  --scrim: rgba(2, 5, 10, 0.55);
+  /* Chart tokens (validated with the dataviz palette validator against #0b1426) */
+  --viz-1: #3987e5;
+  --viz-2: #d95926;
+  --viz-3: #199e70;
+  --viz-grid: rgba(160, 205, 255, 0.1);
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --canvas: #eef2f7;
+  --fg: #0b1426;
+  --fg-2: #33445c;
+  --fg-3: #627389;
+  --accent: #0a84d6;
+  --surface: rgba(255, 255, 255, 0.68);
+  --surface-2: rgba(240, 245, 251, 0.75);
+  --surface-solid: #f7f9fc;
+  --line: rgba(11, 20, 38, 0.08);
+  --line-strong: rgba(11, 20, 38, 0.16);
+  --glass-highlight: rgba(255, 255, 255, 0.7);
+  --glass-shadow: 0 1px 0 rgba(255, 255, 255, 0.9) inset, 0 0 0 1px rgba(11, 20, 38, 0.06),
+    0 18px 50px -14px rgba(16, 32, 64, 0.28), 0 4px 14px -6px rgba(16, 32, 64, 0.18);
+  --focus: 0 0 0 2px var(--canvas), 0 0 0 4px rgba(10, 132, 214, 0.8);
+  --scrim: rgba(230, 236, 244, 0.5);
+  --viz-1: #2a78d6;
+  --viz-2: #eb6834;
+  --viz-3: #1baf7a;
+  --viz-grid: rgba(11, 20, 38, 0.08);
+}
+
+/* Reduced-effects mode: cheaper glass for low-end GPUs or by preference. */
+:root[data-effects='reduced'] {
+  --glass-blur: 0px;
+  --surface: rgba(10, 18, 34, 0.94);
+  --surface-2: rgba(22, 34, 56, 0.94);
+}
+:root[data-effects='reduced'][data-theme='light'] {
+  --surface: rgba(255, 255, 255, 0.96);
+  --surface-2: rgba(240, 245, 251, 0.96);
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --line: rgba(200, 230, 255, 0.35);
+    --line-strong: rgba(200, 230, 255, 0.55);
+    --fg-3: #a9b7c9;
+  }
+  :root[data-theme='light'] {
+    --line: rgba(11, 20, 38, 0.3);
+    --fg-3: #3e4c60;
+  }
+}
+
+/* ------------------------------------------------------------------ base */
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--canvas);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-feature-settings: 'cv11', 'ss01', 'ss03';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+  background: rgba(92, 225, 255, 0.3);
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+}
+
+button {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: not-allowed;
+}
+
+/* ------------------------------------------------------------- utilities */
+
+@utility glass {
+  background: var(--surface);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  box-shadow: var(--glass-shadow);
+  border: 1px solid var(--line);
+}
+
+@utility glass-2 {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+
+@utility tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum', 'cv11', 'ss01';
+}
+
+@utility eyebrow {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+
+@utility scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+  &::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: var(--line-strong);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@utility safe-bottom {
+  padding-bottom: max(env(safe-area-inset-bottom), 0px);
+}
+
+/* Pointer-reactive sheen on glass controls (driven by --mx/--my from JS). */
+.sheen {
+  position: relative;
+  isolation: isolate;
+}
+.sheen::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(
+    180px circle at var(--mx, 50%) var(--my, -40%),
+    var(--glass-highlight),
+    transparent 60%
+  );
+  opacity: 0;
+  transition: opacity 0.35s var(--ease-out-expo);
+  z-index: -1;
+}
+.sheen:hover::before {
+  opacity: 1;
+}
+
+/* Skeleton shimmer */
+.skeleton {
+  background: linear-gradient(90deg, var(--line) 0%, var(--line-strong) 40%, var(--line) 80%);
+  background-size: 300% 100%;
+  animation: shimmer 1.6s ease-in-out infinite;
+  border-radius: 8px;
+}
+@keyframes shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* Live status pulse */
+.pulse-dot {
+  position: relative;
+}
+.pulse-dot::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 999px;
+  border: 1.5px solid currentColor;
+  opacity: 0;
+  animation: pulse-ring 2.4s var(--ease-out-expo) infinite;
+}
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.4);
+    opacity: 0.8;
+  }
+  100% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+
+/* Optional radar scan overlay */
+.radar-scan {
+  background: conic-gradient(from 0deg, transparent 0deg, rgba(92, 225, 255, 0.08) 40deg, transparent 60deg);
+  animation: radar-spin 8s linear infinite;
+  mask-image: radial-gradient(circle, black 0%, black 55%, transparent 72%);
+}
+@keyframes radar-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+:root[data-motion='reduced'] *,
+:root[data-motion='reduced'] *::before,
+:root[data-motion='reduced'] *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+}
+
+/* ---------------------------------------------------------- MapLibre skin */
+
+.maplibregl-map {
+  font-family: var(--font-sans);
+}
+.maplibregl-ctrl-attrib,
+.maplibregl-ctrl-scale {
+  display: none !important; /* replaced by our own attribution & scale UI */
+}
+.maplibregl-canvas:focus-visible {
+  box-shadow: inset 0 0 0 3px rgba(92, 225, 255, 0.7);
+}
+.maplibregl-popup-content {
+  background: var(--surface-solid);
+  color: var(--fg);
+  border-radius: 14px;
+  box-shadow: var(--glass-shadow);
+  border: 1px solid var(--line);
+  padding: 8px 12px;
+}
+.maplibregl-popup-tip {
+  display: none;
+}
+
+/* Theme crossfade veil used while map styles swap */
+.map-veil {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: var(--canvas);
+  opacity: 0;
+  transition: opacity 0.28s var(--ease-out-expo);
+}
+.map-veil[data-active='true'] {
+  opacity: 0.55;
+}
+
+/* ------------------------------------------------------------- range inputs */
+
+.arnav-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 22px;
+  background: transparent;
+  cursor: pointer;
+}
+.arnav-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(to right, var(--accent) var(--pct), var(--line-strong) var(--pct));
+}
+.arnav-range::-moz-range-track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--line-strong);
+}
+.arnav-range::-moz-range-progress {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--accent);
+}
+.arnav-range::-webkit-slider-thumb,
+.arnav-range-dual::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  margin-top: -7px;
+  border-radius: 999px;
+  background: #fff;
+  border: 0;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.15), 0 2px 8px rgba(0, 0, 0, 0.4);
+  transition: transform 0.15s var(--ease-out-expo);
+}
+.arnav-range::-moz-range-thumb,
+.arnav-range-dual::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #fff;
+  border: 0;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.15), 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+.arnav-range:active::-webkit-slider-thumb,
+.arnav-range-dual:active::-webkit-slider-thumb {
+  transform: scale(1.15);
+}
+.arnav-range:focus-visible,
+.arnav-range-dual:focus-visible {
+  box-shadow: none;
+}
+.arnav-range:focus-visible::-webkit-slider-thumb,
+.arnav-range-dual:focus-visible::-webkit-slider-thumb {
+  box-shadow: var(--focus);
+}
+.arnav-range-dual {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  pointer-events: none;
+  height: 24px;
+}
+.arnav-range-dual::-webkit-slider-runnable-track {
+  height: 4px;
+  background: transparent;
+}
+.arnav-range-dual::-moz-range-track {
+  background: transparent;
+}
+.arnav-range-dual::-webkit-slider-thumb {
+  pointer-events: auto;
+  cursor: grab;
+}
+.arnav-range-dual::-moz-range-thumb {
+  pointer-events: auto;
+  cursor: grab;
+}

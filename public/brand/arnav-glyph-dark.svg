@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="96 80 320 340" width="320" height="340" role="img" aria-labelledby="t"><title id="t">Arnav Flight Radar</title>
+  <defs>
+    <linearGradient id="g-tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0C1D38"/>
+      <stop offset=".45" stop-color="#081122"/>
+      <stop offset="1" stop-color="#03060B"/>
+    </linearGradient>
+    <radialGradient id="g-sheen" cx="256" cy="-40" r="420" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity=".09"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="g-glow" cx="256" cy="230" r="300" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5CE1FF" stop-opacity=".16"/>
+      <stop offset="1" stop-color="#5CE1FF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="g-beam" cx="256" cy="110" r="300" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5CE1FF" stop-opacity=".42"/>
+      <stop offset=".7" stop-color="#5CE1FF" stop-opacity=".06"/>
+      <stop offset="1" stop-color="#5CE1FF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="g-stroke" x1="0" y1="110" x2="0" y2="398" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#B9C7D8"/>
+    </linearGradient>
+    <linearGradient id="g-trail" x1="182.3" y1="0" x2="275.2332372412482" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2E8BFF" stop-opacity=".35"/>
+      <stop offset=".6" stop-color="#2E8BFF" stop-opacity=".85"/>
+      <stop offset="1" stop-color="#5CE1FF"/>
+    </linearGradient>
+    <linearGradient id="g-plane" x1="0" y1="-20" x2="0" y2="18" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFD58A"/>
+      <stop offset="1" stop-color="#FF8A1F"/>
+    </linearGradient>
+    <filter id="g-soft" x="-1" y="-1" width="3" height="3">
+      <feGaussianBlur stdDeviation="9"/>
+    </filter>
+    <clipPath id="g-clip"><path d="M512,256L511.9,326.1L511.7,348.5L511.3,364.7L510.7,377.9L510,389.1L509.1,399.1L508.1,408L506.9,416L505.5,423.5L504,430.3L502.3,436.7L500.5,442.7L498.4,448.2L496.2,453.5L493.8,458.4L491.2,463L488.4,467.3L485.4,471.4L482.3,475.2L478.9,478.9L475.2,482.3L471.4,485.4L467.3,488.4L463,491.2L458.4,493.8L453.5,496.2L448.2,498.4L442.7,500.5L436.7,502.3L430.3,504L423.5,505.5L416,506.9L408,508.1L399.1,509.1L389.1,510L377.9,510.7L364.7,511.3L348.5,511.7L326.1,511.9L256,512L185.9,511.9L163.5,511.7L147.3,511.3L134.1,510.7L122.9,510L112.9,509.1L104,508.1L96,506.9L88.5,505.5L81.7,504L75.3,502.3L69.3,500.5L63.8,498.4L58.5,496.2L53.6,493.8L49,491.2L44.7,488.4L40.6,485.4L36.8,482.3L33.1,478.9L29.7,475.2L26.6,471.4L23.6,467.3L20.8,463L18.2,458.4L15.8,453.5L13.6,448.2L11.5,442.7L9.7,436.7L8,430.3L6.5,423.5L5.1,416L3.9,408L2.9,399.1L2,389.1L1.3,377.9L0.7,364.7L0.3,348.5L0.1,326.1L0,256L0.1,185.9L0.3,163.5L0.7,147.3L1.3,134.1L2,122.9L2.9,112.9L3.9,104L5.1,96L6.5,88.5L8,81.7L9.7,75.3L11.5,69.3L13.6,63.8L15.8,58.5L18.2,53.6L20.8,49L23.6,44.7L26.6,40.6L29.7,36.8L33.1,33.1L36.8,29.7L40.6,26.6L44.7,23.6L49,20.8L53.6,18.2L58.5,15.8L63.8,13.6L69.3,11.5L75.3,9.7L81.7,8L88.5,6.5L96,5.1L104,3.9L112.9,2.9L122.9,2L134.1,1.3L147.3,0.7L163.5,0.3L185.9,0.1L256,0L326.1,0.1L348.5,0.3L364.7,0.7L377.9,1.3L389.1,2L399.1,2.9L408,3.9L416,5.1L423.5,6.5L430.3,8L436.7,9.7L442.7,11.5L448.2,13.6L453.5,15.8L458.4,18.2L463,20.8L467.3,23.6L471.4,26.6L475.2,29.7L478.9,33.1L482.3,36.8L485.4,40.6L488.4,44.7L491.2,49L493.8,53.6L496.2,58.5L498.4,63.8L500.5,69.3L502.3,75.3L504,81.7L505.5,88.5L506.9,96L508.1,104L509.1,112.9L510,122.9L510.7,134.1L511.3,147.3L511.7,163.5L511.9,185.9Z"/></clipPath>
+    <clipPath id="g-inside"><path d="M122,398L256,110L390,398Z"/></clipPath>
+  </defs>
+      <path d="M122,398L256,110L390,398Z" fill="url(#g-beam)"/>
+      <path d="M178.4,276.8A184,184 0 0 0 262.4,293.9" fill="none" stroke="url(#g-trail)" stroke-width="24" stroke-linecap="round"/>
+      <path d="M122,398L256,110L390,398" fill="none" stroke="url(#g-stroke)" stroke-width="46" stroke-linecap="round" stroke-linejoin="round"/>
+      <g transform="translate(275.2 293)">
+        <circle r="34" fill="#FFB547" opacity=".42" filter="url(#g-soft)"/>
+        <path d="M0,-20C1.9,-20 2.7,-17.4 2.7,-14.2L2.7,-5.4L18.5,2.6L18.5,6.4L2.7,2.6L2.2,11.6L7.2,15.2L7.2,17.8L0,16.2L-7.2,17.8L-7.2,15.2L-2.2,11.6L-2.7,2.6L-18.5,6.4L-18.5,2.6L-2.7,-5.4L-2.7,-14.2C-2.7,-17.4 -1.9,-20 0,-20Z" transform="rotate(84) scale(1.4)" fill="url(#g-plane)" stroke="#03060B" stroke-width="2.2" stroke-linejoin="round" paint-order="stroke"/>
+      </g>
+</svg>
