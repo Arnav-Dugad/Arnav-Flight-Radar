@@ -22,6 +22,18 @@ built around three rules:
 3. **Respect the sources.** All visitors share regional snapshots. A global coordinator spaces
    adsb.fi calls at least 1.1 s apart, below its 1 request/second limit, and backs off on errors.
 
+## Current status (October 2026)
+
+> **Live aircraft data on the hosted site is waiting on provider approval.**
+> adsb.fi's firewall currently refuses requests from Cloudflare's network (HTTP 403 "Attention Required").
+> airplanes.live and adsb.lol also refuse Cloudflare egress, and both ask projects to contact them first.
+> This project does not route around those blocks. Until a provider allow-lists the site:
+> - the deployed site serves maps, airports, METAR/TAF, search and every tool, and states clearly that
+>   live aircraft are unavailable (nothing is simulated);
+> - **`npm run dev` shows full live traffic**, because requests then come from your own connection.
+>
+> Once adsb.fi (or another permitted source) approves access, the hosted site works with no code changes.
+
 ## Features
 
 **Radar**

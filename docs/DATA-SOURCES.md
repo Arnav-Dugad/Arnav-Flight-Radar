@@ -43,3 +43,27 @@ or none. The app then says "No aircraft reported in this area right now" instead
 
 The ICAO 24-bit address block identifies the state that assigned the address (`shared/icaoCountry.ts`).
 Only well-established blocks are listed. Unknown blocks return nothing instead of a guess.
+
+## Access from Cloudflare Workers (verified 18 October 2026)
+
+A diagnostic Worker in remote preview (Cloudflare egress) fetched each candidate source with this
+project's honest User-Agent:
+
+| Endpoint | Result from Cloudflare | Browser CORS |
+| --- | --- | --- |
+| `opendata.adsb.fi/api/v3/lat/…/lon/…/dist/…` | **403**, Cloudflare "Attention Required" (provider firewall) | none (no `Access-Control-Allow-Origin`) |
+| `api.airplanes.live/v2/point/…` | **403** — "Please contact us at contact@airplanes.live…" | none |
+| `api.adsb.lol/v2/point/…` | **429** | none |
+
+The same adsb.fi request succeeds from a residential connection, which is why local development works.
+
+**Policy:** the project does not get around these controls (no relaying through other clouds, no
+browser impersonation, no provider rotation). When a request is refused, the coordinator:
+
+- marks the provider `down` with the reason (`/api/health`);
+- waits 15 minutes before asking again, so it doesn't keep tripping the firewall;
+- the UI shows "Live aircraft data is unavailable" with the explanation.
+
+**To enable live data in production:** ask adsb.fi (via its GitHub repository or contact channel) to
+allow-list the deployed hostname or Cloudflare Worker traffic for this personal, non-commercial
+project. The rate-limiting design above is what you are committing to.
