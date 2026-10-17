@@ -1,0 +1,29 @@
+# dependencies & builds
+node_modules/
+dist/
+.wrangler/
+*.tsbuildinfo
+
+# generated datasets (rebuilt by `npm run build` from OurAirports)
+public/data/airports/
+public/data/countries.json
+
+# test & tooling output
+test-results/
+playwright-report/
+.playwright-mcp/
+coverage/
+
+# secrets — never commit
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.log
+.vscode/*
+!.vscode/extensions.json

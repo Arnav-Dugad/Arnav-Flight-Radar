@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Arnav Flight Radar — Live aircraft tracking</title>
+    <meta
+      name="description"
+      content="A free, premium live flight radar. Real ADS-B positions from adsb.fi, airports from OurAirports, METAR/TAF from NOAA — clearly labelled, never faked."
+    />
+    <meta name="theme-color" content="#03060B" />
+    <meta name="color-scheme" content="dark light" />
+    <link rel="icon" href="/brand/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/brand/favicon-32.png" sizes="32x32" type="image/png" />
+    <link rel="apple-touch-icon" href="/brand/apple-touch-icon-180.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Arnav Flight Radar" />
+    <meta property="og:description" content="Live aircraft tracking with premium cartography and honest data." />
+    <meta property="og:image" content="/brand/og-image-1200x630.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://tiles.openfreemap.org" crossorigin />
+  </head>
+  <body>
+    <noscript>Arnav Flight Radar needs JavaScript and WebGL2 to render the live map.</noscript>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

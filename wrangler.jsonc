@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "arnav-flight-radar",
+  "main": "./worker/index.ts",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    // Static frontend. Only /api/* runs the Worker; every other request is served
+    // straight from Cloudflare's asset store (free, does not count as a Worker request).
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"],
+    "binding": "ASSETS"
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "GATE", "class_name": "UpstreamGate" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["UpstreamGate"] }],
+  "vars": {
+    "APP_VERSION": "1.0.0",
+    // Conservative global upstream budget for adsb.fi (their public limit is 1 req/s).
+    "ADSBFI_MIN_INTERVAL_MS": "1100",
+    // How long one regional snapshot is shared between all visitors.
+    "AIRCRAFT_CACHE_TTL_MS": "10000",
+    "WEATHER_MIN_INTERVAL_MS": "1500",
+    "CONTACT_URL": "https://github.com/Arnav-Dugad/Arnav-Flight-Radar"
+  },
+  "observability": { "enabled": true }
+}
