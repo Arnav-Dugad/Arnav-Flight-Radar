@@ -98,6 +98,23 @@ describe('UpstreamGate', () => {
     expect(h.providers.find((p) => p.id === 'adsbfi')?.status).toBe('down');
   });
 
+  it('treats an access refusal (403) as a long cool-down, without retrying upstream', async () => {
+    fetchMock.mockImplementation(async () => new Response('<html><title>Attention Required! | Cloudflare</title></html>', { status: 403 }));
+    const g = gate();
+    const r1 = await g.aircraftRegion(q(60));
+    expect(r1.ok).toBe(false);
+    if (!r1.ok) {
+      expect(r1.code).toBe('upstream_forbidden');
+      expect(r1.retryAfterSec).toBe(900);
+      expect(r1.message).toMatch(/refusing requests/);
+    }
+    const r2 = await g.aircraftRegion(q(61));
+    expect(!r2.ok && r2.code).toBe('upstream_forbidden');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const h = await g.healthReport();
+    expect(h.providers.find((p) => p.id === 'adsbfi')?.lastError).toMatch(/Access refused \(HTTP 403: Attention Required/);
+  });
+
   it('serves the last good snapshot, flagged as degraded, when the provider fails', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(1_000_000);

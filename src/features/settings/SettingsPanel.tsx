@@ -32,12 +32,13 @@ export function SettingsPanel() {
             value={s.appearance}
             onChange={(v) => s.set('appearance', v)}
             options={[
+              { value: 'map', label: 'Match map' },
               { value: 'system', label: 'System' },
               { value: 'dark', label: 'Dark' },
               { value: 'light', label: 'Light' },
             ]}
           />
-          <p className="text-[11.5px] text-fg-3">Tip: pair the light theme with the “Arctic Glass” map style in Layers.</p>
+          <p className="text-[11.5px] text-fg-3">“Match map” uses light glass over Arctic Glass and dark glass over the darker styles.</p>
         </Section>
 
         <Section title="Units">

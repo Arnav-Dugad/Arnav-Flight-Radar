@@ -13,6 +13,7 @@ import { useTour } from '@/map/tour';
 import { useSettings } from '@/state/settings';
 import { traffic } from '@/state/traffic';
 import { useUI } from '@/state/ui';
+import { useFeed } from '@/data/feed';
 import { LiveStatus } from './LiveStatus';
 
 /** Following indicator + "Return to aircraft" after a manual camera move. */
@@ -218,31 +219,53 @@ export function TourBadge() {
   );
 }
 
-/** Honest notice when the provider reports nothing in the live area. */
+/** Honest notices: provider outage/refusal, or nothing reported in the live area. */
 export function CoverageNotice() {
   useTrafficVersion();
   const mobile = useIsMobile();
   const openPanel = useUI((s) => s.openPanel);
   const following = useUI((s) => s.following);
+  const status = useFeed((s) => s.status);
+  const message = useFeed((s) => s.message);
+  const code = useFeed((s) => s.errorCode);
   const meta = traffic.meta;
-  const show = !!meta && meta.count === 0 && !following;
+  const outage = status === 'error' || (status === 'degraded' && !!code);
+  const empty = !outage && !!meta && meta.count === 0 && !following;
+  const show = outage || empty;
   return (
     <AnimatePresence>
       {show && (
         <motion.div
+          key={outage ? 'outage' : 'empty'}
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -10 }}
-          role="status"
-          className={`glass pointer-events-auto absolute left-1/2 z-20 w-[min(440px,calc(100vw-24px))] -translate-x-1/2 rounded-[18px] px-4 py-3 ${mobile ? 'top-[70px]' : 'top-[84px]'}`}
+          role={outage ? 'alert' : 'status'}
+          className={`glass pointer-events-auto absolute left-1/2 z-20 w-[min(460px,calc(100vw-24px))] -translate-x-1/2 rounded-[18px] px-4 py-3 ${mobile ? 'top-[70px]' : 'top-[84px]'}`}
         >
-          <p className="text-[13px] font-semibold text-fg">No aircraft reported in this area right now</p>
-          <p className="mt-1 text-[12px] leading-relaxed text-fg-2">
-            adsb.fi relies on volunteer receivers, and coverage here is currently thin or absent. Nothing is simulated to fill the gap.{' '}
-            <button type="button" className="font-medium text-[var(--accent)] hover:underline" onClick={() => openPanel('data')}>
-              Coverage details
-            </button>
-          </p>
+          {outage ? (
+            <>
+              <p className="text-[13px] font-semibold text-fg">
+                {code === 'upstream_forbidden' ? 'Live aircraft data is unavailable' : status === 'degraded' ? 'Live data is delayed' : 'Live data is temporarily unavailable'}
+              </p>
+              <p className="mt-1 text-[12px] leading-relaxed text-fg-2">
+                {message ?? 'The aircraft data provider could not be reached.'} Nothing is simulated in its place.{' '}
+                <button type="button" className="font-medium text-[var(--accent)] hover:underline" onClick={() => openPanel('data')}>
+                  Provider status
+                </button>
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-[13px] font-semibold text-fg">No aircraft reported in this area right now</p>
+              <p className="mt-1 text-[12px] leading-relaxed text-fg-2">
+                adsb.fi relies on volunteer receivers, and coverage here is currently thin or absent. Nothing is simulated to fill the gap.{' '}
+                <button type="button" className="font-medium text-[var(--accent)] hover:underline" onClick={() => openPanel('data')}>
+                  Coverage details
+                </button>
+              </p>
+            </>
+          )}
         </motion.div>
       )}
     </AnimatePresence>

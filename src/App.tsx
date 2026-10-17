@@ -5,6 +5,7 @@ import { useIsMobile, useMedia } from '@/lib/useMedia';
 import { useSettings } from '@/state/settings';
 import { useUI } from '@/state/ui';
 import { useView } from '@/state/view';
+import { STYLE_META } from '@/map/styles';
 import { AircraftPanel } from '@/features/aircraft/AircraftPanel';
 import { AirportPanel } from '@/features/airports/AirportPanel';
 import { FiltersPanel } from '@/features/filters/FiltersPanel';
@@ -22,17 +23,19 @@ import { ReplayBar, TimelinePanel } from '@/features/timeline/Timeline';
 
 function useThemeSync() {
   const appearance = useSettings((s) => s.appearance);
+  const mapStyle = useSettings((s) => s.mapStyle);
   const reducedEffects = useSettings((s) => s.reducedEffects);
   const motionLevel = useSettings((s) => s.motion);
   const prefersLight = useMedia('(prefers-color-scheme: light)');
   useEffect(() => {
-    const theme = appearance === 'system' ? (prefersLight ? 'light' : 'dark') : appearance;
+    const theme =
+      appearance === 'map' ? (STYLE_META[mapStyle].dark ? 'dark' : 'light') : appearance === 'system' ? (prefersLight ? 'light' : 'dark') : appearance;
     const root = document.documentElement;
     root.dataset.theme = theme;
     root.dataset.effects = reducedEffects ? 'reduced' : 'full';
     root.dataset.motion = motionLevel === 'full' ? 'full' : 'reduced';
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'light' ? '#EEF2F7' : '#03060B');
-  }, [appearance, prefersLight, reducedEffects, motionLevel]);
+  }, [appearance, mapStyle, prefersLight, reducedEffects, motionLevel]);
 }
 
 function Splash() {

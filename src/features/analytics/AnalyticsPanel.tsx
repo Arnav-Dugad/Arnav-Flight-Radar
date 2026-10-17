@@ -81,7 +81,7 @@ export function AnalyticsPanel() {
       title="Analytics"
       icon={<AnalyticsIcon size={18} />}
       ariaLabel="Traffic analytics"
-      subtitle="Regional sample — never a worldwide total"
+      subtitle="Regional sample, not worldwide"
       actions={
         <GlassButton size="sm" variant="ghost" onClick={() => setTable((t) => !t)} aria-pressed={table}>
           <Table2 size={14} /> {table ? 'Charts' : 'Table'}
@@ -113,10 +113,15 @@ export function AnalyticsPanel() {
               <Stat label="Observed" value={<AnimatedNumber value={s.sample} />} />
               <Stat label="Airborne" value={<AnimatedNumber value={s.airborne} />} />
               <Stat label="On ground" value={<AnimatedNumber value={s.onGround} />} />
-              <Stat label="Avg altitude" value={s.avgAltitudeFt !== undefined ? fmtAltitude(s.avgAltitudeFt, units.altitude) : '—'} sub={`${s.altitudeKnown} reporting`} className="col-span-3 sm:col-span-1" />
-              <Stat label="Avg speed" value={s.avgGroundSpeedKt !== undefined ? fmtSpeed(s.avgGroundSpeedKt, units.speed) : '—'} sub={`${s.speedKnown} reporting`} />
-              <Stat label="Military" value={s.military} sub={s.emergencies.length ? `${s.emergencies.length} emergency` : 'no emergencies'} />
             </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Stat label="Avg altitude" value={s.avgAltitudeFt !== undefined ? fmtAltitude(s.avgAltitudeFt, units.altitude) : '—'} sub={`${s.altitudeKnown} reporting · airborne`} />
+              <Stat label="Avg ground speed" value={s.avgGroundSpeedKt !== undefined ? fmtSpeed(s.avgGroundSpeedKt, units.speed) : '—'} sub={`${s.speedKnown} reporting`} />
+            </div>
+            <p className="text-[11.5px] text-fg-3">
+              Military-flagged: <span className="font-semibold text-fg-2">{s.military}</span> · Emergency squawks:{' '}
+              <span className="font-semibold text-fg-2">{s.emergencies.length}</span>
+            </p>
 
             {s.emergencies.length > 0 && (
               <div role="alert" className="rounded-[14px] border border-[rgba(255,93,115,0.35)] bg-[rgba(255,93,115,0.08)] px-3.5 py-2.5 text-[12px]">

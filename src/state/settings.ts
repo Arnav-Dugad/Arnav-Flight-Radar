@@ -4,7 +4,7 @@ import type { AltitudeUnit, DistanceUnit, SpeedUnit, TemperatureUnit, VerticalRa
 import { safeStorage } from '@/lib/storage';
 
 export type MapStyleId = 'obsidian' | 'arctic' | 'midnight' | 'terrain' | 'minimal' | 'satellite';
-export type Appearance = 'system' | 'dark' | 'light';
+export type Appearance = 'map' | 'system' | 'dark' | 'light';
 export type ColorMode = 'altitude' | 'speed' | 'vertical' | 'freshness' | 'mono';
 export type AltitudePalette = 'aurora' | 'accessible';
 export type MotionLevel = 'full' | 'reduced' | 'off';
@@ -52,7 +52,7 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  appearance: 'dark',
+  appearance: 'map',
   mapStyle: 'obsidian',
   units: { altitude: 'ft', speed: 'kt', distance: 'nm', temperature: 'c', verticalRate: 'fpm' },
   colorMode: 'altitude',
@@ -99,8 +99,9 @@ export const useSettings = create<SettingsStore>()(
     }),
     {
       name: 'settings',
-      version: 1,
+      version: 2,
       storage: createJSONStorage(() => safeStorage),
+      migrate: (persisted) => ({ ...(persisted as Partial<Settings>), appearance: 'map' }) as unknown as SettingsStore,
       partialize: (s) => {
         const { set: _a, setUnit: _b, reset: _c, ...rest } = s;
         void _a;

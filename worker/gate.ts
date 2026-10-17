@@ -30,6 +30,7 @@ const STATUS: Record<UpstreamError['code'], number> = {
   busy: 503,
   upstream_unavailable: 503,
   upstream_rate_limited: 503,
+  upstream_forbidden: 503,
   upstream_invalid: 502,
   not_found: 404,
 };
@@ -51,7 +52,7 @@ async function guard(fn: () => Promise<string>): Promise<GateResult> {
 export class UpstreamError extends Error {
   constructor(
     message: string,
-    readonly code: 'busy' | 'upstream_unavailable' | 'upstream_rate_limited' | 'upstream_invalid' | 'not_found',
+    readonly code: 'busy' | 'upstream_unavailable' | 'upstream_rate_limited' | 'upstream_forbidden' | 'upstream_invalid' | 'not_found',
     readonly retryAfterSec?: number,
   ) {
     super(message);
@@ -73,6 +74,14 @@ interface CacheEntry {
 }
 
 const MAX_QUEUE_WAIT_MS = 4000;
+// A provider that refuses us (401/403) is asked again only rarely, so we never
+// keep hammering its firewall.
+const FORBIDDEN_COOLDOWN_MS = 15 * 60_000;
+const FORBIDDEN_MESSAGE: Record<HostId, string> = {
+  adsbfi:
+    'adsb.fi is currently refusing requests from this site’s hosting network (Cloudflare). Airports, weather and maps still work.',
+  aviationweather: 'AviationWeather.gov is currently refusing requests from this site’s hosting network.',
+};
 const MAX_STALE_MS = 5 * 60_000;
 const MAX_CACHE_ENTRIES = 300;
 const UPSTREAM_TIMEOUT_MS = 8000;
@@ -295,11 +304,9 @@ export class UpstreamGate extends DurableObject<Env> {
     const h = this.health[host];
     const now = Date.now();
     if (h.circuitOpenUntil && h.circuitOpenUntil > now) {
-      throw new UpstreamError(
-        'Provider is cooling down after errors.',
-        'upstream_unavailable',
-        Math.ceil((h.circuitOpenUntil - now) / 1000),
-      );
+      const retry = Math.ceil((h.circuitOpenUntil - now) / 1000);
+      if (h.lastError?.startsWith('Access refused')) throw new UpstreamError(FORBIDDEN_MESSAGE[host], 'upstream_forbidden', retry);
+      throw new UpstreamError('Provider is cooling down after errors.', 'upstream_unavailable', retry);
     }
 
     // Reserve the next free slot for this host. The Durable Object is single-
@@ -334,6 +341,17 @@ export class UpstreamGate extends DurableObject<Env> {
       this.succeed(host);
       throw new UpstreamError('Not found at provider.', 'not_found');
     }
+    if (res.status === 401 || res.status === 403) {
+      const text = (await res.text().catch(() => '')).replace(/\s+/g, ' ');
+      const title = /<title>(.*?)<\/title>/i.exec(text)?.[1];
+      console.warn(`upstream ${host} refused access (HTTP ${res.status})`, { cfRay: res.headers.get('cf-ray'), title, excerpt: title ? undefined : text.slice(0, 300) });
+      h.consecutiveFailures++;
+      h.lastErrorAt = Date.now();
+      h.lastError = `Access refused (HTTP ${res.status}${title ? `: ${title}` : ''})`;
+      h.status = 'down';
+      h.circuitOpenUntil = Date.now() + FORBIDDEN_COOLDOWN_MS;
+      throw new UpstreamError(FORBIDDEN_MESSAGE[host], 'upstream_forbidden', FORBIDDEN_COOLDOWN_MS / 1000);
+    }
     if (res.status === 429) {
       const ra = Number(res.headers.get('Retry-After'));
       const retry = Number.isFinite(ra) && ra > 0 ? Math.min(ra, 600) : undefined;
@@ -341,6 +359,7 @@ export class UpstreamGate extends DurableObject<Env> {
       throw new UpstreamError('Provider rate limit reached; backing off.', 'upstream_rate_limited', retry ?? 30);
     }
     if (!res.ok && res.status !== 204) {
+      console.warn(`upstream ${host} HTTP ${res.status}`, { cfRay: res.headers.get('cf-ray') });
       this.fail(host, `HTTP ${res.status}`);
       throw new UpstreamError(`Provider error (HTTP ${res.status}).`, 'upstream_unavailable', 15);
     }

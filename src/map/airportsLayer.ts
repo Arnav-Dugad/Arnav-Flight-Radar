@@ -89,6 +89,7 @@ export async function installAirportLayers(map: MlMap) {
   add('apt-cluster', {
     type: 'circle',
     source: SRC_OTHER,
+    minzoom: 4, // world views stay clean: only large airports there
     filter: ['has', 'point_count'],
     paint: {
       'circle-color': dark ? 'rgba(20,34,56,0.85)' : 'rgba(255,255,255,0.9)',
@@ -100,6 +101,7 @@ export async function installAirportLayers(map: MlMap) {
   add('apt-cluster-count', {
     type: 'symbol',
     source: SRC_OTHER,
+    minzoom: 4,
     filter: ['has', 'point_count'],
     layout: {
       'text-field': ['get', 'point_count_abbreviated'],

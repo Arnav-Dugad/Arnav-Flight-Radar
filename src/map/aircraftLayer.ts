@@ -56,7 +56,10 @@ function ensureImages(map: MlMap) {
 }
 
 function sizeExpr(scale: number) {
-  return ['interpolate', ['linear'], ['zoom'], 3, 0.42 * scale, 6, 0.6 * scale, 9, 0.82 * scale, 12, 1.05 * scale, 15, 1.35 * scale];
+  // Ground traffic is drawn smaller so busy aprons don't swamp airborne aircraft.
+  // (MapLibre requires zoom to be the top-level interpolation; the per-feature case sits inside.)
+  const stop = (v: number) => ['case', ['==', ['get', 'gnd'], 1], v * scale * 0.72, v * scale];
+  return ['interpolate', ['linear'], ['zoom'], 3, stop(0.42), 6, stop(0.6), 9, stop(0.82), 12, stop(1.05), 15, stop(1.35)];
 }
 
 function labelMinZoom(density: string): number {
@@ -69,6 +72,8 @@ export function installAircraftLayers(map: MlMap) {
   const s = getSettings();
   const dark = s.mapStyle !== 'arctic';
   const halo = dark ? 'rgba(3,6,11,0.85)' : 'rgba(255,255,255,0.9)';
+  // Icons always get a dark outline: light altitude colours (yellow) need it on light maps too.
+  const iconHalo = dark ? 'rgba(3,6,11,0.85)' : 'rgba(16,28,48,0.6)';
   const add = (id: string, spec: Record<string, unknown>) => {
     if (!map.getLayer(id)) map.addLayer({ id, ...spec } as never);
   };
@@ -162,7 +167,7 @@ export function installAircraftLayers(map: MlMap) {
     },
     paint: {
       'icon-color': color,
-      'icon-halo-color': ['case', ['boolean', ['feature-state', 'hover'], false], '#5ce1ff', halo],
+      'icon-halo-color': ['case', ['boolean', ['feature-state', 'hover'], false], '#5ce1ff', iconHalo],
       'icon-halo-width': ['case', ['boolean', ['feature-state', 'hover'], false], 2.4, 1.3],
       'icon-halo-blur': 0.4,
       'icon-opacity': [

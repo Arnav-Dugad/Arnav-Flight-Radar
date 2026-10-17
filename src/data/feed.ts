@@ -24,6 +24,7 @@ export type FeedStatus = 'connecting' | 'live' | 'degraded' | 'error' | 'paused'
 interface FeedState {
   status: FeedStatus;
   message?: string;
+  errorCode?: string;
   lastOkAt?: number;
   nextAt?: number;
   inFlight: boolean;
@@ -110,6 +111,7 @@ export function startFeed(map: MlMap): () => void {
       useFeed.setState({
         status: degraded ? 'degraded' : 'live',
         message: degraded,
+        errorCode: undefined,
         lastOkAt: Date.now(),
         inFlight: false,
       });
@@ -122,6 +124,7 @@ export function startFeed(map: MlMap): () => void {
       const backoff = Math.min(120_000, getSettings().pollIntervalSec * 1000 * 2 ** Math.min(failures, 3));
       useFeed.setState({
         status: traffic.meta ? 'degraded' : 'error',
+        errorCode: e instanceof ApiFailure ? e.code : 'network',
         message: e instanceof ApiFailure ? e.message : 'Live data is temporarily unavailable.',
         inFlight: false,
       });
