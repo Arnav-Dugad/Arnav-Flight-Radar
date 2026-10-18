@@ -13,7 +13,7 @@ import type { TypeSpec } from '@/data/sim/typeSpecs';
 
 // Aircraft-type data is fetched the first time someone types a query.
 let typesMod: typeof import('@/data/sim/typeSpecs') | null = null;
-import { simAirlineSearch, simSearch } from '@/data/world';
+import { simAirlineSearch, simRouteSearch, simSearch, useSim } from '@/data/world';
 import { AirlineLogo } from '@/features/aircraft/FlightParts';
 import { cn } from '@/lib/cn';
 import { fmtAltitude } from '@/lib/format';
@@ -35,6 +35,40 @@ interface Result {
 
 const fold = (s: string) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 
+/** An airport code or a city/airport name → matching airports (largest first). */
+function resolvePlace(token: string, airports: SearchableAirport[]): SearchableAirport[] {
+  const t = token.trim();
+  const up = t.toUpperCase();
+  if (/^[A-Z0-9]{3,4}$/i.test(t)) {
+    const byCode = airports.find((a) => a.iata === up || a.icao === up || a.ident === up);
+    if (byCode) return [byCode];
+  }
+  const f = fold(t);
+  if (f.length < 3) return [];
+  const city = airports.filter((a) => a._city === f || a._city.startsWith(`${f} `) || a._city.startsWith(`${f},`));
+  const list = city.length ? city : airports.filter((a) => a._name.startsWith(f) || a._name.includes(` ${f}`));
+  return list
+    .filter((a) => a.type === 'large_airport' || a.type === 'medium_airport')
+    .sort((a, b) => Number(b.type === 'large_airport') - Number(a.type === 'large_airport'))
+    .slice(0, 6);
+}
+
+/** "LHR JFK", "LHR-JFK", "LHR → JFK", "London to New York" → both ends, or null. */
+function parseRoute(q: string, airports: SearchableAirport[]): { from: SearchableAirport[]; to: SearchableAirport[]; fromLabel: string; toLabel: string } | null {
+  const s = q.trim();
+  let parts = s.split(/\s*(?:→|->|–|—|>|\/|\s-\s|-(?=[A-Za-z]{3,4}$)|\bto\b)\s*/i).filter(Boolean);
+  if (parts.length !== 2) {
+    const m = /^([A-Za-z]{3,4})\s+([A-Za-z]{3,4})$/.exec(s);
+    parts = m ? [m[1]!, m[2]!] : [];
+  }
+  if (parts.length !== 2) return null;
+  const from = resolvePlace(parts[0]!, airports);
+  const to = resolvePlace(parts[1]!, airports);
+  if (!from.length || !to.length || from.some((a) => to.includes(a))) return null;
+  const label = (list: SearchableAirport[], raw: string) => (list.length === 1 ? (list[0]!.iata ?? list[0]!.ident) : raw.trim().replace(/\b\w/g, (c) => c.toUpperCase()));
+  return { from, to, fromLabel: label(from, parts[0]!), toLabel: label(to, parts[1]!) };
+}
+
 export function SearchCommand() {
   const open = useUI((s) => s.searchOpen);
   const setOpen = useUI((s) => s.setSearchOpen);
@@ -42,6 +76,7 @@ export function SearchCommand() {
 }
 
 function SearchDialog({ onClose }: { onClose: () => void }) {
+  const simRev = useSim((s) => s.rev); // re-render when the simulation worker answers
   const [q, setQ] = useState('');
   const [active, setActive] = useState(0);
   const [airports, setAirports] = useState<SearchableAirport[] | null>(null);
@@ -98,6 +133,7 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
   );
 
   const results: Result[] = useMemo(() => {
+    void simRev; // recompute when worker answers arrive
     const out: Result[] = [];
     const query = q.trim();
     if (!query) {
@@ -132,6 +168,41 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
           onClose();
         },
       });
+    }
+
+    // A route ("LHR JFK", "LHR-JFK", "London to New York"): flights between the two places.
+    const route = airports ? parseRoute(query, airports) : null;
+    if (route) {
+      const hits = simRouteSearch(route.from.map((a) => a.ident), route.to.map((a) => a.ident), 10);
+      const label = `${route.fromLabel} → ${route.toLabel}`;
+      if (!hits)
+        out.push({ key: 'route-wait', group: `Route ${label}`, icon: <ArrowRight size={17} />, title: 'Looking for flights on this route…', sub: 'Searching the simulated world', run: () => goAirport(route.from[0]!) });
+      else if (!hits.length)
+        out.push({ key: 'route-none', group: `Route ${label}`, icon: <ArrowRight size={17} />, title: 'No simulated flights on this route right now', sub: 'Try the airports’ departure boards, or another pair of cities', run: () => goAirport(route.from[0]!) });
+      for (const h of hits ?? []) {
+        const live = traffic.get(h.id);
+        out.push({
+          key: `route-${h.id}-${h.std}`,
+          group: `Route ${label}`,
+          icon: h.airlineIcao ? <AirlineLogo icao={h.airlineIcao} code={h.flight.slice(0, 2)} size={22} name={h.airline} /> : <PlaneIcon size={17} />,
+          title: (
+            <span>
+              <span className="font-semibold">{h.flight}</span>
+              <span className="ml-2 text-fg-3">
+                {h.from.iata ?? h.from.ident} → {h.to.iata ?? h.to.ident}
+              </span>
+            </span>
+          ),
+          sub: [h.airline, h.type, h.status, live ? null : `departs ${new Date(h.std).toISOString().slice(11, 16)}Z`].filter(Boolean).join(' · '),
+          run: () => {
+            if (live) goAircraft(live.ac);
+            else {
+              selectAirport(h.from.ident);
+              onClose();
+            }
+          },
+        });
+      }
     }
 
     // An exact airport code (e.g. "LHR", "EGLL") goes straight to the top.
@@ -253,7 +324,7 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
     }
 
     return out;
-  }, [q, recents, airports, countries, altUnit, addRecent, goAirport, goAircraft, onClose, select, selectAirport, selectAirline, selectType, typesReady]);
+  }, [q, recents, airports, countries, altUnit, addRecent, goAirport, goAircraft, onClose, select, selectAirport, selectAirline, selectType, typesReady, simRev]);
 
   useEffect(() => setActive(0), [q]);
   useEffect(() => {

@@ -28,12 +28,14 @@ import type { AirportIndexEntry } from '@shared/types';
 import { AIRLINE_EXTRA } from './airlineInfo';
 import { ALL_AIRLINES as AIRLINES, ALL_ALLIANCES as ALLIANCES, CARGO } from './airlines';
 import { GA_COUNTRIES, GA_TYPES, TYPES, type AirlineProfile, type TypeInfo } from './fleet';
-import { assignNat, enroute, NavDb, natString, natTracks, sidFor, starFor, type Fix, type NatTrack, type Procedure } from './procedures';
+import { ashAdvisory, affinity, crossedZones, detour, pointInZones, REGIONS, regionOf, STANDING_ZONES, type Region, type Zone } from './geoMarkets';
+import { assignOts, enroute, fixName, NavDb, natTracks, otsString, sidFor, starFor, type Fix, type NatTrack, type OtsSystem, type OtsTrack, type Procedure } from './procedures';
 import type { AirlineModel, Wake } from './refTypes';
-import { daylight, leisureOf, localHour, localWeekday, operatesOn, routeDays, seasonalWeight, weekdayGroundFactor, type RouteDays } from './schedule';
+import { daylight, hajjWeight, leisureOf, localHour, localWeekday, operatesOn, routeDays, seasonalWeight, weekdayGroundFactor, type RouteDays } from './schedule';
 import { AIR_AMBULANCE, DELIVERY_CENTRES, GLIDER_REG, GLIDER_TYPES, HEMS, MIL_MISSION, MILITARY, OFFSHORE, SHUTTLES, TOW_TYPES, type MilOperator, type MilRole } from './special';
 import { SCHENGEN, terminalFor } from './terminals';
 import { specOf } from './typeSpecs';
+import { pickSid, pickStar, type ProceduresData, type ProcTrack } from './usProcedures';
 
 export { ALL_ALLIANCES } from './airlines';
 
@@ -105,6 +107,8 @@ export interface Stand {
   term: number;
   /** 0 contact (terminal), 1 remote, 2 cargo apron, 3 general aviation. */
   kind: number;
+  /** Large enough for a wide-body (from the spacing to neighbouring stands). */
+  wide?: boolean;
 }
 
 export interface SimWeather {
@@ -144,6 +148,8 @@ export interface SimAirport {
   weather?: SimWeather;
   /** Hourly arrival-capacity factors from the TAF (1 = normal). */
   forecast?: { t: number; capacity: number }[];
+  /** Runway closures (snow clearing, inspections, night maintenance): no movements in the window. */
+  closures?: { from: number; to: number; reason: string }[];
   /** Not an airport: a heliport, hospital pad, platform, gliding site or incident scene. */
   site?: SiteKind;
 }
@@ -271,6 +277,10 @@ export type EventKind =
   | 'scene'
   | 'release'
   | 'circuit'
+  | 'crew'
+  | 'birdstrike'
+  | 'returnhold'
+  | 'improve'
   | 'canceled';
 
 export interface LegEvent {
@@ -288,7 +298,9 @@ export interface RouteInfo {
   sid?: Procedure;
   star?: Procedure;
   via: Fix[];
-  nat?: { letter: string; text: string; fl: number; mach: number; entry: number; exit: number };
+  nat?: { system: OtsSystem; letter: string; text: string; fl: number; mach: number; entry: number; exit: number };
+  /** Detour around closed airspace or volcanic ash (zone names). */
+  avoids?: string[];
   /** Flight-plan style route string ("DET2F DET DCT REM DCT LAM LAM1Z"). */
   text: string;
 }
@@ -303,7 +315,7 @@ export interface TaxiInfo {
 
 export interface Emergency {
   t: number;
-  kind: 'engine' | 'pressurisation' | 'medical';
+  kind: 'engine' | 'pressurisation' | 'medical' | 'birdstrike';
   squawk?: string;
   divertTo: SimAirport;
 }
@@ -342,6 +354,10 @@ export interface Leg {
   days?: RouteDays;
   /** Ground time after this leg before the next departure. */
   turnAfter: number;
+  /** Where the airframe is planned to fly next (rotation). */
+  plannedNext?: SimAirport;
+  /** Delay from crew duty-time limits (waiting for a fresh crew), ms. */
+  crewDelayMs?: number;
 }
 
 /** Compact record of a completed flight (aircraft history). */
@@ -390,6 +406,8 @@ export interface Airframe {
   historyBuilt?: boolean;
   /** Flight-number counter for operators without a timetable. */
   seq: number;
+  /** When the current crew's duty period began (sim ms). */
+  dutyStart?: number;
 }
 
 export interface SimState {
@@ -650,6 +668,12 @@ function intersect(p0: [number, number], p1: [number, number], q0: [number, numb
 
 // ---------------------------------------------------------------- world
 
+/** Destinations under sanctions or in conflict zones (few foreign airlines fly there). */
+const RESTRICTED = new Set(['IR', 'SY', 'YE', 'AF', 'KP', 'LY', 'SD', 'SO', 'SS']);
+
+/** Region pairs too close for typical long-haul (wide-body) flying. */
+const NEAR_REGIONS = new Set(['WEUEEU', 'EEUWEU', 'WEUNAF', 'NAFWEU', 'NAMCAM', 'CAMNAM', 'MEASAS', 'SASMEA', 'SEAEAS', 'EASSEA', 'EEUMEA', 'MEAEEU', 'MEANAF', 'NAFMEA', 'CAMSAM', 'SAMCAM']);
+
 export interface MissionPlan {
   role: MilRole | 'circuits' | 'tow';
   area: Pt;
@@ -674,7 +698,16 @@ export class World {
   private ground = new Map<string, TaxiGraph>();
   private alternates = new Map<string, SimAirport | null>();
   private emergencyFields: SimAirport[] | null = null;
+  /** Scheduled airports by world region (international destination choice). */
+  private regionPools = new Map<Region, WeightedPool>();
+  /** Large airports by region, weighted towards the big gateways (long-haul destinations). */
+  private longPools = new Map<Region, WeightedPool>();
+  /** Airports inside airspace closed to all civil traffic (never served). */
+  private closedAirports = new Set<SimAirport>();
+  private ashCache = new Map<number, Zone | null>();
   nav: NavDb | null = null;
+  /** Published US procedures (FAA CIFP), when loaded. */
+  usProcs: ProceduresData | null = null;
   /** Hospital helipads, offshore platforms and city heliports (pseudo airports). */
   sites: SimAirport[] = [];
   readonly windSeed: number;
@@ -722,11 +755,28 @@ export class World {
       this.airports.set(a.ident, sa);
     }
     const scheduled = [...this.airports.values()].filter((a) => a.scheduled || a.large);
-    const weight = (a: SimAirport) => (a.large ? 10 : 1.5);
+    // Busy gateways attract far more flights than an average large airport: weight each
+    // airport by the airline fleets based there (JFK, LHR, DXB… draw trunk routes).
+    const hubScore = new Map<string, number>();
+    for (const al of AIRLINES) for (const h of al.hubs) hubScore.set(h, (hubScore.get(h) ?? 0) + al.size / al.hubs.length);
+    const weight = (a: SimAirport) => (a.large ? 10 : 1.5) * (1 + Math.sqrt((hubScore.get(a.ident) ?? 0) / 15));
+    // Long-haul concentrates on a few dozen gateways: strongly hub-weighted, large airports only.
+    const longWeight = (a: SimAirport) => (10 * (1 + (hubScore.get(a.ident) ?? 0) / 20)) ** 1.6;
     this.scheduledPool = new WeightedPool(scheduled, weight);
     const byC = new Map<string, SimAirport[]>();
     for (const a of scheduled) byC.set(a.country, [...(byC.get(a.country) ?? []), a]);
     for (const [c, list] of byC) this.byCountry.set(c, new WeightedPool(list, weight));
+    for (const a of scheduled) if (pointInZones([a.lat, a.lon], STANDING_ZONES.filter((z) => z.avoidBy === 'all'), undefined)) this.closedAirports.add(a);
+    const byR = new Map<Region, SimAirport[]>();
+    for (const a of scheduled) {
+      if (this.closedAirports.has(a)) continue;
+      const r = regionOf(a.country);
+      byR.set(r, [...(byR.get(r) ?? []), a]);
+    }
+    for (const [r, list] of byR) {
+      this.regionPools.set(r, new WeightedPool(list, weight));
+      this.longPools.set(r, new WeightedPool(list.filter((a) => a.large), longWeight));
+    }
     const ga = new Map<string, SimAirport[]>();
     for (const a of this.airports.values()) if (!a.large) ga.set(a.country, [...(ga.get(a.country) ?? []), a]);
     for (const [c, list] of ga) this.gaPools.set(c, new WeightedPool(list, () => 1));
@@ -754,8 +804,21 @@ export class World {
         if (hdg !== null) s.hdg = hdg;
         return s;
       });
+      markWideStands(a.stands);
     }
     this.standPools.clear();
+  }
+
+  setUsProcedures(d: ProceduresData) {
+    this.usProcs = d;
+  }
+
+  /** A published FAA procedure as the simulator's procedure shape. */
+  private published(tr: ProcTrack | null, kind: 'sid' | 'star'): Procedure | undefined {
+    if (!tr || tr.fixes.length < 2) return undefined;
+    const fixes: Fix[] = tr.fixes.map((f) => ({ ident: f.ident, lat: f.lat, lon: f.lon, real: true }));
+    const fix = kind === 'sid' ? fixes[fixes.length - 1]! : fixes[0]!;
+    return { name: tr.name, fix, fixes, published: `FAA CIFP ${this.usProcs?.cycle ?? ''}`.trim() };
   }
 
   /** Real navaids (OurAirports) used for procedure-style routes. */
@@ -815,6 +878,42 @@ export class World {
   /** The day's simulated North Atlantic tracks. */
   natTracks(t: number): NatTrack[] {
     return natTracks(t, this.seed);
+  }
+
+  /** The day's simulated volcanic-ash advisory, if any. */
+  ash(t: number): Zone | null {
+    const day = Math.floor(t / 86_400_000);
+    if (!this.ashCache.has(day)) this.ashCache.set(day, ashAdvisory(t, this.seed));
+    return this.ashCache.get(day) ?? null;
+  }
+
+  /** Airspace an operator must avoid at time `t`: standing closures plus any ash advisory. */
+  zonesAt(t: number): Zone[] {
+    const a = this.ash(t);
+    return a ? [...STANDING_ZONES, a] : STANDING_ZONES;
+  }
+
+  /** Daily runway closures: snow clearing when it snows, occasional inspections. */
+  private closuresFor(a: SimAirport, t: number) {
+    if (!a.large) return;
+    const day = Math.floor(t / 86_400_000);
+    const list = a.closures ?? (a.closures = []);
+    const key = day * 86_400_000;
+    if (list.some((c) => c.from >= key && c.from < key + 86_400_000)) return;
+    const rng = new Rng((hash(`${a.ident}${day}`) % 2147483646) + 1);
+    // Runway inspection or bird dispersal: about one airport in six on a given day, 15–30 minutes.
+    if (rng.next() < 0.16) {
+      const from = key + rng.range(6, 21) * H - (a.lon / 15) * H;
+      list.push({ from, to: from + rng.range(15, 30) * MIN, reason: rng.next() < 0.5 ? 'Runway inspection' : 'Bird dispersal on the runway' });
+    }
+    // Snow: the runway is closed for 20–30 minutes every couple of hours for clearing.
+    if (a.weather?.wx && /SN/.test(a.weather.wx) && (a.weather.tempC ?? 5) <= 1) {
+      for (let h0 = 0; h0 < 24; h0 += rng.range(1.8, 2.6)) {
+        const from = key + h0 * H;
+        list.push({ from, to: from + rng.range(20, 30) * MIN, reason: 'Snow clearing' });
+      }
+    }
+    if (list.length > 40) list.splice(0, list.length - 40);
   }
 
   // -------------------------------------------------------------- identity
@@ -1087,9 +1186,21 @@ export class World {
       return tOff;
     }
     const night = t.cls === 'wide' || af.airline?.fleet.every(([c]) => TYPES[c]?.cls === 'wide') ? 0.3 : 0.9;
-    if (localH >= 5 || this.rng.next() > night) return tOff;
-    // Released into the morning bank, spread over about three hours.
-    return tOff + (5 - localH) * H + this.rng.range(0, 1) ** 1.6 * 180 * MIN;
+    if (localH < 5 && this.rng.next() <= night) {
+      // Released into the morning bank, spread over about three hours.
+      return tOff + (5 - localH) * H + this.rng.range(0, 1) ** 1.6 * 180 * MIN;
+    }
+    // Network carriers run connecting banks at their hubs: departures leave in waves.
+    const al = af.airline;
+    // About six in ten of their hub departures keep to the bank structure; the rest fly when ready.
+    if (al && this.airlineModel(al) === 'full' && al.hubs.includes(from.ident) && from.large && this.rng.next() < 0.6) {
+      const period = al.size > 150 ? 2 : 3; // hours between banks
+      const offset = (hash(al.icao + from.ident) % 60) / 60;
+      const phase = (((localH - offset) % period) + period) % period;
+      const window = period * 0.6; // each bank's departures spread over 70–110 minutes
+      if (phase > window) return tOff + (period - phase + this.rng.range(0, window * 0.5)) * H;
+    }
+    return tOff;
   }
 
   /** Ground time after arriving at `at` at time `t` (weekday patterns included). */
@@ -1099,6 +1210,14 @@ export class World {
     let kind: 'airline' | 'cargo' | 'ga' | 'bizjet' = 'airline';
     if (af.role === 'ga') kind = c === 'bizjet' ? 'bizjet' : 'ga';
     else if (af.airline && CARGO.has(af.airline.icao)) kind = 'cargo';
+    if (af.airline) {
+      // Airline business model: low-cost carriers turn narrow-bodies in 25–35 minutes.
+      const model = this.airlineModel(af.airline);
+      if (model === 'low') min = c === 'wide' ? 75 : 25;
+      else if (model === 'regional') min = 25;
+      else if (model === 'leisure' || model === 'charter') min = c === 'wide' ? 90 : 40;
+      else if (model === 'cargo') min = c === 'wide' ? 150 : 70;
+    }
     if (af.role === 'mil') min = af.milRole === 'fighter' ? 150 : af.milRole === 'transport' ? 240 : 360;
     if (af.role === 'ambulance') min = 90;
     const f = af.role === 'airline' || af.role === 'ga' ? weekdayGroundFactor(localWeekday(t, at.lon), kind) : 1;
@@ -1146,20 +1265,50 @@ export class World {
       return operatesOn(days, weekday);
     };
     const domestic = this.rng.next() < al.dom;
-    const pool = domestic ? (this.byCountry.get(from.country) ?? this.scheduledPool) : this.scheduledPool;
+    // International flying follows world markets (gravity model with regional affinities).
+    const ok = (a: SimAirport) => !this.closedAirports.has(a) && this.servable(al.country, a.country);
     for (let i = 0; i < 90; i++) {
+      let pool: WeightedPool | undefined = domestic ? this.byCountry.get(from.country) : undefined;
+      if (!pool) {
+        const fromR = regionOf(from.country);
+        // Long-haul aircraft serve far-away markets: nearby regions count for little.
+        const longHaul = t.cls === 'wide';
+        pool =
+          (longHaul ? this.longPools : this.regionPools).get(
+            this.rng.weighted(
+              REGIONS.filter((r) => this.regionPools.has(r)).map((r) => [r, affinity(fromR, r) * (longHaul && (r === fromR || NEAR_REGIONS.has(`${fromR}${r}`)) ? 0.15 : 1)] as [Region, number]),
+            ),
+          ) ?? this.scheduledPool;
+      }
       const a = pool.pick(this.rng);
-      if (!a || a === from || !fits(a)) continue;
+      if (!a || a === from || !fits(a) || !ok(a)) continue;
+      if (!domestic && a.country === from.country && this.rng.next() < 0.85) continue;
       const d = distanceNm(from.lat, from.lon, a.lat, a.lon);
-      if (d >= min && d <= max && accept(a, d)) return a;
+      if (d >= min && d <= max && this.rng.next() < Math.min(1, hajjWeight(tOff, a.ident, al.country) / 2) * 2 && accept(a, d)) return a;
     }
     for (let i = 0; i < 80; i++) {
       const a = this.scheduledPool.pick(this.rng);
-      if (!a || a === from || !fits(a)) continue;
+      if (!a || a === from || !fits(a) || !ok(a)) continue;
       const d = distanceNm(from.lat, from.lon, a.lat, a.lon);
       if (d >= 80 && d <= max) return a;
     }
     return this.airports.get(al.hubs[0]!) ?? from;
+  }
+
+  /**
+   * Whether an airline from one country may serve another: Russian airlines are banned
+   * from the EU, UK and North America (and vice versa); Belarusian airlines likewise.
+   */
+  private servable(airlineCountry: string, destCountry: string): boolean {
+    const west = (c: string) => STANDING_ZONES.find((z) => z.id === 'RU')!.avoidBy !== 'all' && (STANDING_ZONES.find((z) => z.id === 'RU')!.avoidBy as Set<string>).has(c);
+    if ((airlineCountry === 'RU' || airlineCountry === 'BY') && west(destCountry)) return false;
+    if ((destCountry === 'RU' || destCountry === 'BY') && west(airlineCountry)) return false;
+    // Countries under sanctions or conflict are served almost only by airlines of the region.
+    if (RESTRICTED.has(destCountry) && airlineCountry !== destCountry) {
+      const r = regionOf(airlineCountry);
+      if (!(r === 'MEA' || r === 'CAS' || ['TR', 'RU', 'QA', 'AE', 'IQ', 'EG', 'ET', 'KE', 'PK', 'CN'].includes(airlineCountry))) return false;
+    }
+    return true;
   }
 
   /** Air-ambulance transfer: another airport 60–600 NM away in the same country. */
@@ -1202,7 +1351,7 @@ export class World {
     const model = this.airlineModel(al);
     const domestic = other.country === a.country;
     const schengen = SCHENGEN.has(other.country) && SCHENGEN.has(a.country);
-    const key = `${a.ident}|${al?.icao ?? af.role}|${domestic ? 1 : 0}${schengen ? 1 : 0}`;
+    const key = `${a.ident}|${al?.icao ?? af.role}|${domestic ? 1 : 0}${schengen ? 1 : 0}|${af.type.cls === 'wide' ? 'w' : ''}`;
     const hit = this.standPools.get(key);
     if (hit) return hit;
     const stands = a.stands ?? [];
@@ -1224,6 +1373,11 @@ export class World {
       if (pool.length < 3) pool = idx((s) => s.kind === 0 || s.kind === 1);
     }
     if (pool.length < 2) pool = idx((s) => s.kind !== 3 || !al);
+    // Wide-bodies need wide-body stands where the airport has them.
+    if (af.type.cls === 'wide') {
+      const wide = pool.filter((i) => stands[i]!.wide);
+      if (wide.length >= 2) pool = wide;
+    }
     this.standPools.set(key, pool);
     return pool;
   }
@@ -1258,6 +1412,8 @@ export class World {
 
   /** Weather factor on runway capacity at time `t` (METAR now, TAF beyond the next half hour). */
   private weatherFactor(a: SimAirport, t: number): number {
+    const ash = this.ash(t);
+    if (ash && pointInZones([a.lat, a.lon], [ash], undefined)) return 0.25;
     const fc = a.forecast;
     const obs = a.weather?.observedAt ?? 0;
     if (fc?.length && t > Math.max(obs, Date.now()) + 45 * MIN) {
@@ -1299,7 +1455,13 @@ export class World {
 
   private findSlot(list: Slot[], a: SimAirport, kind: 'arr' | 'dep', t: number, w: Wake): { t: number; i: number } {
     let cand = t;
+    this.closuresFor(a, t);
     for (let guard = 0; guard < 600; guard++) {
+      const closed = a.closures?.find((c) => cand >= c.from && cand < c.to);
+      if (closed) {
+        cand = closed.to;
+        continue;
+      }
       let i = list.length;
       while (i > 0 && list[i - 1]!.t > cand) i--;
       const p = list[i - 1];
@@ -1606,6 +1768,8 @@ export class World {
     const pMed = (kind === 'cargo' ? 0 : 0.00004) * flightH;
     const pEng = 0.000012 * Math.min(4, flightH);
     const pPress = 0.000006 * Math.min(4, flightH);
+    // Bird strikes after take-off occasionally force a return to the departure airport.
+    if (r > 1 - 0.00025) return 'birdstrike';
     if (r < pMed) return 'medical';
     if (r < pMed + pEng) return 'engine';
     if (r < pMed + pEng + pPress) return 'pressurisation';
@@ -1815,27 +1979,42 @@ export class World {
     const w = to.weather;
     const divert = airline && !light && ((w?.category === 'LIFR' && this.rng.next() < 0.12) || ((w?.gustKt ?? 0) >= 45 && this.rng.next() < 0.25) || (!!w?.wx && /\+TS/.test(w.wx) && this.rng.next() < 0.08));
     const alternate = divert ? this.alternateFor(to) : undefined;
+    let improved = false;
 
     // ---- route: departure procedure, en-route navaids, oceanic track, arrival procedure.
     const gcNm = distanceNm(from.lat, from.lon, to.lat, to.lon);
     const big = !light && gcNm > 90;
     const arrRwy = to.inUse;
-    const star = big && !mission ? starFor(this.nav, to, arrRwy.ident, bearingDeg(to.lat, to.lon, from.lat, from.lon)) : undefined;
+    // Published FAA procedures at US airports; procedure-style ones elsewhere.
+    const inbound = bearingDeg(to.lat, to.lon, from.lat, from.lon);
+    const realStar = big && !mission && this.usProcs && to.country === 'US' ? this.published(pickStar(this.usProcs, to.ident, arrRwy.ident, inbound), 'star') : undefined;
+    const star = realStar ?? (big && !mission ? starFor(this.nav, to, arrRwy.ident, inbound) : undefined);
     const target: Pt = mission ? mission.area : star ? [star.fix.lat, star.fix.lon] : [to.lat, to.lon];
-    const sid = big || (mission && !light) ? sidFor(this.nav, from, dep.ident, bearingDeg(from.lat, from.lon, target[0], target[1])) : undefined;
+    const outCrs = bearingDeg(from.lat, from.lon, target[0], target[1]);
+    const realSid = big && !mission && this.usProcs && from.country === 'US' ? this.published(pickSid(this.usProcs, from.ident, dep.ident, outCrs), 'sid') : undefined;
+    const sid = realSid ?? (big || (mission && !light) ? sidFor(this.nav, from, dep.ident, outCrs) : undefined);
     const turnR = light ? 0.7 : 2.6;
-    const firstTarget: Pt = sid ? [sid.fix.lat, sid.fix.lon] : target;
+    const firstTarget: Pt = sid?.fixes ? [sid.fixes[0]!.lat, sid.fixes[0]!.lon] : sid ? [sid.fix.lat, sid.fix.lon] : target;
     const arc = turnTowards(dFix, dep.hdg, firstTarget, turnR);
     let via: Fix[] = [];
-    let nat: { track: NatTrack; pts: Pt[] } | null = null;
+    let nat: { track: OtsTrack; pts: Pt[] } | null = null;
+    let avoids: string[] | undefined;
     const chain: Pt[] = [...arc];
-    if (sid) chain.push(firstTarget);
+    if (sid?.fixes) chain.push(...sid.fixes.map((f) => [f.lat, f.lon] as Pt));
+    else if (sid) chain.push(firstTarget);
     if (!mission && star && sid) {
       const a: Fix = sid.fix;
       const z: Fix = star.fix;
       // Estimated time crossing 30°W for the track system.
       const t30 = b.time + segDuration(gcNm * 0.5, tas);
-      nat = af.role === 'airline' && t.cls !== 'turboprop' ? assignNat(from, to, t30, this.seed, `${af.hex}${Math.floor(tOff / 86_400_000)}`) : null;
+      nat = af.role === 'airline' && t.cls !== 'turboprop' ? assignOts(from, to, t30, this.seed, `${af.hex}${Math.floor(tOff / 86_400_000)}`) : null;
+      // A track that would cross airspace this operator avoids is not flown.
+      if (nat) {
+        const zs = this.zonesAt(b.time);
+        const oc = af.airline?.country;
+        const seq: Pt[] = [[a.lat, a.lon], ...nat.pts, [z.lat, z.lon]];
+        if (seq.some((p, i) => i > 0 && crossedZones(seq[i - 1]!, p, zs, oc).length)) nat = null;
+      }
       if (nat) {
         const entry = nat.pts[0]!;
         const exit = nat.pts[nat.pts.length - 1]!;
@@ -1844,7 +2023,28 @@ export class World {
         via = [...v1, ...v2];
         chain.push(...v1.map((f) => [f.lat, f.lon] as Pt), ...nat.pts, ...v2.map((f) => [f.lat, f.lon] as Pt));
       } else {
-        via = enroute(this.nav, a, z);
+        // Around closed airspace and volcanic ash, then real navaids along each part.
+        const zones = this.zonesAt(b.time);
+        const opCountry = af.airline?.country ?? af.op?.country;
+        const around = detour([a.lat, a.lon], [z.lat, z.lon], zones, opCountry);
+        if (around?.length) {
+          avoids = crossedZones([a.lat, a.lon], [z.lat, z.lon], zones, opCountry).map((zn) => zn.name);
+          const gate = (g: Pt, i: number): Fix => {
+            const n = this.nav?.nearestVor(g[0], g[1], 40);
+            return n ? { ident: n.ident, lat: n.lat, lon: n.lon, real: true, name: n.name, kind: n.kind } : { ident: fixName(`${g[0]}${g[1]}${i}`), lat: g[0], lon: g[1], real: false };
+          };
+          const pts: Fix[] = [a, ...around.map(gate), z];
+          for (let i = 0; i < pts.length - 1; i++) {
+            if (i > 0) via.push(pts[i]!);
+            via.push(...enroute(this.nav, pts[i]!, pts[i + 1]!));
+          }
+          // Snapping to navaids must not lead back into closed airspace: check every leg.
+          const legsClear = (list: Fix[]) => {
+            const seq = [a, ...list, z];
+            return seq.every((f, i) => i === 0 || !crossedZones([seq[i - 1]!.lat, seq[i - 1]!.lon], [f.lat, f.lon], zones, opCountry).length);
+          };
+          if (!legsClear(via)) via = around.map((g, i) => ({ ident: fixName(`${g[0]}${g[1]}${i}`), lat: g[0], lon: g[1], real: false }));
+        } else via = enroute(this.nav, a, z);
         chain.push(...via.map((f) => [f.lat, f.lon] as Pt));
       }
     }
@@ -1871,8 +2071,10 @@ export class World {
       const vecLen = cumulative(vectors).at(-1)!;
       return { arr, athr, finalNm, P, faf, fafAlt, vectors, vecLen, turnOn };
     };
-    let entry: Pt = star ? [star.fix.lat, star.fix.lon] : destination(to.lat, to.lon, bearingDeg(to.lat, to.lon, chain[chain.length - 1]![0], chain[chain.length - 1]![1]), light ? 6 : 20);
+    const starLast = star?.fixes?.[star.fixes.length - 1];
+    let entry: Pt = starLast ? [starLast.lat, starLast.lon] : star ? [star.fix.lat, star.fix.lon] : destination(to.lat, to.lon, bearingDeg(to.lat, to.lon, chain[chain.length - 1]![0], chain[chain.length - 1]![1]), light ? 6 : 20);
     if (mission) entry = mission.area;
+    else if (star?.fixes) chain.push(...star.fixes.map((f) => [f.lat, f.lon] as Pt));
     else chain.push(entry);
     let geo = arrivalAt(to, entry);
     // Arrival entry altitude: a continuous ~3° descent through the vectors to the final fix.
@@ -1898,7 +2100,7 @@ export class World {
     const emerKind = mission ? null : this.rollEmergency(af, kind, flightH);
     let stopAt: number | undefined;
     const chainLen = cumulative(chain).at(-1)!;
-    if (emerKind) stopAt = chainLen * this.rng.range(0.25, 0.75);
+    if (emerKind) stopAt = emerKind === 'birdstrike' ? Math.min(chainLen * 0.4, 10 + this.rng.range(0, 8)) : chainLen * this.rng.range(0.25, 0.75);
     const prof = { alt0: climbOutAlt, alt1: entryAlt, cruise: cruiseFt, tas, light, v0: light ? 85 : 220, v1: light ? 90 : 250, steps: gcNm > 3000 && !nat, ceiling, climbFpm };
     b.ev('climb', { n: light ? Math.round(cruiseFt / 100) : Math.round(Math.min(cruiseFt, 24_000) / 1000) * 10 });
     const flown = this.flyChain(b, chain, prof, stopAt);
@@ -1907,9 +2109,10 @@ export class World {
     if (sid) {
       const parts = [sid.name.replace(' ', ''), sid.fix.ident];
       for (const f of via) parts.push('DCT', f.ident);
-      if (nat) parts.push('NAT', nat.track.letter);
+      if (nat) parts.push(nat.track.system, nat.track.letter);
       if (star) parts.push('DCT', star.fix.ident, star.name.replace(' ', ''));
       route = { via, text: parts.join(' ') };
+      if (avoids?.length) route.avoids = avoids;
       route.sid = sid;
       if (star) route.star = star;
     }
@@ -1919,16 +2122,16 @@ export class World {
       const tin = near(nat.pts[0]!);
       const tout = near(nat.pts[nat.pts.length - 1]!);
       const mach = spec?.cruiseMach ?? (t.cls === 'wide' ? 0.84 : 0.78);
-      route.nat = { letter: nat.track.letter, text: natString(nat.track), fl: Math.round(cruiseFt / 100), mach, entry: tin, exit: tout };
-      b.ev('oceanic', { a: nat.track.letter, b: natString(nat.track), n: Math.round(cruiseFt / 100) }, tin - 2 * MIN);
+      route.nat = { system: nat.track.system, letter: nat.track.letter, text: otsString(nat.track), fl: Math.round(cruiseFt / 100), mach, entry: tin, exit: tout };
+      b.ev('oceanic', { a: nat.track.letter, b: otsString(nat.track), n: Math.round(cruiseFt / 100) }, tin - 2 * MIN);
       b.ev('oceanicExit', { a: nat.track.letter }, tout);
     }
 
     if (emerKind) {
       // ---- emergency: declare, descend as required, divert to the nearest suitable airport.
       const here = flown.pt;
-      const field = this.nearestSuitable(here, t, undefined) ?? to;
-      const squawk = emerKind === 'medical' ? undefined : '7700';
+      const field = emerKind === 'birdstrike' ? from : (this.nearestSuitable(here, t, undefined) ?? to);
+      const squawk = emerKind === 'medical' || (emerKind === 'birdstrike' && this.rng.next() < 0.6) ? undefined : '7700';
       emergency = { t: b.time, kind: emerKind, divertTo: field };
       if (squawk) emergency.squawk = squawk;
       b.ev('emergency', { a: emerKind, b: field.ident });
@@ -1993,9 +2196,16 @@ export class World {
     } else if (divert && alternate) {
       // ---- weather diversion: hold at the arrival fix, then fly to the alternate.
       const crs = bearingDeg(entry[0], entry[1], to.lat, to.lon);
+      // Hold for an improvement first (fuel permitting); about four in ten get in after all.
+      const laps = this.rng.int(3, 6);
       b.ev('hold', { a: star?.fix.ident ?? '', n: Math.round(entryAlt / 100) });
-      b.path('holding', racetrack(entry, crs, 230, 2), entryAlt, entryAlt, 230, 230);
+      b.path('holding', racetrack(entry, crs, 230, laps), entryAlt, entryAlt, 230, 230);
       holdMs += b.time - b.segs[b.segs.length - 1]!.t0;
+      improved = this.rng.next() < 0.4;
+    }
+    if (divert && alternate && !emerKind && !mission && improved) {
+      b.ev('improve', { a: to.ident });
+    } else if (divert && alternate && !emerKind && !mission) {
       divertedFrom = to;
       dest = alternate;
       b.ev('divert', { a: alternate.ident });
@@ -2328,6 +2538,8 @@ export class World {
     leg.turnAfter =
       leg.emergency?.kind === 'engine' ? this.rng.range(10, 20) * H : leg.emergency ? this.rng.range(70, 120) * MIN : af.role === 'hems' ? (leg.to.site === 'scene' ? this.rng.range(15, 30) : leg.to.site === 'hospital' && leg.to !== af.home ? this.rng.range(15, 25) : this.rng.range(40, 300)) * MIN : af.role === 'offshore' ? (leg.to.site === 'offshore' ? this.rng.range(15, 30) * MIN : this.rng.range(60, 200) * MIN) : af.role === 'shuttle' ? this.rng.range(15, 50) * MIN : af.role === 'glider' || af.role === 'tow' ? this.rng.range(8, 45) * MIN : next;
     af.turnMs = leg.turnAfter;
+    // Rotation: where this aircraft goes next (shown on the flight card, flown in turn).
+    if (af.role === 'airline' && !leg.canceled && !leg.divertedFrom && !leg.emergency) leg.plannedNext = this.chooseDestination(af, leg.to, leg.tOn + leg.turnAfter);
     return leg;
   }
 
@@ -2379,7 +2591,7 @@ export class World {
           const hub = this.airports.get(af.airline.hubs[0]!);
           if (hub && hub !== at) return this.buildLeg(af, at, hub, tOff, prev.standTo, { kind: 'positioning' });
         }
-        let next = prev.canceledTo ?? prev.divertedFrom ?? this.chooseDestination(af, at, tOff);
+        let next = prev.canceledTo ?? prev.divertedFrom ?? (prev.plannedNext && prev.plannedNext !== at ? prev.plannedNext : this.chooseDestination(af, at, tOff));
         if (next === at) next = this.chooseDestination(af, at, tOff);
         // Occasionally an aircraft positions empty to a hub (maintenance, schedule recovery).
         const positioning = !!af.airline && !af.airline.hubs.includes(at.ident) && this.rng.next() < 0.012;
@@ -2387,7 +2599,28 @@ export class World {
           const hub = this.airports.get(af.airline!.hubs[0]!);
           if (hub && hub !== at && distanceNm(at.lat, at.lon, hub.lat, hub.lon) <= af.type.range) return this.buildLeg(af, at, hub, tOff, prev.standTo, { kind: 'positioning' });
         }
-        return this.buildLeg(af, at, next, tOff, prev.standTo);
+        // Crew duty limits: a crew that would run out of hours needs a replacement crew
+        // (a short wait at the hub) or, at an outstation, sometimes its legal rest.
+        let crewDelay = 0;
+        if (af.airline) {
+          const limit = (af.type.cls === 'wide' ? 16 : 13) * H;
+          const est = (distanceNm(at.lat, at.lon, next.lat, next.lon) / (af.type.kt * 0.88)) * H + 50 * MIN;
+          if (af.dutyStart === undefined || prev.turnAfter >= 8 * H) af.dutyStart = tOff - 60 * MIN;
+          else if (tOff + est - af.dutyStart > limit) {
+            const r = this.rng.next();
+            if (af.airline.hubs.includes(at.ident)) crewDelay = r < 0.35 ? this.rng.range(25, 80) * MIN : 0;
+            else crewDelay = r < 0.12 ? this.rng.range(9.5, 12) * H : r < 0.45 ? this.rng.range(30, 120) * MIN : 0;
+            af.dutyStart = tOff + crewDelay - 60 * MIN;
+          }
+        }
+        const leg = this.buildLeg(af, at, next, tOff + crewDelay, prev.standTo);
+        if (crewDelay > 0 && !leg.canceled) {
+          leg.crewDelayMs = crewDelay;
+          leg.std = round5(leg.std - crewDelay);
+          leg.sta = round5(leg.sta - crewDelay);
+          leg.events.unshift({ t: tOff, k: 'crew', n: Math.round(crewDelay / MIN) });
+        }
+        return leg;
       }
     }
   }
@@ -2584,6 +2817,34 @@ export class World {
       else out.push(s.a, s.b);
     }
     return out;
+  }
+}
+
+/**
+ * Marks stands big enough for wide-bodies: OpenStreetMap has no stand sizes, but wide-body
+ * stands sit ~65–80 m apart against ~40–50 m for narrow-bodies.
+ */
+function markWideStands(stands: Stand[]) {
+  const cell = (la: number, lo: number) => `${Math.round(la * 1500)},${Math.round(lo * 1500)}`;
+  const grid = new Map<string, Stand[]>();
+  for (const s of stands) {
+    const k = cell(s.lat, s.lon);
+    const g = grid.get(k);
+    if (g) g.push(s);
+    else grid.set(k, [s]);
+  }
+  for (const s of stands) {
+    let nn = Infinity;
+    const cy = Math.round(s.lat * 1500);
+    const cx = Math.round(s.lon * 1500);
+    for (let dy = -1; dy <= 1; dy++)
+      for (let dx = -1; dx <= 1; dx++)
+        for (const o of grid.get(`${cy + dy},${cx + dx}`) ?? []) {
+          if (o === s) continue;
+          const m = distanceNm(s.lat, s.lon, o.lat, o.lon) * 1852;
+          if (m < nn) nn = m;
+        }
+    s.wide = s.kind !== 3 && nn >= 58;
   }
 }
 

@@ -284,7 +284,8 @@ describe('world simulator', () => {
     const far = destination(side[0], side[1], rw.hdg + 90, 0.3);
     w.setTaxiGraph('EGLL', { nodes: [side, far, [a.lat, a.lon]], adj: [[1], [0, 2], [1]] }, NOW);
     w.advance(NOW + 6 * 3_600_000);
-    const arrivals = w.airframes.filter((af) => af.leg.to.ident === 'EGLL' && af.leg.tOff > NOW && af.airline && !af.leg.canceled);
+    // Only legs planned after the taxiway network was loaded.
+    const arrivals = w.airframes.filter((af) => af.leg.to.ident === 'EGLL' && !!af.prev && af.leg.tOff > NOW && af.airline && !af.leg.canceled);
     expect(arrivals.length).toBeGreaterThan(0);
     const land = arrivals[0]!.leg.segs.find((s) => s.phase === 'landing')!;
     expect(distanceNm(land.b[0], land.b[1], exit[0], exit[1])).toBeLessThan(0.05);

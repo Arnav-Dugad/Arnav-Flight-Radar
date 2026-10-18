@@ -1,9 +1,10 @@
-import { LogOut, Orbit, Shuffle, Undo2, X } from 'lucide-react';
+import { LogOut, Orbit, Shuffle, Undo2, Volume2, VolumeX, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useEffect, useRef, useState } from 'react';
 import { classifyAircraft } from '@shared/classify';
 import { AircraftGlyph, BrandMark, FollowIcon, MeasureIcon } from '@/components/icons';
 import { GlassButton, IconButton } from '@/components/ui/Glass';
+import { type FlightSoundHandle, type FlightSoundState, soundKindFor, startFlightSound } from '@/lib/flightSound';
 import { fmtAltitude, fmtBearing, fmtDistance, fmtSpeed } from '@/lib/format';
 import { useNow, useSelectedTrack, useTrafficVersion } from '@/lib/hooks';
 import { useIsMobile } from '@/lib/useMedia';
@@ -18,6 +19,32 @@ import { useUI } from '@/state/ui';
 import { simNow } from '@/data/world';
 import { LiveStatus } from './LiveStatus';
 
+const SOUND_PREF = 'arnav:followSound';
+
+function readSoundPref(): boolean {
+  try {
+    return localStorage.getItem(SOUND_PREF) === '1';
+  } catch {
+    return false;
+  }
+}
+
+/** Live sound parameters for the followed aircraft (polled by the sound engine). */
+function followedSoundState(): FlightSoundState | null {
+  const s = useUI.getState();
+  if (!s.following) return null;
+  const tr = traffic.get(s.selectedId);
+  if (!tr || traffic.stateOf(tr) === 'lost') return null;
+  const ac = tr.ac;
+  return {
+    kind: soundKindFor(classifyAircraft(ac)),
+    onGround: ac.onGround,
+    gs: ac.groundSpeed ?? 0,
+    vr: ac.verticalRate ?? 0,
+    alt: ac.altitudeBarometric ?? ac.altitudeGeometric ?? 0,
+  };
+}
+
 /** Following indicator + "Return to aircraft" after a manual camera move. */
 export function FollowBanner() {
   const following = useUI((s) => s.following);
@@ -26,6 +53,40 @@ export function FollowBanner() {
   const t = useSelectedTrack();
   const label = t?.ac.callsign ?? t?.ac.registration ?? id?.toUpperCase();
   const lost = t ? traffic.stateOf(t) === 'lost' : true;
+  const [soundOn, setSoundOn] = useState(readSoundPref);
+  const sound = useRef<FlightSoundHandle | null>(null);
+  const active = following && !!id;
+
+  // Tear down when following stops; resume a remembered preference on a new follow.
+  useEffect(() => {
+    if (!active || !soundOn) {
+      sound.current?.stop();
+      sound.current = null;
+    } else if (!sound.current) sound.current = startFlightSound(followedSoundState);
+  }, [active, soundOn]);
+  useEffect(
+    () => () => {
+      sound.current?.stop();
+      sound.current = null;
+    },
+    [],
+  );
+
+  const toggleSound = () => {
+    const next = !soundOn;
+    try {
+      localStorage.setItem(SOUND_PREF, next ? '1' : '0');
+    } catch {
+      /* preference simply won't persist */
+    }
+    // Start inside the click handler so the AudioContext satisfies autoplay policy.
+    if (next && !sound.current) sound.current = startFlightSound(followedSoundState);
+    if (!next) {
+      sound.current?.stop();
+      sound.current = null;
+    }
+    setSoundOn(next);
+  };
   return (
     <AnimatePresence>
       {following && id && (
@@ -45,6 +106,9 @@ export function FollowBanner() {
               Return to aircraft
             </GlassButton>
           )}
+          <IconButton label={soundOn ? 'Sound off' : 'Sound on'} size={28} onClick={toggleSound}>
+            {soundOn ? <Volume2 size={14} /> : <VolumeX size={14} />}
+          </IconButton>
           <IconButton label="Stop following" size={28} onClick={stopFollow}>
             <X size={14} />
           </IconButton>

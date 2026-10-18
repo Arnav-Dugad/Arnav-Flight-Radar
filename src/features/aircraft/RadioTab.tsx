@@ -82,6 +82,9 @@ export function RadioTab({ id }: { id: string }) {
       // Two distinct voices where available; otherwise different pitch.
       u.pitch = l.who === 'atc' ? 0.85 : v.pilot && v.pilot !== v.atc ? 1 : 1.25;
       u.rate = l.who === 'atc' ? 1.08 : 1.15;
+      // A short squelch burst at the start and end of each transmission, like a real radio.
+      u.onstart = () => squelch(0.05);
+      u.onend = () => squelch(0.035);
       window.speechSynthesis.speak(u);
     }
   }, []);
@@ -227,4 +230,30 @@ export function RadioTab({ id }: { id: string }) {
       <p className="text-[11px] leading-relaxed text-fg-3">Phraseology is illustrative. Airport frequencies are real published ones; en-route frequencies are invented. Times in UTC.</p>
     </div>
   );
+}
+
+let squelchCtx: AudioContext | null = null;
+/** Band-passed noise burst (radio squelch tail), synthesised; silently skipped without Web Audio. */
+function squelch(seconds: number) {
+  try {
+    squelchCtx ??= new AudioContext();
+    const ctx = squelchCtx;
+    if (ctx.state === 'suspended') void ctx.resume();
+    const len = Math.floor(ctx.sampleRate * seconds);
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 1800;
+    bp.Q.value = 0.9;
+    const g = ctx.createGain();
+    g.gain.value = 0.08;
+    src.connect(bp).connect(g).connect(ctx.destination);
+    src.start();
+  } catch {
+    /* audio is optional */
+  }
 }

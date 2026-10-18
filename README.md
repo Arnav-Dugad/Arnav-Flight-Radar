@@ -31,13 +31,17 @@ airline pages, widgets and a 3D view, on an original Apple-style glass design.
   short of and cross other runways, and de-ice when the real METAR reports freezing precipitation.
 - **Departure queue:** take-offs keep ICAO wake-turbulence spacing (a medium behind a heavy waits two
   minutes). Long queues become gate holds.
-- **Departure route:** out over a real VOR or NDB on a procedure-style departure.
+- **Departure route:** out over a real VOR or NDB on a procedure-style departure, or at US airports on
+  the real published FAA departure (CIFP).
 - **Climb and cruise:** 250 kt below FL100, then a semicircular flight level, with step climbs on long
   flights and winds aloft that move the arrival estimate.
-- **North Atlantic:** transatlantic flights use the day's simulated track system (westbound by day,
-  eastbound along the jet stream at night).
-- **Arrival:** a procedure-style arrival over a real navaid, holding there when the airport is
-  saturated, then radar vectors to an ILS, a CAT III ILS in low visibility, an RNP or a visual approach.
+- **Oceanic tracks:** transatlantic flights use the day's simulated North Atlantic tracks, Pacific flights
+  the PACOTS, and Australia to Asia flights the flex tracks.
+- **Closed airspace:** flights route around real closures (Ukraine; Russia for airlines of the countries
+  it has banned; Belarus; North Korea) and around the day's simulated volcanic-ash advisory.
+- **Arrival:** a procedure-style arrival over a real navaid (the published STAR at US airports), holding
+  there when the airport is saturated, then radar vectors to an ILS, a CAT III ILS in low visibility, an
+  RNP or a visual approach. Runways close for snow clearing, inspections and bird dispersal.
 - **Landing and turnaround:** the aircraft leaves the runway at a real, named exit and taxis to its
   stand for the turnaround.
 
@@ -45,13 +49,17 @@ airline pages, widgets and a 3D view, on an original Apple-style glass design.
 - **Live weather:** real METARs set the runway in use and the capacity, and real TAFs set the capacity
   for the hours ahead.
 - **Bad weather** (fog, storms, gusts, snow) brings go-arounds, holding, diversions and cancellations.
-- **Rare emergencies:** medical diversions (PAN PAN), engine failures and depressurisations (squawk
-  7700) divert to the nearest suitable airport. A repaired aircraft positions empty back to base.
+- **Rare emergencies:** medical diversions (PAN PAN), engine failures, depressurisations and bird strikes
+  divert to the nearest suitable airport (or return). A repaired aircraft positions empty back to base.
+- **Crews:** duty-time limits mean waits for a fresh crew; weather diversions first hold for an improvement.
 
 **Timetable and fleet**
 - **Routes:** flight numbers stay stable per route. Thin and leisure routes run on fixed weekdays,
   shown on the card as e.g. "Mon Wed Fri".
-- **Seasons:** IATA seasons apply, with Mediterranean summers, ski winters and winter sun.
+- **Seasons:** IATA seasons apply, with Mediterranean summers, ski winters (Saturday changeovers) and winter
+  sun; holiday peaks (Christmas, Thanksgiving, Chinese New Year, Diwali, Eid, Golden Week) and Hajj.
+- **Markets:** international routes follow real regional flows (Indian airlines fly heavily to the Gulf,
+  South-East Asia and Europe); network carriers depart their hubs in connecting banks.
 - **Weekly and daily patterns:** traffic peaks on Friday and Sunday and dips on Saturday; there is a
   night lull with a morning wave, and cargo flies night banks.
 - **Fleet:** about 100 aircraft types with real dimensions, weights and fuel burn. Each card shows a
@@ -77,7 +85,9 @@ airline pages, widgets and a 3D view, on an original Apple-style glass design.
   - controlled and special-use airspace (FAA, openAIP), in 3D when tilted, with click-for-details;
   - lightning climatology (NASA);
   - an airport disruption map;
-  - the simulated North Atlantic tracks.
+  - the simulated oceanic tracks (North Atlantic, Pacific, Australian flex tracks);
+  - closed airspace and volcanic-ash advisories;
+  - forecast disruption at large airports from their TAFs.
 - At large airports you see stands (free or occupied), ground-service vehicles and the departure queue on the map.
 
 **Flights**
@@ -88,10 +98,14 @@ airline pages, widgets and a 3D view, on an original Apple-style glass design.
   - scheduled, actual and estimated times in local time and UTC, with terminals and stands;
   - the flight plan: departure and arrival procedures, en-route navaids, the oceanic track, taxi
     clearances, approach type, wake category and days of operation;
-  - a **simulated radio** transcript (real airport frequencies) you can listen to;
+  - a **simulated radio** transcript (real airport frequencies) you can listen to, with squelch;
+  - the aircraft's rotation for the day and a weekly schedule strip;
   - an estimated **load sheet** with a seat map, fuel plan and weights;
   - the airframe's recent **history**, flight data, a graph and a turnaround timeline.
-- Follow, a 3D chase view behind the aircraft with a **true-scale 3D model**, a route line (flown and planned), a 3D flight path with an altitude profile, sharing and comparing.
+- Follow, a 3D chase view behind the aircraft with a **true-scale 3D model** (landing gear, flaps, night
+  lighting) and optional synthesised engine sound, a route line with clickable fixes, the cleared taxi
+  route on the ground, a 3D flight path with an altitude profile, sharing and comparing.
+- **Route search:** "LHR JFK", "LHR-JFK" or "London to New York".
 - **Aircraft type pages:** specs, a typical cabin and every simulated example flying now.
 
 **Airports**
@@ -100,6 +114,10 @@ airline pages, widgets and a 3D view, on an original Apple-style glass design.
 - The runway in use and an hourly movement chart.
 - Sunrise, sunset, moonrise and moonset; METAR and TAF; runway diagrams and an approach explorer.
 - **Delays:** seven days of punctuality and a 24-hour disruption forecast built from the real TAF.
+- **Radio scanner:** listen to an airport's Delivery, Ground, Tower or Approach frequency.
+- **Compare airports** side by side, and a session punctuality league of airlines.
+- **Accurate 3D airport buildings** (terminals, piers, hangars, control towers, jet bridges from
+  OpenStreetMap) and runway, approach and taxiway lighting at night.
 - Terminal outlines, numbered stands and 3D buildings when you zoom in; links to public airport webcams.
 - Pin up to four airports to the map as mini-boards. Installed apps get home-screen shortcuts for them.
 
@@ -138,7 +156,9 @@ Open <http://localhost:5173>. No API keys or secrets are needed.
 | `npm run budget` | Fails if the first-visit download exceeds the performance budget |
 | `npm run data:media` | Rebuild airline logos and representative photos (Wikidata / Commons) |
 | `npm run data:ground` | Fetch stands, named taxiways, holding points and terminals from OpenStreetMap (polite, resumable) |
+| `npm run data:buildings` | Fetch accurate 3D airport buildings (terminals, piers, hangars, towers, jet bridges) from OpenStreetMap |
 | `npm run data:sim` | Rebuild navaids, real airport frequencies, heliports and gliding sites (OurAirports) |
+| `npm run data:procedures` | Rebuild published US SIDs/STARs from the FAA CIFP (public domain) |
 | `npm run data:airspace` | Rebuild Canada & Europe airspace from openAIP |
 | `npm run deploy` | Build and `wrangler deploy` |
 
@@ -146,7 +166,7 @@ Open <http://localhost:5173>. No API keys or secrets are needed.
 
 ```
 Browser
- ├─ World simulator (src/data/sim, lazy-loaded): airframes, legs, slots, stands, winds
+ ├─ Simulation Web Worker (src/data/sim.worker.ts → simCore.ts → src/data/sim): the whole world
  ├─ Traffic engine + MapLibre GPU layers (15,000 aircraft, culled per viewport)
  └─ Static data: airports, runways, airlines, logos, stands/taxiways, airspace
 Cloudflare edge

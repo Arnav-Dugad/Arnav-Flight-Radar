@@ -3,7 +3,7 @@ import { classifyAircraft, CLASS_LABEL } from '@shared/classify';
 import { AircraftGlyph } from '@/components/icons';
 import { aircraftColor } from '@/lib/colors';
 import { fmtAltitude, fmtBearing, fmtSpeed } from '@/lib/format';
-import { simFlight } from '@/data/world';
+import { simFlight, useSim } from '@/data/world';
 import { AirlineLogo, STATUS_TEXT } from '@/features/aircraft/FlightParts';
 import { useMedia } from '@/lib/useMedia';
 import { useSettings } from '@/state/settings';
@@ -12,6 +12,7 @@ import { useUI } from '@/state/ui';
 
 /** Glass preview card that follows the pointer over an aircraft (pointer devices only). */
 export function HoverCard() {
+  useSim((s) => s.rev); // re-render when the simulation worker answers
   const id = useUI((s) => s.hoveredId);
   const point = useUI((s) => s.hoverPoint);
   const selected = useUI((s) => s.selectedId);
@@ -93,6 +94,7 @@ export function HoverCard() {
 
 /** Screen-reader-only live region for selection and status announcements. */
 export function Announcer() {
+  useSim((s) => s.rev); // re-render when the simulation worker answers
   const msg = useUI((s) => s.announcement);
   return (
     <div className="sr-only" aria-live="polite" aria-atomic="true">

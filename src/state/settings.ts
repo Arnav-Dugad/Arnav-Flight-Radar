@@ -53,7 +53,9 @@ export interface Settings {
   showPhotos: boolean;
   show3dPath: boolean; // extruded flight path for the selected aircraft when the map is tilted
   showDisruptions: boolean; // airports coloured by disruption index
-  showNatTracks: boolean; // simulated North Atlantic organised tracks
+  showNatTracks: boolean; // simulated organised track systems (NAT, PACOTS, Australian flex tracks)
+  showZones: boolean; // closed airspace and simulated volcanic-ash advisories
+  showForecastMap: boolean; // large airports coloured by the worst hour in their TAF
   show3dBuildings: boolean; // extruded buildings (OpenStreetMap) when the map is tilted
   show3dModels: boolean; // true-scale 3D aircraft models when zoomed in close
   labelContent: LabelContent; // what aircraft labels show
@@ -104,6 +106,8 @@ export const DEFAULT_SETTINGS: Settings = {
   show3dPath: true,
   showDisruptions: false,
   showNatTracks: false,
+  showZones: true,
+  showForecastMap: false,
   show3dBuildings: true,
   show3dModels: true,
   labelContent: 'flight',

@@ -5,18 +5,21 @@ import { AnalyticsIcon } from '@/components/icons';
 import { Section } from '@/components/ui/Glass';
 import { Skeleton } from '@/components/ui/Feedback';
 import { Panel } from '@/components/ui/Sheet';
-import { simWidgets, useSim, type NotableFlight } from '@/data/world';
+import { useQuery } from '@tanstack/react-query';
+import { setSimSpeed, simPunctuality, simSeason, simWidgets, useSim, type NotableFlight, type PunctualityRow } from '@/data/world';
 import { cn } from '@/lib/cn';
 import { fmtAltitude, fmtSpeed } from '@/lib/format';
 import { useNow } from '@/lib/hooks';
 import { flyTo, focusAircraft } from '@/map/controller';
 import { useSettings } from '@/state/settings';
 import { useUI } from '@/state/ui';
+import { AirlineLogo } from '@/features/aircraft/FlightParts';
 
 const DISRUPTION = ['#3ddc97', '#9be15d', '#ffd166', '#ffb547', '#ff8a5c', '#ff5d73'];
 export const disruptionColor = (v: number) => DISRUPTION[Math.min(5, Math.max(0, Math.round(v)))]!;
 
 export function WidgetsPanel() {
+  useSim((s) => s.rev); // re-render when the simulation worker answers
   const open = useUI((s) => s.panel === 'widgets');
   const openPanel = useUI((s) => s.openPanel);
   const selectAirport = useUI((s) => s.selectAirport);
@@ -24,9 +27,8 @@ export function WidgetsPanel() {
   const loading = useSim((s) => s.loading);
   const airborne = useSim((s) => s.airborne);
   const units = useSettings((s) => s.units);
-  const now = useNow(10_000);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const w = useMemo(() => (open && !loading ? simWidgets() : undefined), [open, loading, Math.floor(now / 10_000)]);
+  useNow(10_000);
+  const w = (open && !loading ? simWidgets() : undefined);
   const busiest = w ? [...w.airports].sort((a, b) => b.movements - a.movements).slice(0, 10) : [];
   const disrupted = w ? [...w.airports].filter((a) => a.disruption > 0.2).sort((a, b) => b.disruption - a.disruption).slice(0, 8) : [];
 
@@ -77,6 +79,8 @@ export function WidgetsPanel() {
             </div>
           </div>
 
+          <TravelPeaks />
+
           <Section title="Busiest airports (last hour)">
             <ul className="glass-2 divide-y divide-[var(--line)] overflow-hidden rounded-[16px]">
               {busiest.map((a, i) => (
@@ -126,11 +130,134 @@ export function WidgetsPanel() {
             <p className="text-[11px] text-fg-3">Disruption index 0–5 from delays, holding, diversions and cancellations over the last hour. Real METAR weather drives much of it.</p>
           </Section>
 
+          <PunctualityLeague />
+
           <Section title="Longest flights in the air">{flightList(w.longest, (v) => `${Math.round(v).toLocaleString()} NM`)}</Section>
           <Section title="Fastest ground speed (jet streams)">{flightList(w.fastest, (v) => fmtSpeed(v, units.speed))}</Section>
           <Section title="Highest">{flightList(w.highest, (v) => fmtAltitude(v, units.altitude))}</Section>
         </div>
       )}
     </Panel>
+  );
+}
+
+// ---------------------------------------------------------------- punctuality league
+
+/** Airlines need this many counted arrivals before they enter the league. */
+const LEAGUE_MIN = 5;
+
+function PunctualityLeague() {
+  const speed = useSim((s) => s.speed);
+  const selectAirline = useUI((s) => s.selectAirline);
+  const now = useNow(5000);
+  const tick = Math.floor(now / 5000);
+  const data = useMemo(() => {
+    void tick; // re-read the session tally every 5 s
+    const all = simPunctuality(1);
+    return { rows: all.filter((r) => r.flights >= LEAGUE_MIN), counted: all.reduce((n, r) => n + r.flights, 0), airlines: all.length };
+  }, [tick]);
+  const { rows, counted, airlines } = data;
+  const ready = rows.length >= 3;
+  const top = rows.slice(0, 10);
+  const bottom = rows.length > 10 ? rows.slice(Math.max(10, rows.length - 5)).reverse() : [];
+
+  const list = (items: PunctualityRow[], rank: (i: number) => number) => (
+    <ul className="glass-2 divide-y divide-[var(--line)] overflow-hidden rounded-[16px]">
+      {items.map((r, i) => (
+        <li key={r.icao}>
+          <button type="button" onClick={() => selectAirline(r.icao)} className="flex w-full items-center gap-2.5 px-3 py-2 text-left hover:bg-[var(--line)]" title={`${r.name}: ${r.onTimePct}% of ${r.flights} arrivals within 15 minutes, average delay ${r.avgDelayMin} min`}>
+            <span className="tnum w-5 shrink-0 text-right text-[11px] text-fg-3">{rank(i)}</span>
+            <AirlineLogo icao={r.icao} code={r.icao} size={20} name={r.name} wide />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[12.5px] font-medium text-fg">{r.name}</span>
+              <span className="tnum block truncate text-[10.5px] text-fg-3">
+                {r.flights} flight{r.flights === 1 ? '' : 's'} · avg delay {r.avgDelayMin} min{r.canceled ? ` · ${r.canceled} canceled` : ''}
+              </span>
+            </span>
+            <span className="w-[58px] shrink-0">
+              <span className="tnum block text-right text-[12.5px] font-semibold text-fg">{r.onTimePct}%</span>
+              <span className="mt-1 block h-[4px] overflow-hidden rounded-full bg-[var(--viz-grid)]" aria-hidden="true">
+                <span className="block h-full rounded-full bg-[var(--viz-1)]" style={{ width: `${Math.max(2, r.onTimePct)}%` }} />
+              </span>
+            </span>
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+
+  return (
+    <Section
+      title="Punctuality this session"
+      action={<span className="rounded-full bg-[var(--line)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-fg-2">Simulated</span>}
+    >
+      <p className="text-[11.5px] leading-snug text-fg-3">
+        Counts simulated flights that arrived since you opened the site. On time means on stand within 15 minutes of schedule; airlines appear after {LEAGUE_MIN} arrivals.
+      </p>
+      {!ready ? (
+        <div className="glass-2 rounded-[16px] px-4 py-5 text-center">
+          <p className="text-[12.5px] font-medium text-fg-2">The league fills as flights land</p>
+          <p className="tnum mt-1 text-[11.5px] leading-snug text-fg-3">
+            {counted ? `${counted.toLocaleString()} arrival${counted === 1 ? '' : 's'} counted so far across ${airlines} airline${airlines === 1 ? '' : 's'}.` : 'No arrivals counted yet.'}{' '}
+            {speed >= 30 ? 'At 30× clock speed it takes a minute or two.' : `It takes several minutes at ${speed}×; at 30× clock speed it fills much faster.`}
+          </p>
+          {speed < 30 && (
+            <button
+              type="button"
+              onClick={() => setSimSpeed(30)}
+              className="mt-3 inline-flex h-7 items-center gap-1.5 rounded-full border border-[var(--line)] px-3 text-[11.5px] font-medium text-fg-2 hover:text-fg"
+            >
+              Run the clock at 30× <kbd className="rounded-[4px] bg-[var(--line)] px-1 text-[10px] text-fg-3">4</kbd>
+            </button>
+          )}
+        </div>
+      ) : (
+        <>
+          <div className="space-y-1.5">
+            <h4 className="px-0.5 text-[11.5px] font-medium text-fg-2">Most punctual</h4>
+            {list(top, (i) => i + 1)}
+          </div>
+          {bottom.length > 0 && (
+            <div className="space-y-1.5">
+              <h4 className="px-0.5 text-[11.5px] font-medium text-fg-2">Least punctual</h4>
+              {list(bottom, (i) => rows.length - i)}
+            </div>
+          )}
+          <p className="tnum text-[11px] text-fg-3">
+            {counted.toLocaleString()} arrivals counted across {airlines} airlines · {rows.length} in the league.
+          </p>
+        </>
+      )}
+    </Section>
+  );
+}
+
+/** Holiday peaks, Hajj, the IATA season and any ash advisory shaping today's simulated traffic. */
+function TravelPeaks() {
+  const q = useQuery({ queryKey: ['sim-season', Math.floor(Date.now() / 600_000)], queryFn: simSeason, staleTime: 10 * 60_000 });
+  const s = q.data;
+  if (!s) return null;
+  const items: { title: string; sub: string; tone: 'accent' | 'warn' }[] = [];
+  for (const h of s.holidays) items.push({ title: `${h.name} travel peak`, sub: `${h.where} · fuller flights`, tone: 'accent' });
+  if (s.hajj) items.push({ title: s.hajj.phase === 'arrivals' ? 'Hajj — pilgrims arriving' : 'Hajj — pilgrims flying home', sub: 'Many extra flights to Jeddah and Medina', tone: 'accent' });
+  if (s.ash) items.push({ title: s.ash.replace(' (simulated)', ''), sub: 'Flights route around it; nearby airports run at reduced capacity · simulated', tone: 'warn' });
+  return (
+    <Section title={`Shaping traffic today · ${s.season}`}>
+      {items.length === 0 ? (
+        <p className="glass-2 rounded-[16px] px-3.5 py-3 text-[12px] text-fg-3">No holiday peaks or disruption events today — a typical {s.season.startsWith('Summer') ? 'summer' : 'winter'} schedule.</p>
+      ) : (
+        <ul className="glass-2 divide-y divide-[var(--line)] overflow-hidden rounded-[16px]">
+          {items.map((it) => (
+            <li key={it.title} className="flex items-start gap-2.5 px-3.5 py-2.5">
+              <span className={cn('mt-1.5 size-2 shrink-0 rounded-full', it.tone === 'warn' ? 'bg-[#e8c24a]' : 'bg-[var(--accent)]')} aria-hidden="true" />
+              <div className="min-w-0">
+                <div className="text-[12.5px] font-semibold text-fg">{it.title}</div>
+                <div className="text-[11px] text-fg-3">{it.sub}</div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Section>
   );
 }

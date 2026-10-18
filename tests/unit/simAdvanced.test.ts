@@ -207,15 +207,15 @@ describe('special operations', () => {
     w.setNavaids(navRows);
     w.populate(NOW, 0.75);
     let found = w.airframes.filter((a) => a.leg.emergency);
-    for (let k = 1; k < 30 && !found.some((a) => a.leg.emergency!.kind !== 'medical'); k++) {
+    for (let k = 1; k < 30 && !found.some((a) => a.leg.emergency!.squawk); k++) {
       w.advance(NOW + k * 3_600_000);
       found = w.airframes.filter((a) => a.leg.emergency);
     }
     expect(found.length).toBeGreaterThan(0);
-    const af = found.find((a) => a.leg.emergency!.kind !== 'medical') ?? found[0]!;
+    const af = found.find((a) => a.leg.emergency!.squawk) ?? found[0]!;
     const e = af.leg.emergency!;
     expect(af.leg.to).toBe(e.divertTo);
-    if (e.kind !== 'medical') expect(w.squawkAt(af, e.t + 60_000)).toBe('7700');
+    if (e.squawk) expect(w.squawkAt(af, e.t + 60_000)).toBe('7700');
     expect(af.leg.events.some((x) => x.k === 'emergency')).toBe(true);
   }, 120_000);
 });
@@ -290,5 +290,59 @@ describe('radio transcript', () => {
     expect(airportName(w.airports.get('KJFK')!)).toBe('Kennedy');
     expect(speakable('climb flight level 350')).toBe('climb flight level three five zero');
     expect(speakable('runway 27R')).toBe('runway two seven right');
+  });
+});
+
+describe('markets, closures and published procedures', () => {
+  it('keeps western airlines out of Russian and Ukrainian airspace', async () => {
+    const { STANDING_ZONES, pointInZones } = await import('@/data/sim/geoMarkets');
+    const w = world();
+    const western = w.airframes.filter((a) => a.airline && ['GB', 'DE', 'FR', 'NL', 'FI', 'US', 'JP'].includes(a.airline.country) && !a.leg.canceled).slice(0, 2500);
+    let checked = 0;
+    for (const af of western) {
+      const leg = af.leg;
+      if (Math.abs(leg.from.lon - leg.to.lon) < 15) continue;
+      checked++;
+      for (let t = leg.tTakeoff; t < leg.tLand; t += 5 * 60_000) {
+        const s = w.state(af, t);
+        if (pointInZones([s.lat, s.lon], STANDING_ZONES, af.airline!.country)) throw new Error(`${leg.flight} ${leg.from.ident}-${leg.to.ident} ${s.phase} ${s.lat.toFixed(2)},${s.lon.toFixed(2)} ${leg.route?.text ?? ''} ${leg.route?.nat?.system ?? ''} ${leg.emergency?.kind ?? ''} ${leg.divertedFrom?.ident ?? ''}`);
+      }
+    }
+    expect(checked).toBeGreaterThan(10);
+  });
+
+  it('flies Indian airlines internationally, mostly to the Gulf, Asia and Europe', async () => {
+    const { regionOf } = await import('@/data/sim/geoMarkets');
+    const w = world();
+    const legs = w.airframes.filter((a) => a.airline && ['IGO', 'AIC', 'AXB', 'AKJ', 'SEJ'].includes(a.airline.icao)).map((a) => a.leg);
+    const intl = legs.filter((l) => l.from.country !== l.to.country);
+    expect(intl.length / legs.length).toBeGreaterThan(0.15);
+    const regions = intl.map((l) => regionOf(l.from.country === 'IN' ? l.to.country : l.from.country));
+    const core = regions.filter((r) => r === 'MEA' || r === 'SEA' || r === 'WEU' || r === 'SAS').length;
+    expect(core / Math.max(1, regions.length)).toBeGreaterThan(0.6);
+    expect(regions.filter((r) => r === 'SAM' || r === 'CAM').length).toBe(0);
+  });
+
+  it('routes Tokyo–Los Angeles style flights on Pacific tracks at the right times', async () => {
+    const { assignOts } = await import('@/data/sim/procedures');
+    const day = Math.floor(NOW / 86_400_000) * 86_400_000;
+    const hnd = { lat: 35.55, lon: 139.78 };
+    const lax = { lat: 33.94, lon: -118.4 };
+    const east = assignOts(hnd, lax, day + 13 * 3_600_000, 42, 'x');
+    expect(east?.track.system).toBe('PACOTS');
+    expect(east?.track.eastbound).toBe(true);
+    expect(east!.pts[0]![1]).toBe(150);
+  });
+
+  it('flies published FAA procedures at US airports when the data is loaded', async () => {
+    const data = JSON.parse((await import('../../public/data/sim/procedures-us.json?raw')).default);
+    const w = new World(9, airports, runways);
+    w.setNavaids(navRows);
+    w.setUsProcedures(data);
+    w.populate(NOW, 0.4);
+    const us = w.airframes.filter((a) => a.leg.route && a.leg.from.country === 'US' && a.leg.route.sid?.published);
+    expect(us.length).toBeGreaterThan(10);
+    const leg = us[0]!.leg;
+    expect(leg.route!.text.startsWith(leg.route!.sid!.name)).toBe(true);
   });
 });

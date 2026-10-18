@@ -16,6 +16,7 @@ import { bindAirportInteraction, installAirportLayers, AIRPORT_LAYERS } from './
 import { bindExtraOverlays, installExtraOverlays } from './extraOverlays';
 import { bindOpsOverlays, installOpsOverlays } from './opsOverlays';
 import { bindWorldOverlays, installWorldOverlays, resetWorldOverlays } from './worldOverlays';
+import { bindAirport3d, installAirport3d } from './airport3d';
 import { bindMeasure, bindRadar, bindRings, bindWeather, installMeasure, installRadar, installRings, installWeather, refreshWeather } from './overlays';
 import { cameraFlags, viewOffset, viewPadding } from './camera';
 import { buildStyle, TERRAIN_SOURCE } from './styles';
@@ -48,6 +49,7 @@ function installAll(m: MlMap) {
   installExtraOverlays(m);
   installOpsOverlays(m);
   installWorldOverlays(m);
+  installAirport3d(m);
   resetWorldOverlays();
   installUserLocation(m);
   applyTerrain(m);
@@ -138,6 +140,7 @@ export function createMap(container: HTMLElement): MlMap {
     cleanups.push(bindExtraOverlays(m));
     cleanups.push(bindOpsOverlays(m));
     cleanups.push(bindWorldOverlays(m));
+    cleanups.push(bindAirport3d(m));
     cleanups.push(bindTouch(m));
     cleanups.push(bindUrlSync(m));
     cleanups.push(bindAutoRotate(m));

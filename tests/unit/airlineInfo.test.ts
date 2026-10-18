@@ -19,6 +19,24 @@ describe('airline extra info', () => {
     }
   });
 
+  it('lists every airline once, with sane profiles', () => {
+    const codes = ALL_AIRLINES.map((a) => a.icao);
+    expect(codes.filter((c, i) => codes.indexOf(c) !== i)).toEqual([]);
+    expect(codes.length).toBeGreaterThanOrEqual(400);
+    for (const a of ALL_AIRLINES) {
+      expect(a.icao, a.name).toMatch(/^[A-Z]{3}$/);
+      expect(a.dom, a.icao).toBeGreaterThanOrEqual(0);
+      expect(a.dom, a.icao).toBeLessThanOrEqual(1);
+      expect(a.size, a.icao).toBeGreaterThan(0);
+      expect(a.fleet.every(([, w]) => w > 0), a.icao).toBe(true);
+    }
+    // Indian carriers fly a large share of international flights.
+    const dom = (icao: string) => ALL_AIRLINES.find((a) => a.icao === icao)!.dom;
+    expect(dom('AIC')).toBeLessThanOrEqual(0.55);
+    expect(dom('AXB')).toBeLessThanOrEqual(0.55);
+    expect(dom('IGO')).toBeLessThan(0.85);
+  });
+
   it('has no entries for unknown airlines', () => {
     const known = new Set(ALL_AIRLINES.map((a) => a.icao));
     expect(Object.keys(AIRLINE_EXTRA).filter((k) => !known.has(k))).toEqual([]);

@@ -118,6 +118,8 @@ const DAY_SETS: Record<number, number[]> = {
 export function routeDays(airline: string, from: string, to: string, opts: { distNm: number; hubEnd: boolean; bothLarge: boolean; leisure: Leisure; model: AirlineModel }): RouteDays {
   const pair = from < to ? from + to : to + from;
   const h = hash(`${airline}|${pair}`);
+  // Ski charters and leisure flights to the Alps change over on Saturdays.
+  if (opts.leisure === 'ski' && (opts.model === 'leisure' || opts.model === 'charter' || opts.model === 'low')) return skiChangeover(h);
   let per = 7;
   if (opts.model === 'cargo') per = opts.bothLarge ? 5 + (h % 3) : 3 + (h % 3);
   else if (opts.leisure && opts.leisure !== 'all-year' && !opts.bothLarge) per = 2 + (h % 4);
@@ -162,7 +164,7 @@ export function weekdayGroundFactor(weekday: number, kind: 'airline' | 'cargo' |
 // ---------------------------------------------------------------- load factors
 
 /** Expected seat load factor for a flight (0.3–1), deterministic per flight and day. */
-export function loadFactor(opts: { model: AirlineModel; flight: string; std: number; fromLon: number; leisure: Leisure; longHaul: boolean }): number {
+export function loadFactor(opts: { model: AirlineModel; flight: string; std: number; fromLon: number; leisure: Leisure; longHaul: boolean; country?: string }): number {
   const base: Record<AirlineModel, number> = { full: 0.82, low: 0.92, regional: 0.74, leisure: 0.9, cargo: 0, bizjet: 0.45, charter: 0.93 };
   let lf = base[opts.model];
   const m = new Date(opts.std).getUTCMonth();
@@ -173,6 +175,7 @@ export function loadFactor(opts: { model: AirlineModel; flight: string; std: num
   if (h < 6.5 || h > 22) lf -= 0.06;
   else if ((h >= 7 && h < 9.5) || (h >= 17 && h < 19.5)) lf += 0.03;
   if (opts.longHaul) lf += 0.02;
+  lf += holidayUplift(opts.std, opts.country);
   const day = Math.floor(opts.std / DAY);
   const r = (hash(`${opts.flight}|${day}`) % 1000) / 1000;
   lf += (r - 0.5) * 0.18;
@@ -190,4 +193,82 @@ export function daylight(t: number, lat: number): { rise: number; set: number } 
   if (x >= 1) return { rise: 12, set: 12 }; // polar night
   const half = (Math.acos(x) * 180) / Math.PI / 15;
   return { rise: 12 - half, set: 12 + half };
+}
+
+// ---------------------------------------------------------------- holidays and pilgrimage
+
+export interface Holiday {
+  name: string;
+  /** Countries (ISO) whose travellers it affects, or 'all'. */
+  countries: string[] | 'all';
+  from: number;
+  to: number;
+}
+
+const D = (y: number, m: number, d: number) => Date.UTC(y, m - 1, d);
+
+/** Major travel peaks (dates for 2026–2028; movable feasts precomputed). */
+const HOLIDAYS: Holiday[] = [
+  ...[2025, 2026, 2027].map((y) => ({ name: 'Christmas & New Year', countries: 'all' as const, from: D(y, 12, 18), to: D(y + 1, 1, 5) })),
+  // Thanksgiving: the Wednesday before the fourth Thursday of November to the Sunday after.
+  ...[2026, 2027, 2028].map((y) => {
+    const nov1 = new Date(D(y, 11, 1)).getUTCDay();
+    const thu = 1 + ((4 - nov1 + 7) % 7) + 21;
+    return { name: 'Thanksgiving', countries: ['US'], from: D(y, 11, thu - 1), to: D(y, 11, thu + 4) };
+  }),
+  { name: 'Chinese New Year', countries: ['CN', 'TW', 'HK', 'MO', 'SG', 'MY', 'VN', 'KR'], from: D(2026, 2, 10), to: D(2026, 2, 27) },
+  { name: 'Chinese New Year', countries: ['CN', 'TW', 'HK', 'MO', 'SG', 'MY', 'VN', 'KR'], from: D(2027, 1, 30), to: D(2027, 2, 16) },
+  { name: 'Chinese New Year', countries: ['CN', 'TW', 'HK', 'MO', 'SG', 'MY', 'VN', 'KR'], from: D(2028, 1, 19), to: D(2028, 2, 5) },
+  { name: 'Diwali', countries: ['IN', 'NP'], from: D(2026, 11, 3), to: D(2026, 11, 13) },
+  { name: 'Diwali', countries: ['IN', 'NP'], from: D(2027, 10, 24), to: D(2027, 11, 3) },
+  { name: 'Easter', countries: 'all', from: D(2026, 3, 28), to: D(2026, 4, 12) },
+  { name: 'Easter', countries: 'all', from: D(2027, 3, 20), to: D(2027, 4, 4) },
+  { name: 'Eid al-Fitr', countries: ['SA', 'AE', 'QA', 'KW', 'BH', 'OM', 'EG', 'TR', 'PK', 'BD', 'ID', 'MY', 'MA', 'DZ', 'TN', 'JO', 'IR', 'IQ', 'NG'], from: D(2026, 3, 16), to: D(2026, 3, 25) },
+  { name: 'Eid al-Fitr', countries: ['SA', 'AE', 'QA', 'KW', 'BH', 'OM', 'EG', 'TR', 'PK', 'BD', 'ID', 'MY', 'MA', 'DZ', 'TN', 'JO', 'IR', 'IQ', 'NG'], from: D(2027, 3, 6), to: D(2027, 3, 14) },
+  { name: 'Golden Week', countries: ['JP'], from: D(2026, 4, 29), to: D(2026, 5, 6) },
+  { name: 'Golden Week', countries: ['JP'], from: D(2027, 4, 29), to: D(2027, 5, 6) },
+  { name: 'National Day Golden Week', countries: ['CN'], from: D(2026, 9, 30), to: D(2026, 10, 8) },
+  { name: 'National Day Golden Week', countries: ['CN'], from: D(2027, 9, 30), to: D(2027, 10, 8) },
+  { name: 'Summer holidays', countries: 'all', from: D(2026, 7, 10), to: D(2026, 8, 31) },
+  { name: 'Summer holidays', countries: 'all', from: D(2027, 7, 9), to: D(2027, 8, 31) },
+];
+
+/** Travel peaks in effect at `t` for travellers from a country. */
+export function holidaysAt(t: number, country?: string): Holiday[] {
+  return HOLIDAYS.filter((h) => t >= h.from && t < h.to + 86_400_000 && (h.countries === 'all' || (!!country && h.countries.includes(country))));
+}
+
+/** Load-factor uplift during peaks (strongest around the start and end of the period). */
+export function holidayUplift(t: number, country?: string): number {
+  let u = 0;
+  for (const h of holidaysAt(t, country)) u = Math.max(u, h.name === 'Summer holidays' ? 0.03 : 0.08);
+  return u;
+}
+
+/** Hajj (Dhul Hijjah 8–13): pilgrims fly in over the four weeks before and home over the three after. */
+const HAJJ = [D(2026, 5, 25), D(2027, 5, 15), D(2028, 5, 3)];
+const HAJJ_COUNTRIES = new Set('ID PK IN BD MY NG EG TR IR DZ MA TN SN ML NE TD SD SO ET KE TZ UZ KZ AZ AF IQ JO GB FR US LY YE BF GN CM GH CI MR GM AE KW QA BH OM LB SY PS'.split(' '));
+export function hajjWeight(t: number, destIdent: string, airlineCountry: string | undefined): number {
+  if (destIdent !== 'OEJN' && destIdent !== 'OEMA' && destIdent !== 'OETF') return 1;
+  if (!airlineCountry || !HAJJ_COUNTRIES.has(airlineCountry)) return 1.15; // Umrah all year
+  for (const d of HAJJ) {
+    const days = (t - d) / 86_400_000;
+    if (days > -28 && days < 0) return 4.5; // pilgrims arriving
+    if (days >= 5 && days < 26) return 3.5; // pilgrims going home (flights still head to Jeddah/Medina to collect them)
+  }
+  return 1.3;
+}
+
+export function hajjInfo(t: number): { phase: 'arrivals' | 'departures'; day: number } | null {
+  for (const d of HAJJ) {
+    const days = Math.floor((t - d) / 86_400_000);
+    if (days > -28 && days < 0) return { phase: 'arrivals', day: days };
+    if (days >= 5 && days < 26) return { phase: 'departures', day: days };
+  }
+  return null;
+}
+
+/** Ski charters change over on Saturdays (and some on Sundays). */
+export function skiChangeover(h: number): RouteDays {
+  return h % 3 === 0 ? { mask: 0b1000001, perWeek: 2 } : { mask: 0b1000000, perWeek: 1 };
 }

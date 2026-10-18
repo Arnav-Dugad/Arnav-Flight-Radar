@@ -10,6 +10,7 @@ import { CopyButton, Row, Rows } from '@/components/ui/Data';
 import { EmptyState, Skeleton } from '@/components/ui/Feedback';
 import { GlassButton, IconButton } from '@/components/ui/Glass';
 import { Panel } from '@/components/ui/Sheet';
+import { specOf } from '@/data/sim/typeSpecs';
 import { simFlight, simNow, simPrepareFlight, useSim, type FlightInfo } from '@/data/world';
 import { cn } from '@/lib/cn';
 import { fmtAltitude, fmtBearing, fmtCoord, fmtHmUTC, fmtSpeed, fmtTemp, fmtTimeUTC, fmtVRate } from '@/lib/format';
@@ -26,6 +27,7 @@ import { RepresentativePhoto } from './AircraftPhoto';
 import { EmergencyBanner, FlightPlan } from './FlightDetails';
 import { AirlineBadge, AirlineLogo, AllianceBadge, FlightRoute, StatusChip } from './FlightParts';
 import { AltitudeGauge, HeadingGauge, SpeedGauge, VerticalSpeedGauge } from './Gauges';
+import { MakerLogo } from './MakerLogo';
 import { TrailProfile } from './TrailProfile';
 
 // The radio, load-sheet and history tabs (and their data) load the first time they are opened.
@@ -91,6 +93,7 @@ function TabBar({ value, onChange }: { value: Tab; onChange: (t: Tab) => void })
 }
 
 export function AircraftPanel() {
+  useSim((s) => s.rev); // re-render when the simulation worker answers
   const selectedId = useUI((s) => s.selectedId);
   const panel = useUI((s) => s.panel);
   const select = useUI((s) => s.select);
@@ -382,6 +385,7 @@ function AircraftDetails({ t }: { t: Track }) {
                         title="Open aircraft type"
                         className="inline-flex max-w-full items-center gap-0.5 text-[var(--accent)] hover:underline"
                       >
+                        <MakerLogo maker={specOf(a.aircraftType)?.maker} size={16} maxWidth={60} className="mr-1" />
                         <span className="truncate">{a.typeDescription ?? a.aircraftType}</span>
                         <ChevronRight size={13} className="shrink-0" />
                       </button>

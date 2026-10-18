@@ -210,6 +210,14 @@ const cardinal = (deg: number) => ['north', 'north-east', 'east', 'south-east', 
 const pad3 = (n: number) => String(Math.round(((n % 360) + 360) % 360) || 360).padStart(3, '0');
 const level = (n: number) => (n >= 180 || n * 100 > 18_000 ? `flight level ${n}` : `${(n * 100).toLocaleString('en-US')} feet`);
 
+/** The station an airport's facility answers as ("Heathrow Tower", "New York Approach"). */
+export function stationName(a: SimAirport, kind: FreqKind): string {
+  const us = a.country === 'US';
+  const name = kind === 'app' || kind === 'dep' ? placeName(a) : airportName(a);
+  const label = kind === 'gnd' ? 'Ground' : kind === 'twr' ? 'Tower' : kind === 'del' ? (us ? 'Clearance' : 'Delivery') : kind === 'dep' ? 'Departure' : kind === 'app' ? 'Approach' : 'Control';
+  return `${name} ${label}`;
+}
+
 export function transcript(ctx: RadioContext): RadioLine[] {
   const { leg } = ctx;
   const from = leg.from;
@@ -224,10 +232,8 @@ export function transcript(ctx: RadioContext): RadioLine[] {
     out.push(l);
   };
   const fac = (a: SimAirport, kind: FreqKind): [string, string | undefined] => {
-    const name = kind === 'app' || kind === 'dep' ? placeName(a) : airportName(a);
-    const label = kind === 'gnd' ? 'Ground' : kind === 'twr' ? 'Tower' : kind === 'del' ? (us(a) ? 'Clearance' : 'Delivery') : kind === 'dep' ? 'Departure' : kind === 'app' ? (us(a) ? 'Approach' : 'Approach') : 'Control';
     const f = ctx.freq(a.ident, kind) ?? (kind === 'del' ? ctx.freq(a.ident, 'gnd') : kind === 'dep' ? ctx.freq(a.ident, 'app') : undefined);
-    return [`${name} ${label}`, fmtFreq(f)];
+    return [stationName(a, kind), fmtFreq(f)];
   };
   const wx = (a: SimAirport) => a.weather;
   const windText = (a: SimAirport) => {

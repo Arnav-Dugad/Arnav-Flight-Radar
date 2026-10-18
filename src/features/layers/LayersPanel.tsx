@@ -158,10 +158,22 @@ export function LayersPanel() {
             onChange={(v) => s.set('showDisruptions', v)}
           />
           <Toggle
-            label="North Atlantic tracks"
-            description="The day's simulated organised track system: westbound tracks by day, eastbound along the jet stream by night, with how many flights are on each."
+            label="Oceanic tracks"
+            description="The day's simulated organised track systems — North Atlantic, Pacific (PACOTS) and Australian flex tracks — with how many flights are on each."
             checked={s.showNatTracks}
             onChange={(v) => s.set('showNatTracks', v)}
+          />
+          <Toggle
+            label="Closed airspace & ash"
+            description="Real long-standing airspace closures (Ukraine, Russia for many airlines, Belarus, North Korea) and the day's simulated volcanic-ash advisory. Simulated flights route around them."
+            checked={s.showZones}
+            onChange={(v) => s.set('showZones', v)}
+          />
+          <Toggle
+            label="Forecast disruption"
+            description="Large airports in view coloured by the worst hour of their real TAF over the next 12 hours (thunderstorms, fog, snow, strong winds)."
+            checked={s.showForecastMap}
+            onChange={(v) => s.set('showForecastMap', v)}
           />
           <Toggle
             label="3D buildings"

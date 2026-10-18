@@ -3,7 +3,7 @@
 // planned descent to landing (dashed).
 import { motion } from 'motion/react';
 import { distanceNm } from '@shared/geo';
-import { simPlannedProfile } from '@/data/world';
+import { simPlannedProfile, useSim } from '@/data/world';
 import { fmtAltitude, fmtDistance } from '@/lib/format';
 import { useNow, useSelectedTrack } from '@/lib/hooks';
 import { useSettings } from '@/state/settings';
@@ -15,6 +15,7 @@ const H = 104;
 const P = { l: 34, r: 10, t: 10, b: 18 };
 
 export function PathProfileHud() {
+  useSim((s) => s.rev); // re-render when the simulation worker answers
   useNow(1000);
   const pitched = useView((v) => v.pitch > 8);
   const show = useSettings((s) => s.show3dPath);

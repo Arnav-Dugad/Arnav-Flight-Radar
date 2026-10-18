@@ -4,7 +4,8 @@
 import { TriangleAlert } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { Emergency, RouteInfo, TaxiInfo } from '@/data/sim/engine';
-import { daysLabel, iataSeason } from '@/data/sim/schedule';
+import { otsLabel } from '@/data/sim/procedures';
+import { daysLabel, iataSeason, WEEKDAYS, type RouteDays } from '@/data/sim/schedule';
 import { legKindLabel, type FlightInfo } from '@/data/world';
 import { cn } from '@/lib/cn';
 
@@ -22,7 +23,14 @@ const apCode = (a: { iata?: string; ident: string }) => a.iata ?? a.ident;
 export function EmergencyBanner({ e }: { e: Emergency }) {
   const medical = e.kind === 'medical';
   const squawk = e.squawk ?? (medical ? undefined : '7700');
-  const what = e.kind === 'engine' ? 'MAYDAY — engine failure' : e.kind === 'pressurisation' ? 'MAYDAY — loss of cabin pressure' : 'PAN PAN — medical';
+  const what =
+    e.kind === 'engine'
+      ? 'MAYDAY — engine failure'
+      : e.kind === 'pressurisation'
+        ? 'MAYDAY — loss of cabin pressure'
+        : e.kind === 'birdstrike'
+          ? `${squawk ? 'MAYDAY' : 'PAN PAN'} — bird strike, returning`
+          : 'PAN PAN — medical';
   return (
     <div role="alert" className="mx-5 mb-3 flex items-start gap-2.5 rounded-[14px] bg-[rgba(255,93,115,0.16)] px-3.5 py-2.5 ring-1 ring-[rgba(255,93,115,0.45)]">
       <TriangleAlert size={16} className="mt-px shrink-0 text-[#ff8a9a]" aria-hidden="true" />
@@ -59,8 +67,57 @@ function Procedure({ p }: { p: NonNullable<RouteInfo['sid']> }) {
   return (
     <>
       <span className="font-mono text-[12px]">{p.name}</span>
-      <Sub>{fixLabel(p.fix)}</Sub>
+      {p.published && <span className="ml-1.5 rounded-full bg-[rgba(61,220,151,0.14)] px-1.5 py-px text-[10px] font-semibold text-[#7ee2a8]">Published · {p.published}</span>}
+      <Sub>{p.fixes ? p.fixes.map((f) => f.ident).join(' · ') : fixLabel(p.fix)}</Sub>
     </>
+  );
+}
+
+/** Mon–Sun strip showing the days a route operates. */
+function WeekStrip({ days }: { days: RouteDays }) {
+  const order = [1, 2, 3, 4, 5, 6, 0];
+  return (
+    <span className="mt-1 flex gap-1" aria-label={`Operates ${daysLabel(days)}`}>
+      {order.map((d) => {
+        const on = ((days.mask >> d) & 1) === 1;
+        return (
+          <span
+            key={d}
+            className={cn(
+              'flex h-5 w-7 items-center justify-center rounded-[6px] text-[10px] font-semibold',
+              on ? 'bg-[color-mix(in_srgb,var(--accent)_22%,transparent)] text-[var(--accent)]' : 'bg-[var(--line)] text-fg-3 opacity-60',
+            )}
+          >
+            {WEEKDAYS[d]!.slice(0, 2)}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
+/** The aircraft's day: legs flown, this flight, and the next planned leg. */
+function Rotation({ legs }: { legs: FlightInfo['rotation'] }) {
+  return (
+    <ol className="mt-0.5 flex flex-wrap items-center gap-x-1 gap-y-1 text-[11.5px]" aria-label="Aircraft rotation">
+      {legs.map((l, i) => (
+        <li key={i} className="flex items-center gap-1">
+          {i === 0 && <span className="tnum font-semibold text-fg-3">{apCode(l.from)}</span>}
+          <span className={cn('text-fg-3', l.state === 'next' && 'opacity-60')} aria-hidden="true">
+            {l.state === 'next' ? '⇢' : '→'}
+          </span>
+          <span
+            className={cn(
+              'tnum rounded-[6px] px-1 font-semibold',
+              l.state === 'now' ? 'bg-[color-mix(in_srgb,var(--accent)_18%,transparent)] text-[var(--accent)]' : l.state === 'next' ? 'italic text-fg-3' : 'text-fg-2',
+            )}
+            title={l.flight ? `${l.flight}${l.state === 'next' ? ' (planned)' : ''}` : 'Planned next leg'}
+          >
+            {apCode(l.to)}
+          </span>
+        </li>
+      ))}
+    </ol>
   );
 }
 
@@ -92,7 +149,9 @@ export function FlightPlan({ info }: { info: FlightInfo }) {
   const nonAirline = !info.airline && info.operator;
   const depStand = standText(info.terminalFrom, info.gateFrom, info.remoteFrom);
   const arrStand = standText(info.terminalTo, info.gateTo, false);
-  const delays = [info.gateHoldMin > 0 && `Gate hold ${info.gateHoldMin} min`, info.deiceMin > 0 && `De-icing ${info.deiceMin} min`, info.holdMin > 0 && `Holding ${info.holdMin} min`].filter(
+  const delays = [
+    info.crewDelayMin > 0 && `Crew duty limit: waited ${info.crewDelayMin >= 120 ? `${Math.round(info.crewDelayMin / 60)} h` : `${info.crewDelayMin} min`} for a fresh crew`,
+    info.gateHoldMin > 0 && `Gate hold ${info.gateHoldMin} min`, info.deiceMin > 0 && `De-icing ${info.deiceMin} min`, info.holdMin > 0 && `Holding ${info.holdMin} min`].filter(
     Boolean,
   ) as string[];
   const wake = WAKE[info.wake];
@@ -130,8 +189,14 @@ export function FlightPlan({ info }: { info: FlightInfo }) {
         )}
         {r?.nat && (
           <Item label="Oceanic" mono>
-            North Atlantic track {r.nat.letter}: <span className="font-mono text-[12px]">{r.nat.text}</span> · FL
+            {otsLabel(r.nat.system)} {r.nat.letter}: <span className="font-mono text-[12px]">{r.nat.text}</span> · FL
             {r.nat.fl} · M{r.nat.mach.toFixed(2).replace(/^0/, '')}
+          </Item>
+        )}
+        {r?.avoids && r.avoids.length > 0 && (
+          <Item label="Re-routed">
+            Around closed airspace
+            <Sub>{r.avoids.join(' · ')}</Sub>
           </Item>
         )}
         {depStand && (
@@ -168,9 +233,16 @@ export function FlightPlan({ info }: { info: FlightInfo }) {
         {info.days && (
           <Item label="Operates" mono>
             {daysLabel(info.days)}
+            <WeekStrip days={info.days} />
             <Sub>
               IATA season {iataSeason(info.std).name} · {info.days.perWeek}× weekly
             </Sub>
+          </Item>
+        )}
+        {info.rotation.length > 1 && (
+          <Item label="Rotation">
+            <Rotation legs={info.rotation} />
+            <Sub>Earlier legs today, this flight, and the next planned leg</Sub>
           </Item>
         )}
         {delays.length > 0 && (
@@ -180,7 +252,9 @@ export function FlightPlan({ info }: { info: FlightInfo }) {
         )}
       </dl>
       <p className="border-t border-[var(--line)] py-2 text-[10.5px] leading-snug text-fg-3">
-        Procedure names and en-route fixes follow real navaids where possible; designators are generated. Simulated.
+        {r?.sid?.published || r?.star?.published
+          ? 'Procedures marked “Published” are the real FAA procedures (public domain); the rest of the flight is simulated.'
+          : 'Procedure names and en-route fixes follow real navaids where possible; designators are generated. Simulated.'}
       </p>
     </section>
   );

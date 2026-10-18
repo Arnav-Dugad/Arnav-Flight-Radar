@@ -10,7 +10,7 @@ import { Panel } from '@/components/ui/Sheet';
 import { cleanTitle, loadMedia } from '@/data/media';
 import { useUI } from '@/state/ui';
 
-type Kind = 'logos' | 'liveries' | 'types';
+type Kind = 'logos' | 'icons' | 'makers' | 'liveries' | 'types';
 const LIMIT = 150;
 
 export function CreditsPanel() {
@@ -20,21 +20,29 @@ export function CreditsPanel() {
   const [q, setQ] = useState('');
   const media = useQuery({ queryKey: ['media'], queryFn: loadMedia, staleTime: Infinity, enabled: open });
   const rows = useMemo(() => {
-    const table = media.data?.[kind] ?? {};
+    const table = (media.data && media.data[kind]) ?? {};
     const needle = q.trim().toLowerCase();
     return Object.entries(table)
       .map(([key, r]) => ({ key, title: r[1], caption: cleanTitle(r[1]), license: r[2], artist: r[3] }))
       .filter((r) => !needle || `${r.key} ${r.caption} ${r.artist} ${r.license}`.toLowerCase().includes(needle))
       .sort((a, b) => a.key.localeCompare(b.key));
   }, [media.data, kind, q]);
-  const counts = media.data ? { logos: Object.keys(media.data.logos).length, liveries: Object.keys(media.data.liveries).length, types: Object.keys(media.data.types).length } : null;
+  const counts = media.data
+    ? {
+        logos: Object.keys(media.data.logos).length,
+        icons: Object.keys(media.data.icons ?? {}).length,
+        makers: Object.keys(media.data.makers ?? {}).length,
+        liveries: Object.keys(media.data.liveries).length,
+        types: Object.keys(media.data.types).length,
+      }
+    : null;
 
   return (
     <Panel open={open} onClose={() => openPanel('data')} title="Image credits" icon={<DataIcon size={18} />} ariaLabel="Image credits" subtitle="Every logo and photo, with its author and licence">
       <div className="space-y-4 pt-1">
         <p className="text-[12px] leading-relaxed text-fg-3">
-          All images come from Wikimedia Commons, which only hosts freely licensed or public-domain files. Airline logos are trademarks of their owners and identify the
-          operator only. Photos show real aircraft of the same type (and, where available, the same airline) — never the simulated flight itself.
+          All images come from Wikimedia Commons, which only hosts freely licensed or public-domain files. Airline and manufacturer logos are trademarks of their owners and
+          identify the operator or manufacturer only. Photos show real aircraft of the same type (and, where available, the same airline) — never the simulated flight itself.
         </p>
         <Tabs
           label="Image type"
@@ -42,6 +50,8 @@ export function CreditsPanel() {
           onChange={setKind}
           tabs={[
             { id: 'logos', label: `Logos${counts ? ` (${counts.logos})` : ''}` },
+            ...(counts?.icons ? [{ id: 'icons' as const, label: `Icons (${counts.icons})` }] : []),
+            ...(counts?.makers ? [{ id: 'makers' as const, label: `Makers (${counts.makers})` }] : []),
             { id: 'liveries', label: `Liveries${counts ? ` (${counts.liveries})` : ''}` },
             { id: 'types', label: `Types${counts ? ` (${counts.types})` : ''}` },
           ]}
@@ -65,7 +75,7 @@ export function CreditsPanel() {
                     rel="noopener"
                     className="group flex items-start gap-2"
                   >
-                    <span className="tnum w-[72px] shrink-0 pt-0.5 text-[11px] font-semibold text-fg-2">{r.key.replace('|', ' · ')}</span>
+                    <span className="tnum w-[72px] shrink-0 truncate pt-0.5 text-[11px] font-semibold text-fg-2">{r.key.replace('|', ' · ')}</span>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[12.5px] text-fg group-hover:text-[var(--accent)]">{r.caption}</span>
                       <span className="block truncate text-[11px] text-fg-3">

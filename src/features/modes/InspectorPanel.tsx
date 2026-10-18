@@ -3,7 +3,7 @@ import { CopyButton } from '@/components/ui/Data';
 import { EmptyState } from '@/components/ui/Feedback';
 import { Section } from '@/components/ui/Glass';
 import { Panel } from '@/components/ui/Sheet';
-import { simFlight } from '@/data/world';
+import { simFlight, useSim } from '@/data/world';
 import { useNow, useSelectedTrack } from '@/lib/hooks';
 import { traffic } from '@/state/traffic';
 import { useUI } from '@/state/ui';
@@ -22,6 +22,7 @@ function Json({ value }: { value: unknown }) {
 
 /** Developer view of the selected aircraft: the record the map uses and the simulator's flight state. */
 export function InspectorPanel() {
+  useSim((s) => s.rev); // re-render when the simulation worker answers
   const open = useUI((s) => s.panel === 'inspector');
   const openPanel = useUI((s) => s.openPanel);
   const t = useSelectedTrack();

@@ -18,7 +18,8 @@ export type PanelId =
   | 'credits'
   | 'airline'
   | 'widgets'
-  | 'type';
+  | 'type'
+  | 'airportCompare';
 
 export type Projection = 'mercator' | 'globe';
 
@@ -45,6 +46,8 @@ interface UIState {
   selectedAirline: string | null;
   /** ICAO type designator shown in the aircraft-type panel. */
   selectedType: string | null;
+  /** Airports (ICAO idents, up to four) in the airport comparison panel. */
+  compareAirports: string[];
   following: boolean;
   /** 3D chase view: low, tilted, heading-up camera behind the followed aircraft. */
   chase: boolean;
@@ -70,6 +73,7 @@ interface UIState {
   selectAirport: (ident: string | null) => void;
   selectAirline: (icao: string | null) => void;
   selectType: (code: string | null) => void;
+  setCompareAirports: (idents: string[]) => void;
   setFollowing: (on: boolean) => void;
   setFollowPaused: (on: boolean) => void;
   setSearchOpen: (on: boolean) => void;
@@ -98,6 +102,7 @@ export const useUI = create<UIState>()((set, get) => ({
   selectedAirport: null,
   selectedAirline: null,
   selectedType: null,
+  compareAirports: [],
   following: false,
   chase: false,
   followPaused: false,
@@ -159,6 +164,7 @@ export const useUI = create<UIState>()((set, get) => ({
       set({ selectedAirline: icao, sheet: 'half' });
     } else set({ selectedAirline: null });
   },
+  setCompareAirports: (idents) => set({ compareAirports: [...new Set(idents)].slice(0, 4) }),
   selectType: (code) => {
     if (code) {
       get().openPanel('type');

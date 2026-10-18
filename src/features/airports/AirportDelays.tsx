@@ -1,7 +1,7 @@
 // Delays tab: seven days of (simulated) punctuality at an airport, plus the real TAF
 // turned into an hour-by-hour capacity outlook (AirportForecast).
 import { CloudFog, CloudLightning, CloudRain, Snowflake, Sun, Wind, type LucideIcon } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import type { AirportDetail } from '@shared/types';
 import { Section } from '@/components/ui/Glass';
 import { simAirportHistory, type DayStats } from '@/data/world';
@@ -47,10 +47,9 @@ function fmtDay(ms: number, tz: string | null) {
 const hasData = (d: DayStats) => d.movements > 0;
 
 export function AirportDelays({ a, station }: { a: AirportDetail; station: string | null }) {
-  const now = useNow(60_000);
+  useNow(60_000);
   const tz = useTimeZone(a.lat, a.lon);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const days = useMemo(() => simAirportHistory(a.ident), [a.ident, Math.floor(now / 60_000)]);
+  const days = simAirportHistory(a.ident);
   return (
     <div className="space-y-5">
       {days?.some(hasData) ? (

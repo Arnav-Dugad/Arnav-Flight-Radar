@@ -12,6 +12,7 @@ import { useUI } from '@/state/ui';
 
 /** About the simulation: what is simulated, what is real, and every data source. */
 export function DataPanel() {
+  useSim((s) => s.rev); // re-render when the simulation worker answers
   const open = useUI((s) => s.panel === 'data');
   const openPanel = useUI((s) => s.openPanel);
   useNow(5000);

@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { ExternalLink, Navigation, Pin, Share2, Star, Video } from 'lucide-react';
+import { Columns3, ExternalLink, Navigation, Pin, Share2, Star, Video } from 'lucide-react';
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AIRPORT_TYPE_LABEL } from '@shared/airports';
 import { distanceNm } from '@shared/geo';
@@ -20,7 +20,7 @@ import { useBookmarks } from '@/state/bookmarks';
 import { useSettings } from '@/state/settings';
 import { useUI } from '@/state/ui';
 import { MetarCard, TafCard, WeatherAttribution } from '@/features/weather/WeatherCards';
-import { simNow } from '@/data/world';
+import { simNow, useSim } from '@/data/world';
 import { webcamsFor } from '@/data/webcams';
 import { ApproachExplorer } from './Approach';
 import { BoardTab, GroundTab, HourlyMovements, RunwayInUseCard } from './AirportOps';
@@ -28,13 +28,22 @@ import { SkyTimesCard } from './SkyTimes';
 
 // The delays tab (charts and the TAF impact model) loads the first time it is opened.
 const AirportDelays = lazy(() => import('./AirportDelays').then((m) => ({ default: m.AirportDelays })));
+const AirportRadio = lazy(() => import('./AirportRadio').then((m) => ({ default: m.AirportRadio })));
 
-type Tab = 'overview' | 'arrivals' | 'departures' | 'ground' | 'delays' | 'weather' | 'runways';
+type Tab = 'overview' | 'arrivals' | 'departures' | 'ground' | 'radio' | 'delays' | 'weather' | 'runways';
 
 export function AirportPanel() {
+  useSim((s) => s.rev); // re-render when the simulation worker answers
   const ident = useUI((s) => s.selectedAirport);
   const open = useUI((s) => s.panel === 'airport') && !!ident;
   const selectAirport = useUI((s) => s.selectAirport);
+  const comparing = useUI((s) => !!ident && s.compareAirports.includes(ident));
+  const compare = () => {
+    if (!ident) return;
+    const { compareAirports, setCompareAirports, openPanel } = useUI.getState();
+    setCompareAirports(compareAirports.includes(ident) ? compareAirports : [...compareAirports.slice(0, 3), ident]);
+    openPanel('airportCompare');
+  };
   const q = useQuery({
     queryKey: ['airport', ident],
     queryFn: ({ signal }) => api.airport(ident!, signal),
@@ -57,6 +66,13 @@ export function AirportPanel() {
       icon={<AirportIcon size={18} />}
       subtitle={q.data ? [q.data.icao ?? q.data.ident, q.data.city].filter(Boolean).join(' · ') : 'Loading…'}
       ariaLabel="Airport details"
+      actions={
+        q.data ? (
+          <IconButton label="Compare airports" size={34} active={comparing} onClick={compare}>
+            <Columns3 size={16} />
+          </IconButton>
+        ) : undefined
+      }
     >
       {q.isPending ? (
         <div className="space-y-3 pt-2">
@@ -180,6 +196,7 @@ function AirportBody({ a }: { a: AirportDetail }) {
             { id: 'arrivals', label: 'Arrivals' },
             { id: 'departures', label: 'Departures' },
             { id: 'ground', label: 'Ground' },
+            { id: 'radio', label: 'Radio' },
             { id: 'delays', label: 'Delays' },
             { id: 'weather', label: 'Weather' },
             { id: 'runways', label: 'Runways' },
@@ -261,6 +278,11 @@ function AirportBody({ a }: { a: AirportDetail }) {
       {tab === 'arrivals' && <BoardTab a={a} kind="arrivals" />}
       {tab === 'departures' && <BoardTab a={a} kind="departures" />}
       {tab === 'ground' && <GroundTab a={a} />}
+      {tab === 'radio' && (
+        <Suspense fallback={<div className="skeleton h-40 rounded-[16px]" aria-hidden="true" />}>
+          <AirportRadio a={a} />
+        </Suspense>
+      )}
       {tab === 'delays' && (
         <Suspense fallback={<div className="skeleton h-40 rounded-[16px]" aria-hidden="true" />}>
           <AirportDelays a={a} station={station} />

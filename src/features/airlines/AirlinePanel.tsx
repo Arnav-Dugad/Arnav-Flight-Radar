@@ -1,11 +1,11 @@
 // Airline page: logo, alliance, hubs, fleet and every flight it is operating right now
 // in the simulated world.
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { PlaneIcon } from '@/components/icons';
 import { Tabs } from '@/components/ui/Data';
 import { EmptyState } from '@/components/ui/Feedback';
 import { Panel } from '@/components/ui/Sheet';
-import { allianceOf, simAirline } from '@/data/world';
+import { allianceOf, simAirline, useSim } from '@/data/world';
 import { cn } from '@/lib/cn';
 import { useNow } from '@/lib/hooks';
 import { flyTo, focusAircraft } from '@/map/controller';
@@ -15,16 +15,16 @@ import { AirlineLogo, AllianceBadge, STATUS_TEXT } from '@/features/aircraft/Fli
 type Tab = 'flights' | 'fleet' | 'hubs';
 
 export function AirlinePanel() {
+  useSim((s) => s.rev); // re-render when the simulation worker answers
   const open = useUI((s) => s.panel === 'airline');
   const icao = useUI((s) => s.selectedAirline);
   const openPanel = useUI((s) => s.openPanel);
   const select = useUI((s) => s.select);
   const selectAirport = useUI((s) => s.selectAirport);
-  const now = useNow(5000);
+  useNow(5000);
   const [tab, setTab] = useState<Tab>('flights');
   const [filter, setFilter] = useState<'all' | 'air'>('air');
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const info = useMemo(() => (open ? simAirline(icao) : undefined), [open, icao, Math.floor(now / 5000)]);
+  const info = (open ? simAirline(icao) : undefined);
   const alliance = allianceOf(icao ?? undefined);
   const airborne = info?.flights.filter((f) => f.transmitting && ['En route', 'Holding', 'Approach', 'Diverted', 'Go-around'].includes(f.status)).length ?? 0;
   const flights = info ? (filter === 'air' ? info.flights.filter((f) => f.transmitting) : info.flights) : [];

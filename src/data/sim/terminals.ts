@@ -156,7 +156,7 @@ export const TERMINAL_RULES: Record<string, TerminalRule[]> = {
   // ================================================================== South Asia
   VIDP: [
     r('Terminal 3', 'AIC', 'international'),
-    r('Terminal 1', 'IGO', 'SEJ', 'AKJ', 'domestic'),
+    r('Terminal 1', 'IGO@domestic', 'SEJ@domestic', 'AKJ@domestic', 'domestic'),
   ],
   VABB: [
     r('Terminal 2', 'AIC', 'international'),
@@ -211,8 +211,8 @@ export const TERMINAL_RULES: Record<string, TerminalRule[]> = {
     r('Terminal 1', '*'),
   ],
   RJTT: [
-    r('Terminal 1', 'JAL@domestic', 'SKY'),
-    r('Terminal 2', 'ANA@domestic'),
+    r('Terminal 1', 'JAL@domestic', 'JTA@domestic', 'SKY', 'SFJ@domestic'),
+    r('Terminal 2', 'ANA@domestic', 'AKX', 'ADO', 'SNJ'),
     r('Terminal 3', 'international', '*'),
   ],
   RJAA: [

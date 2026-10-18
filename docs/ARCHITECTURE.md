@@ -36,9 +36,19 @@ repo
 | Fleet & types | `fleet.ts`, `fleet-more.ts`, `typeSpecs.ts`, `cabin.ts` | ~234 airlines, ~100 aircraft types with real dimensions, weights, fuel burn, wake categories and typical cabins |
 | Airlines | `airlines.ts`, `airlineInfo.ts`, `terminals.ts` | Alliances, cargo operators, radiotelephony callsigns, livery colours, real terminal allocations at ~76 airports |
 | Load & radio | `loadsheet.ts`, `radio.ts` | Estimated load sheet (passengers, fuel plan, weights, CO₂); simulated ATC transcript in ICAO/FAA phraseology |
-| Runtime glue | `src/data/world.ts` | Clock, ticks, real weather (METAR and TAF), flight info, boards, queues, stands, widgets, search, airline/type pages, radio, load, history, 7-day airport statistics, emergency alerts |
+| Markets & airspace | `src/data/sim/geoMarkets.ts` | World regions and market affinities (gravity model for destinations), real airspace closures and simulated volcanic-ash advisories, shortest-path re-routing through corridor points |
+| Published procedures | `src/data/sim/usProcedures.ts` + `public/data/sim/procedures-us.json` | Real FAA SIDs and STARs (CIFP, public domain) at ~84 US airports |
+| Simulation core | `src/data/simCore.ts` (in `src/data/sim.worker.ts`) | Owns the World inside a Web Worker: start-up, ticks packed into typed arrays, and every query (flight info, boards, radio, load sheets, statistics, overlays) |
+| Page facade | `src/data/world.ts` | Clock, worker messaging, a query cache refreshed on every tick, traffic ingestion, real weather (METAR and TAF) fed to the worker, emergency alerts |
 
-**Start-up** (`startSim`, once the map is ready): the major-airport index, runway ends, real navaids
+**Off the main thread.** The whole simulation runs in a Web Worker. Each tick the page posts the
+simulated time; the worker advances the world and answers with the transmitting aircraft packed in
+typed arrays (transferred, not copied) plus fresh answers to every query the page used in the last
+few seconds. Rarely changing fields (flight number, squawk, route codes) are sent only when they
+change. The page keeps a small cache: a first-time query returns nothing for a moment while the
+worker answers, and components re-render on the `rev` counter.
+
+**Start-up** (`startSim` → worker `coreInit`, once the map is ready): the major-airport index, runway ends, real navaids
 (`data/sim/navaids.json`) and the engine chunk load in parallel; OpenStreetMap stands and terminals
 (`ground/stands.json`) follow. Helicopter sites and gliding sites (`data/sim/heliports.json`,
 `gliding.json`) load in the background and add their traffic a moment later. The world is seeded
@@ -64,7 +74,16 @@ destinations become ground delays at the origin, then airborne holding.
 weekdays; leisure, ski and winter-sun destinations follow the season; traffic dips on Saturday
 and Tuesday; most passenger flying pauses overnight; cargo flies night banks.
 
-**Rare events.** Medical diversions, engine failures and depressurisations (squawk 7700) divert to
+**Markets.** International destinations follow a gravity model with real regional affinities
+(South Asia and the Gulf, North America and the Caribbean, intra-Europe and so on), seasonal demand,
+Hajj and holiday peaks. Airlines from countries Russia has banned (and those avoiding it) stay out of
+Russian airspace; Ukraine and North Korea are avoided by everyone; flights re-route through corridor
+points (Caucasus, Central Asia, the Arctic, the Pacific) found by a shortest-path search.
+
+**Track systems.** North Atlantic tracks, Pacific tracks (PACOTS) and Australian flex tracks are
+generated daily; a track that would cross airspace an operator avoids is not used.
+
+**Rare events.** Medical diversions, engine failures, depressurisations and bird strikes divert to
 the nearest suitable airport; after an engine failure the aircraft is repaired and positioned
 empty to base. Weather causes go-arounds, diversions and cancellations.
 

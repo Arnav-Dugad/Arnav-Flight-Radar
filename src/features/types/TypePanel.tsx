@@ -12,9 +12,10 @@ import { Panel } from '@/components/ui/Sheet';
 import { cabinFor, type CabinLayout, type SeatClass } from '@/data/sim/cabin';
 import type { Recat, Wake } from '@/data/sim/refTypes';
 import { specOf, type TypeSpec } from '@/data/sim/typeSpecs';
-import { simTypeStats, type TypeStats } from '@/data/world';
+import { simTypeStats, type TypeStats, useSim } from '@/data/world';
 import { RepresentativePhoto } from '@/features/aircraft/AircraftPhoto';
 import { AirlineLogo, STATUS_TEXT } from '@/features/aircraft/FlightParts';
+import { MakerLogo } from '@/features/aircraft/MakerLogo';
 import { SeatMap } from '@/features/aircraft/SeatMap';
 import { cn } from '@/lib/cn';
 import { useNow } from '@/lib/hooks';
@@ -421,16 +422,16 @@ function InSim({ stats }: { stats: TypeStats | undefined }) {
 }
 
 export function TypePanel() {
+  useSim((s) => s.rev); // re-render when the simulation worker answers
   const open = useUI((s) => s.panel === 'type');
   const code = useUI((s) => s.selectedType);
   const openPanel = useUI((s) => s.openPanel);
   const showPhotos = useSettings((s) => s.showPhotos);
-  const now = useNow(5000);
+  useNow(5000);
   const [tab, setTab] = useState<Tab>('specs');
   const spec = code ? specOf(code) : undefined;
   const hasCabin = useMemo(() => !!spec && !!(cabinFor(spec.code, 'full') ?? cabinFor(spec.code, 'low')), [spec]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const stats = useMemo(() => (open && spec ? simTypeStats(spec.code) : undefined), [open, spec, Math.floor(now / 5000)]);
+  const stats = (open && spec ? simTypeStats(spec.code) : undefined);
   const current: Tab = tab === 'cabin' && !hasCabin ? 'specs' : tab;
   const name = spec ? `${spec.maker} ${spec.model}` : 'Aircraft type';
   const close = () => openPanel(null);
@@ -457,7 +458,10 @@ export function TypePanel() {
                   <AircraftGlyph cls={glyphClass(spec)} size={30} />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <p className="text-[11.5px] font-medium text-fg-3">{spec.maker}</p>
+                  <p className="flex min-h-5 items-center gap-1.5 text-[11.5px] font-medium text-fg-3">
+                    <MakerLogo maker={spec.maker} size={20} maxWidth={84} />
+                    <span>{spec.maker}</span>
+                  </p>
                   <motion.h2 key={spec.code} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="text-[24px] font-semibold leading-[1.05] tracking-[-0.03em] text-fg">
                     {spec.model}
                   </motion.h2>

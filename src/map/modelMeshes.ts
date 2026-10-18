@@ -8,7 +8,8 @@
 //   x = right wing (starboard), y = forward (nose at +y), z = up.
 //   The opaque airframe is exactly 1 unit long along y and centred on y = 0
 //   (nose ≈ +0.5, tail ≈ -0.5), centred on x = 0, and z = 0 is the ground plane under the
-//   (not modelled) landing gear, so an aircraft placed at airport elevation sits on the apron.
+//   landing gear (wheel bottoms touch z = 0), so an aircraft placed at airport elevation sits
+//   on the apron.
 //   `spanRatio` = full x extent / length (helicopters: main rotor diameter / length), so a
 //   renderer honours a real span by scaling x by (spanM / lengthM) / spanRatio.
 //
@@ -22,6 +23,21 @@
 // zeros elsewhere; the renderer draws spinning blades procedurally from it.
 // `glass` / `cabin` describe where the fragment shader paints cockpit glass and cabin windows
 // on body-coloured fuselage fragments (see the field docs).
+//
+// Moving parts are ordinary triangles flagged per vertex (`part`, `axis`):
+//   PART_GEAR  retractable landing gear: rotates about `axis` through the pivot (the strut top)
+//              by (1 - gear)·90° and collapses to the pivot when fully up.
+//   PART_FLAP  trailing-edge flap panel: rotates about its hinge line (pivot + axis, axis points
+//              outboard) by flaps·35° trailing edge down and slides aft by `slide` (Fowler).
+//   PART_SLAT  leading-edge slat: droops about its upper-surface hinge and slides forward.
+// Fixed gear (C172, PA-28) and helicopter skids are PART_RIGID and always visible.
+// Mirrored parts carry mirrored pivots and pseudo-vector-mirrored axes, so the same signed
+// angle produces the mirror-image motion on the left side.
+//
+// `lights` lists emissive light points (navigation, strobes, beacons, landing/taxi lights and
+// their beam glows, logo lights) in model units, LIGHT_STRIDE floats each:
+//   x, y, z, type (LIGHT_*), glow diameter in metres, base intensity, 0, 0.
+// `anchors` repeats the main ones for the fragment shader's local light spill.
 
 import type { ModelShape } from '@/data/sim/refTypes';
 
@@ -34,18 +50,59 @@ export const MAT_ENGINE = 3;
 export const MAT_ROTOR = 4;
 export const MAT_WING = 5;
 
+export const PART_RIGID = 0;
+export const PART_GEAR = 1;
+export const PART_FLAP = 2;
+export const PART_SLAT = 3;
+
+export const LIGHT_NAV_L = 0;
+export const LIGHT_NAV_R = 1;
+export const LIGHT_TAIL = 2;
+export const LIGHT_STROBE = 3;
+export const LIGHT_BEACON = 4;
+export const LIGHT_LANDING = 5;
+export const LIGHT_BEAM = 6;
+export const LIGHT_LOGO = 7;
+export const LIGHT_STRIDE = 8;
+
+/** Fragment-shader light spill anchors in model units; w = radius (0 = absent). */
+export interface LightAnchors {
+  navL: [number, number, number, number];
+  navR: [number, number, number, number];
+  beaconTop: [number, number, number, number];
+  beaconBottom: [number, number, number, number];
+  logo: [number, number, number, number];
+}
+
 export interface ModelMesh {
   shape: ModelShape;
+  /** Level of detail: 0 full, 1 medium, 2 low (no gear / flap geometry; lights are identical). */
+  lod: number;
   positions: Float32Array;
   normals: Float32Array;
   colorIndex: Uint8Array;
   /** (u, v, blades) per vertex for rotor discs, zeros otherwise. */
   disc: Float32Array;
+  /** Per vertex: (PART_* kind, pivot x, y, z) in model units. */
+  part: Float32Array;
+  /** Per vertex: (axis x, y, z, slide in model units) for moving parts, zeros otherwise. */
+  axis: Float32Array;
   spanRatio: number;
   vertexCount: number;
   /** Opaque vertices come first; [opaqueVertexCount, vertexCount) are translucent rotor discs. */
   opaqueVertexCount: number;
   triangleCount: number;
+  gearVertexCount: number;
+  flapVertexCount: number;
+  slatVertexCount: number;
+  /** Triangles of landing gear geometry (retractable or fixed). */
+  gearTriangleCount: number;
+  /** LIGHT_STRIDE floats per light point. */
+  lights: Float32Array;
+  lightCount: number;
+  anchors: LightAnchors;
+  /** Length in metres of the representative type the recipe was drawn for. */
+  recipeLengthM: number;
   min: V3;
   max: V3;
   /**
@@ -83,21 +140,54 @@ const spow = (v: number, e: number) => Math.sign(v) * Math.pow(Math.abs(v), e);
 const rad = (deg: number) => (deg * Math.PI) / 180;
 const ZERO: V3 = [0, 0, 0];
 
+// Level of detail of the mesh being built: 0 full; 1 about half the tessellation; 2 about a
+// quarter, without landing gear or separate flap / slat panels (models a few dozen px long).
+let DETAIL = 0;
+/** Tessellation count for the current level of detail (kept even so meshes stay symmetric). */
+const q = (n: number, min = 4) => (DETAIL > 0 ? Math.max(min, 2 * Math.round(n / (DETAIL > 1 ? 8 : 4))) : n);
+
 // ------------------------------------------------------------------ builder
+/** kind, pivot xyz, axis xyz, slide (metres while building). */
+type Part = [number, number, number, number, number, number, number, number];
+const RIGID: Part = [0, 0, 0, 0, 0, 0, 0, 0];
+
 class Buf {
   p: number[] = [];
   n: number[] = [];
   c: number[] = [];
   d: number[] = [];
+  k: number[] = [];
+  a: number[] = [];
   get count() {
     return this.c.length;
   }
-  push(p: V3, n: V3, c: number, d: V3) {
+  push(p: V3, n: V3, c: number, d: V3, part: Part = RIGID) {
     this.p.push(p[0], p[1], p[2]);
     this.n.push(n[0], n[1], n[2]);
     this.c.push(c);
     this.d.push(d[0], d[1], d[2]);
+    this.k.push(part[0], part[1], part[2], part[3]);
+    this.a.push(part[4], part[5], part[6], part[7]);
   }
+}
+
+interface GearLeg {
+  x: number; // wheel track position (≥ 0; > 0 legs are mirrored)
+  d: number; // distance from the nose (m)
+  top: number; // strut attach height (m, inside the airframe)
+  topX?: number; // strut attach x when the leg is splayed (C172 spring legs)
+  r: number; // wheel radius
+  wheels?: number; // 1 or 2 side by side per axle
+  axles?: number; // tandem axles (bogie)
+  w?: number; // tyre width
+  taxi?: boolean; // carries the taxi light (nose gear)
+}
+
+interface LightSpec {
+  p: V3;
+  type: number;
+  size: number;
+  k: number;
 }
 
 interface GlassSpec {
@@ -129,6 +219,13 @@ class Builder {
   clear = new Buf();
   glass: GlassSpec | null = null;
   cabin: CabinSpec | null = null;
+  /** Current moving-part flag applied to every triangle added (RIGID by default). */
+  part: Part = RIGID;
+  gear: GearLeg[] = [];
+  retract = true;
+  gearTriangles = 0;
+  lights: LightSpec[] = [];
+  anchors: { navL?: V3; navR?: V3; beaconTop?: V3; beaconBottom?: V3; logo?: [V3, number] } = {};
 
   mark(): Mark {
     return { s: this.solid.count, c: this.clear.count };
@@ -136,9 +233,29 @@ class Builder {
 
   tri(a: V3, b: V3, c: V3, na: V3, nb: V3, nc: V3, mat: number) {
     if (len(cross(sub(b, a), sub(c, a))) < 1e-9) return; // degenerate (e.g. at a lathe tip)
-    this.solid.push(a, na, mat, ZERO);
-    this.solid.push(b, nb, mat, ZERO);
-    this.solid.push(c, nc, mat, ZERO);
+    this.solid.push(a, na, mat, ZERO, this.part);
+    this.solid.push(b, nb, mat, ZERO, this.part);
+    this.solid.push(c, nc, mat, ZERO, this.part);
+  }
+
+  light(p: V3, type: number, size: number, k = 1) {
+    this.lights.push({ p, type, size, k });
+  }
+
+  /** Landing / taxi light: a bright core plus a soft beam of glows ahead of it, angled down. */
+  landing(p: V3, size: number, beam = 1) {
+    this.light(p, LIGHT_LANDING, size, 1);
+    if (beam <= 0) return;
+    const dir: V3 = [0, Math.cos(rad(5)), -Math.sin(rad(5))];
+    // distance ahead (m), glow diameter (m), intensity: overlapping spots read as one cone
+    const steps: [number, number, number][] = [
+      [3.5, 4.5, 0.45],
+      [8, 7.5, 0.34],
+      [14, 11, 0.25],
+      [22, 15, 0.17],
+      [32, 20, 0.1],
+    ];
+    for (const [dist, sz, k] of steps) this.light(add(p, scl(dir, dist * beam)), LIGHT_BEAM, sz * beam, k);
   }
 
   /** Mirror everything added since `m` across the x = 0 plane. */
@@ -152,7 +269,11 @@ class Builder {
         const p: V3 = [-buf.p[v * 3]!, buf.p[v * 3 + 1]!, buf.p[v * 3 + 2]!];
         const n: V3 = [-buf.n[v * 3]!, buf.n[v * 3 + 1]!, buf.n[v * 3 + 2]!];
         const d: V3 = [buf.d[v * 3]!, buf.d[v * 3 + 1]!, buf.d[v * 3 + 2]!];
-        buf.push(p, n, buf.c[v]!, d);
+        const k = buf.k;
+        const a = buf.a;
+        // pivot is a point (x flips); the rotation axis is a pseudo-vector: (x, -y, -z)
+        const part: Part = [k[v * 4]!, -k[v * 4 + 1]!, k[v * 4 + 2]!, k[v * 4 + 3]!, a[v * 4]!, -a[v * 4 + 1]!, -a[v * 4 + 2]!, a[v * 4 + 3]!];
+        buf.push(p, n, buf.c[v]!, d, part);
       }
     }
   }
@@ -232,7 +353,8 @@ class Builder {
   }
 
   /** Translucent rotor / propeller disc: centre, two in-plane unit axes, radius. */
-  disc(center: V3, u: V3, v: V3, r: number, blades: number, segs = 28) {
+  disc(center: V3, u: V3, v: V3, r: number, blades: number, segsHi = 28) {
+    const segs = q(segsHi, 10);
     const n = norm(cross(u, v));
     const ring: V3[] = [];
     const uv: [number, number][] = [];
@@ -276,7 +398,7 @@ function latheY(
   st: Station[],
   opts: { cx?: number; segs?: number; exp?: number; mat: number | ((i: number) => number); capFront?: number; capBack?: number },
 ): V3[][] {
-  const segs = opts.segs ?? 12;
+  const segs = q(opts.segs ?? 12);
   const rows = st.map((s) => ringY(s, opts.cx ?? 0, segs, opts.exp ?? 2));
   const mat = opts.mat;
   b.grid(rows, true, typeof mat === 'number' ? mat : (i) => mat(i));
@@ -286,7 +408,8 @@ function latheY(
 }
 
 /** Lathe around a vertical axis through (cx, cy): profile of [radius, z] from bottom to top. */
-function latheZ(b: Builder, cx: number, cy: number, prof: [number, number][], segs: number, mat: (zMid: number) => number) {
+function latheZ(b: Builder, cx: number, cy: number, prof: [number, number][], segsHi: number, mat: (zMid: number) => number) {
+  const segs = q(segsHi);
   const rows: V3[][] = prof.map(([r, z]) => {
     const ring: V3[] = [];
     for (let j = 0; j < segs; j++) {
@@ -299,7 +422,8 @@ function latheZ(b: Builder, cx: number, cy: number, prof: [number, number][], se
 }
 
 /** Ellipsoid-ish pod along y: centre (cx, -dMid, zc), half length, half width/height. */
-function pod(b: Builder, cx: number, d0: number, d1: number, zc: number, w: number, hh: number, mat: number, n = 9, exp = 2, segs = 12) {
+function pod(b: Builder, cx: number, d0: number, d1: number, zc: number, w: number, hh: number, mat: number, nHi = 9, exp = 2, segs = 12) {
+  const n = DETAIL > 0 ? Math.max(4, Math.round(nHi / (DETAIL + 1))) : nHi;
   const st: Station[] = [];
   for (let i = 0; i <= n; i++) {
     const t = -1 + (2 * i) / n;
@@ -318,28 +442,172 @@ interface PSec {
 
 const AIRFOIL_M = 12;
 
-/** Lofted aerofoil panel (wing, stabiliser, fin, pylon, strut) through its sections. */
-function panel(b: Builder, secs: PSec[], mat: number, opts: { camber?: number; capTip?: boolean; capRoot?: boolean } = {}) {
+/** NACA 4-digit half thickness at chord fraction c (0 = leading edge, 1 = trailing edge). */
+const halfThick = (t: number, c: number) => 5 * t * (0.2969 * Math.sqrt(c) - 0.126 * c - 0.3516 * c * c + 0.2843 * c ** 3 - 0.1036 * c ** 4);
+
+/** Thickness direction of a section whose leading edge runs along `span`. */
+function foilNormal(s: PSec, span: V3): V3 {
+  let T = s.tdir ?? norm(cross([0, -1, 0], span));
+  if (!s.tdir && (T[2] < -1e-6 || (Math.abs(T[2]) < 1e-6 && T[0] < 0))) T = scl(T, -1);
+  return T;
+}
+
+/** Point on the aerofoil surface: side +1 upper, -1 lower. */
+function foilPt(s: PSec, T: V3, c: number, side: number, camber: number): V3 {
+  const off = (side * halfThick(s.t, c) + camber * 4 * c * (1 - c)) * s.chord;
+  return add(add(s.le, [0, -c * s.chord, 0]), scl(T, off));
+}
+
+/**
+ * Lofted aerofoil panel (wing, stabiliser, fin, pylon, strut) through its sections.
+ * `cr` = [c0, c1] builds only that chordwise slice (a closed ring: upper c1→c0, lower c0→c1),
+ * used to split a wing into slat / main box / flap.
+ */
+function panel(
+  b: Builder,
+  secs: PSec[],
+  mat: number,
+  opts: { camber?: number; capTip?: boolean; capRoot?: boolean; cr?: [number, number]; cm?: number } = {},
+) {
   const n = secs.length;
   const camber = opts.camber ?? 0;
   const spanAt = (i: number) => norm(sub(secs[Math.min(i + 1, n - 1)]!.le, secs[Math.max(i - 1, 0)]!.le));
   const rows = secs.map((s, i) => {
-    let T = s.tdir ?? norm(cross([0, -1, 0], spanAt(i)));
-    if (!s.tdir && (T[2] < -1e-6 || (Math.abs(T[2]) < 1e-6 && T[0] < 0))) T = scl(T, -1);
+    const T = foilNormal(s, spanAt(i));
     const ring: V3[] = [];
-    for (let k = 0; k < AIRFOIL_M; k++) {
-      const a = (k / AIRFOIL_M) * Math.PI * 2;
+    if (opts.cr) {
+      const [c0, c1] = opts.cr;
+      const m = DETAIL > 0 ? Math.max(3, Math.round((opts.cm ?? 5) * 0.6)) : (opts.cm ?? 5);
+      const cAt = (u: number) => lerp(c0, c1, (1 - Math.cos(Math.PI * u)) / 2);
+      for (let k = 0; k < m; k++) ring.push(foilPt(s, T, cAt(1 - k / (m - 1)), 1, camber));
+      for (let k = 0; k < m; k++) ring.push(foilPt(s, T, cAt(k / (m - 1)), -1, camber));
+      return ring;
+    }
+    const M = DETAIL > 1 ? 6 : DETAIL > 0 ? 8 : AIRFOIL_M;
+    for (let k = 0; k < M; k++) {
+      const a = (k / M) * Math.PI * 2;
       const c = (1 + Math.cos(a)) / 2; // 1 at the trailing edge, 0 at the leading edge
-      const side = Math.sin(a) >= 0 ? 1 : -1;
-      const yt = 5 * s.t * (0.2969 * Math.sqrt(c) - 0.126 * c - 0.3516 * c * c + 0.2843 * c ** 3 - 0.1036 * c ** 4);
-      const off = (side * yt + camber * 4 * c * (1 - c)) * s.chord;
-      ring.push(add(add(s.le, [0, -c * s.chord, 0]), scl(T, off)));
+      ring.push(foilPt(s, T, c, Math.sin(a) >= 0 ? 1 : -1, camber));
     }
     return ring;
   });
   b.grid(rows, true, mat);
   if (opts.capTip) b.cap(rows[n - 1]!, spanAt(n - 1), mat);
   if (opts.capRoot) b.cap(rows[0]!, scl(spanAt(0), -1), mat);
+}
+
+interface Device {
+  from: number; // spanwise x range (m)
+  to: number;
+  c: number; // chord fraction of the hinge (flap: start of the flap; slat: end of the slat)
+}
+
+/**
+ * A wing (right half) lofted through `sec(x)` at the given span stations, split into a fixed
+ * box plus flagged trailing-edge flap and leading-edge slat panels where requested.
+ */
+function wingPanels(
+  b: Builder,
+  sec: (x: number) => PSec,
+  stations: number[],
+  mat: number,
+  opts: { camber: number; capTip: boolean; flap?: Device | undefined; slat?: Device | undefined },
+) {
+  const x0 = stations[0]!;
+  const x1 = stations[stations.length - 1]!;
+  if (DETAIL > 1) opts = { camber: opts.camber, capTip: opts.capTip }; // no moving surfaces
+  const cuts = new Set<number>(stations);
+  for (const dv of [opts.flap, opts.slat]) {
+    if (!dv) continue;
+    cuts.add(clamp(dv.from, x0, x1));
+    cuts.add(clamp(dv.to, x0, x1));
+  }
+  const xs = [...cuts].sort((p, q) => p - q).filter((x, i, a) => i === 0 || x - a[i - 1]! > 1e-6);
+  const inside = (dv: Device | undefined, xa: number, xb: number) => !!dv && xa >= dv.from - 1e-6 && xb <= dv.to + 1e-6;
+  const camber = opts.camber;
+  for (let i = 0; i < xs.length - 1; i++) {
+    const xa = xs[i]!;
+    const xb = xs[i + 1]!;
+    const last = i === xs.length - 2;
+    const sa0 = sec(xa);
+    const sb0 = sec(xb);
+    const T = foilNormal(sa0, norm(sub(sb0.le, sa0.le)));
+    const sa: PSec = { ...sa0, tdir: T };
+    const sb: PSec = { ...sb0, tdir: T };
+    const flap = inside(opts.flap, xa, xb) ? opts.flap! : null;
+    const slat = inside(opts.slat, xa, xb) ? opts.slat! : null;
+    const c0 = slat ? slat.c : 0;
+    const c1 = flap ? flap.c : 1;
+    if (c0 === 0 && c1 === 1) panel(b, [sa, sb], mat, { camber, capTip: last && opts.capTip });
+    else panel(b, [sa, sb], mat, { camber, capTip: last && opts.capTip, cr: [c0, c1], cm: 6 });
+    if (flap) {
+      const ha = foilPt(sa, T, flap.c, -1, camber);
+      const ax = norm(sub(foilPt(sb, T, flap.c, -1, camber), ha));
+      b.part = [PART_FLAP, ha[0], ha[1], ha[2], ax[0], ax[1], ax[2], 0.1 * sa.chord];
+      panel(b, [sa, sb], mat, { camber, capTip: true, capRoot: true, cr: [flap.c, 1], cm: 4 });
+      b.part = RIGID;
+    }
+    if (slat) {
+      const ha = foilPt(sa, T, slat.c, 1, camber);
+      const ax = norm(sub(foilPt(sb, T, slat.c, 1, camber), ha));
+      b.part = [PART_SLAT, ha[0], ha[1], ha[2], ax[0], ax[1], ax[2], 0.05 * sa.chord];
+      panel(b, [sa, sb], mat, { camber, capTip: true, capRoot: true, cr: [0, slat.c], cm: 4 });
+      b.part = RIGID;
+    }
+  }
+}
+
+/** Linear interpolation of lofting sections by their leading-edge x. */
+function secLerp(secs: PSec[]): (x: number) => PSec {
+  return (x) => {
+    let i = 0;
+    while (i < secs.length - 2 && x > secs[i + 1]!.le[0]) i++;
+    const a = secs[i]!;
+    const c = secs[i + 1]!;
+    const t = clamp((x - a.le[0]) / (c.le[0] - a.le[0]), 0, 1);
+    return { le: add(a.le, scl(sub(c.le, a.le), t)), chord: lerp(a.chord, c.chord, t), t: lerp(a.t, c.t, t) };
+  };
+}
+
+/** Round tube between two points (gear struts, bogie beams). */
+function tube(b: Builder, p0: V3, p1: V3, r: number, segsHi: number, mat: number) {
+  const segs = q(segsHi);
+  const ax = norm(sub(p1, p0));
+  const ref: V3 = Math.abs(ax[2]) > 0.9 ? [1, 0, 0] : [0, 0, 1];
+  const u = norm(cross(ax, ref));
+  const v = cross(ax, u);
+  const ring = (c: V3) => {
+    const out: V3[] = [];
+    for (let j = 0; j < segs; j++) {
+      const a = (j / segs) * Math.PI * 2;
+      out.push(add(c, add(scl(u, Math.cos(a) * r), scl(v, Math.sin(a) * r))));
+    }
+    return out;
+  };
+  b.grid([ring(p0), ring(p1)], true, mat);
+}
+
+const WHEEL_SEGS = () => q(8);
+
+/** Tyre with flat hubs: axle along x, centre c, radius r, width w. */
+function wheel(b: Builder, c: V3, r: number, w: number) {
+  const segs = WHEEL_SEGS();
+  const prof: [number, number][] = [
+    [-w / 2, 0.74 * r],
+    [0, r],
+    [w / 2, 0.74 * r],
+  ];
+  const rows = prof.map(([dx, rr]) => {
+    const ring: V3[] = [];
+    for (let j = 0; j < segs; j++) {
+      const a = (j / segs) * Math.PI * 2 + Math.PI / segs;
+      ring.push([c[0] + dx, c[1] + rr * Math.cos(a), c[2] + rr * Math.sin(a)]);
+    }
+    return ring;
+  });
+  b.grid(rows, true, MAT_DARK);
+  b.cap(rows[0]!, [-1, 0, 0], MAT_ENGINE);
+  b.cap(rows[2]!, [1, 0, 0], MAT_ENGINE);
 }
 
 // ------------------------------------------------------------------ profiles
@@ -403,7 +671,8 @@ function fuselage(b: Builder, prof: Profile, ds: number[], opts: { segs?: number
   });
 }
 
-function samples(d0: number, d1: number, n: number, pow = 1): number[] {
+function samples(d0: number, d1: number, nHi: number, pow = 1): number[] {
+  const n = DETAIL > 0 ? Math.max(3, Math.round(nHi * (DETAIL > 1 ? 0.3 : 0.45))) : nHi;
   const out: number[] = [];
   for (let i = 0; i < n; i++) out.push(lerp(d0, d1, Math.pow(i / (n - 1), pow)));
   return out;
@@ -470,6 +739,17 @@ interface JetSpec {
   sponson?: { x: number; d0: number; d1: number; z: number; w: number; hh: number };
   glass?: GlassSpec | 'default';
   cabin?: CabinSpec;
+  /** Tricycle gear: nose leg and right-hand / centre main legs (mount gives the strut top). */
+  gear: {
+    nose: { d: number; r: number; wheels?: number };
+    mains: { x: number; d: number; r: number; wheels?: number; axles?: number; mount: 'wing' | 'body' | 'sponson' }[];
+  };
+  /** Trailing-edge flaps from the fuselage side to `flapTo` × semi-span (0 = none). */
+  flapTo?: number;
+  flapChord?: number;
+  slats?: boolean;
+  /** Tail-fin logo lights (airliners). */
+  logo?: boolean;
 }
 
 function airlinerProfile(s: JetSpec): Profile {
@@ -572,12 +852,14 @@ function jet(b: Builder, s: JetSpec) {
   // ---- right-hand side, mirrored afterwards
   const m = b.mark();
   const xs = w.kink !== undefined ? [0, w.kink, w.semi] : [0, w.semi];
-  panel(
-    b,
-    xs.map((x) => ({ le: [x, -leD(x), wz(x)] as V3, chord: chordAt(x), t: lerp(t[0], t[1], x / w.semi) })),
-    WM,
-    { camber: 0.02, capTip: !w.winglet },
-  );
+  const side = 0.92 * R; // flaps start at the fuselage side
+  const flapTo = (s.flapTo ?? 0.7) * w.semi;
+  wingPanels(b, (x) => ({ le: [x, -leD(x), wz(x)] as V3, chord: chordAt(x), t: lerp(t[0], t[1], x / w.semi) }), xs, WM, {
+    camber: 0.02,
+    capTip: !w.winglet,
+    flap: flapTo > side ? { from: side, to: flapTo, c: 1 - (s.flapChord ?? 0.27) } : undefined,
+    slat: s.slats ? { from: side + 0.3 * R, to: w.semi * 0.97, c: 0.13 } : undefined,
+  });
   if (w.winglet) {
     const h = w.winglet;
     const x = w.semi;
@@ -683,12 +965,60 @@ function jet(b: Builder, s: JetSpec) {
     b.glass = { s: [0.11 * N, 0.6 * N], lo: [0.13 * R, 0.32 * R], hi: [0.5 * R, 0.62 * R] };
   } else b.glass = s.glass;
   if (s.cabin) b.cabin = s.cabin;
+
+  // ---- landing gear (built once the ground height is known, see buildModelMesh)
+  const g = s.gear;
+  b.gear.push({ x: 0, d: g.nose.d, top: prof(g.nose.d).zb + 0.3 * R, r: g.nose.r, wheels: g.nose.wheels ?? 2, taxi: true });
+  for (const mg of g.mains) {
+    const top = mg.mount === 'wing' ? wz(mg.x) : mg.mount === 'sponson' ? (s.sponson?.z ?? prof(mg.d).zb + 0.3 * R) : prof(mg.d).zb + 0.3 * R;
+    b.gear.push({ x: mg.x, d: mg.d, top, r: mg.r, wheels: mg.wheels ?? 2, axles: mg.axles ?? 1 });
+  }
+
+  // ---- lights
+  const tipLE = leD(w.semi);
+  const tipZ = wz(w.semi);
+  const navR: V3 = [w.semi + 0.15, -(tipLE + 0.3 * w.tip), tipZ];
+  const strR: V3 = [w.semi + 0.12, -(tipLE + 0.85 * w.tip), tipZ];
+  b.light(navR, LIGHT_NAV_R, 2.6);
+  b.light([-navR[0], navR[1], navR[2]], LIGHT_NAV_L, 2.6);
+  b.light(strR, LIGHT_STROBE, 3.6);
+  b.light([-strR[0], strR[1], strR[2]], LIGHT_STROBE, 3.6);
+  b.anchors.navR = navR;
+  b.anchors.navL = [-navR[0], navR[1], navR[2]];
+  const tailP: V3 = [0, -(s.L + 0.12), zm(s.L - 0.05)];
+  b.light(tailP, LIGHT_TAIL, 2.2);
+  b.light(add(tailP, [0, -0.05, 0.12]), LIGHT_STROBE, 2.4, 0.7);
+  const dTop = (w.rootLE + w.rootChord + fin.rootLE) / 2;
+  const dBot = Math.max(s.nose * 1.2, w.rootLE - 0.45 * w.rootChord);
+  const bTop: V3 = [0, -dTop, zt(dTop) + 0.18];
+  const bBot: V3 = [0, -dBot, prof(dBot).zb - 0.18];
+  b.light(bTop, LIGHT_BEACON, 2.8);
+  b.light(bBot, LIGHT_BEACON, 2.8);
+  b.anchors.beaconTop = bTop;
+  b.anchors.beaconBottom = bBot;
+  const lx = Math.min(1.3 * R, 0.3 * w.semi);
+  const land: V3 = [lx, -leD(lx) + 0.12, wz(lx) - 0.1];
+  b.landing(land, 2.4, 0);
+  b.landing([-land[0], land[1], land[2]], 2.4, 0);
+  if (s.logo) {
+    const hf = 0.3;
+    const zL = finZ0 + hf * fin.height;
+    const chord = lerp(fin.rootChord, fin.tip, hf);
+    const dL = fin.rootLE + hf * fin.height * finTanS + 0.45 * chord;
+    const off = 0.06 * chord + 0.35;
+    b.light([off, -dL, zL], LIGHT_LOGO, 0.55 * fin.height, 1);
+    b.light([-off, -dL, zL], LIGHT_LOGO, 0.55 * fin.height, 1);
+    b.anchors.logo = [[0, -(dL - 0.05 * chord), finZ0 + 0.12 * fin.height], 0.85 * fin.height];
+  }
 }
 
 // ------------------------------------------------------------------ recipes
 function narrow(b: Builder) {
   const R = 1.98;
   jet(b, {
+    gear: { nose: { d: 5.1, r: 0.38 }, mains: [{ x: 3.8, d: 17.4, r: 0.58, mount: 'wing' }] },
+    slats: true,
+    logo: true,
     L: 37.6,
     R,
     hTop: 1.04,
@@ -707,6 +1037,9 @@ function narrow(b: Builder) {
 function rearJet(b: Builder) {
   const R = 1.35;
   jet(b, {
+    gear: { nose: { d: 2.7, r: 0.3 }, mains: [{ x: 2.0, d: 12.6, r: 0.45, mount: 'wing' }] },
+    slats: true,
+    logo: true,
     L: 26.8,
     R,
     nose: 3.9,
@@ -725,6 +1058,9 @@ function rearJet(b: Builder) {
 function wideTwin(b: Builder) {
   const R = 3.1;
   jet(b, {
+    gear: { nose: { d: 7.0, r: 0.6 }, mains: [{ x: 5.6, d: 33.5, r: 0.62, axles: 3, mount: 'wing' }] },
+    slats: true,
+    logo: true,
     L: 63.7,
     R,
     hTop: 1.03,
@@ -744,6 +1080,15 @@ function wideTwin(b: Builder) {
 function triJet(b: Builder) {
   const R = 3.0;
   jet(b, {
+    gear: {
+      nose: { d: 6.0, r: 0.55 },
+      mains: [
+        { x: 5.3, d: 31.0, r: 0.6, axles: 2, mount: 'wing' },
+        { x: 0, d: 32.5, r: 0.55, mount: 'body' },
+      ],
+    },
+    slats: true,
+    logo: true,
     L: 61.6,
     R,
     nose: 7.2,
@@ -765,6 +1110,15 @@ function triJet(b: Builder) {
 function quad(b: Builder) {
   const R = 2.82;
   jet(b, {
+    gear: {
+      nose: { d: 6.5, r: 0.55 },
+      mains: [
+        { x: 5.4, d: 32.5, r: 0.62, axles: 2, mount: 'wing' },
+        { x: 0, d: 33.5, r: 0.62, mount: 'body' },
+      ],
+    },
+    slats: true,
+    logo: true,
     L: 63.7,
     R,
     hTop: 1.03,
@@ -787,6 +1141,15 @@ function quad(b: Builder) {
 function b747(b: Builder) {
   const R = 3.25;
   jet(b, {
+    gear: {
+      nose: { d: 5.2, r: 0.6 },
+      mains: [
+        { x: 5.5, d: 34.0, r: 0.62, axles: 2, mount: 'wing' },
+        { x: 1.9, d: 37.5, r: 0.62, axles: 2, mount: 'body' },
+      ],
+    },
+    slats: true,
+    logo: true,
     L: 70.7,
     R,
     hTop: 1.05,
@@ -812,6 +1175,15 @@ function b747(b: Builder) {
 function a380(b: Builder) {
   const R = 3.57;
   jet(b, {
+    gear: {
+      nose: { d: 6.0, r: 0.63 },
+      mains: [
+        { x: 6.1, d: 35.5, r: 0.7, axles: 2, mount: 'wing' },
+        { x: 2.1, d: 38.5, r: 0.7, axles: 3, mount: 'body' },
+      ],
+    },
+    slats: true,
+    logo: true,
     L: 72.7,
     R,
     hTop: 1.18,
@@ -838,6 +1210,8 @@ function highTurboprop(b: Builder) {
   const R = 1.43;
   const prop = { r: 1.96, blades: 6 };
   jet(b, {
+    gear: { nose: { d: 2.3, r: 0.33 }, mains: [{ x: 1.35, d: 13.0, r: 0.42, mount: 'sponson' }] },
+    flapTo: 0.62,
     L: 27.2,
     R,
     nose: 3.4,
@@ -859,6 +1233,8 @@ function lowTurboprop(b: Builder) {
   const R = 0.78;
   const prop = { r: 1.32, blades: 4 };
   jet(b, {
+    gear: { nose: { d: 1.7, r: 0.28, wheels: 1 }, mains: [{ x: 2.65, d: 6.6, r: 0.33, mount: 'wing' }] },
+    flapTo: 0.62,
     L: 14.2,
     R,
     hTop: 1.06,
@@ -881,6 +1257,8 @@ function highQuadTurboprop(b: Builder) {
   const R = 2.2;
   const prop = { r: 2.05, blades: 6 };
   jet(b, {
+    gear: { nose: { d: 2.6, r: 0.42 }, mains: [{ x: 1.85, d: 13.5, r: 0.6, wheels: 1, axles: 2, mount: 'sponson' }] },
+    flapTo: 0.62,
     wingMat: MAT_BODY,
     L: 29.8,
     R,
@@ -904,6 +1282,8 @@ function highQuadTurboprop(b: Builder) {
 function highJetQuad(b: Builder) {
   const R = 3.43;
   jet(b, {
+    gear: { nose: { d: 4.6, r: 0.5 }, mains: [{ x: 2.9, d: 24.5, r: 0.6, axles: 3, mount: 'sponson' }] },
+    slats: true,
     wingMat: MAT_BODY,
     L: 53.0,
     R,
@@ -927,6 +1307,8 @@ function highJetQuad(b: Builder) {
 function awacs(b: Builder) {
   const R = 1.88;
   jet(b, {
+    gear: { nose: { d: 4.8, r: 0.45 }, mains: [{ x: 3.4, d: 20.0, r: 0.55, axles: 2, mount: 'wing' }] },
+    slats: true,
     wingMat: MAT_BODY,
     L: 46.6,
     R,
@@ -983,6 +1365,11 @@ function gaCommon(
     prop: { d: number; r: number; blades: number };
     spinner: [number, number];
     strut?: [V3, V3];
+    /** Nose leg (strut top just inside the fuselage bottom) and right main leg (explicit top). */
+    nose: { d: number; r: number };
+    mains: { x: number; d: number; r: number; top: number; topX?: number };
+    retract: boolean;
+    flapTo: number;
   },
 ) {
   const prof = keyed(o.keys);
@@ -1003,7 +1390,15 @@ function gaCommon(
   b.disc([0, -o.prop.d, zm(d0)], [1, 0, 0], [0, 0, 1], o.prop.r, o.prop.blades);
 
   const m = b.mark();
-  panel(b, o.wingSecs, o.wingMat ?? MAT_BODY, { camber: 0.025, capTip: !o.winglet });
+  const wingD = -o.wingSecs[0]!.le[1] + 0.5 * o.wingSecs[0]!.chord;
+  const side = prof(wingD).w + 0.02;
+  wingPanels(
+    b,
+    secLerp(o.wingSecs),
+    o.wingSecs.map((s) => s.le[0]),
+    o.wingMat ?? MAT_BODY,
+    { camber: 0.025, capTip: !o.winglet, flap: o.flapTo > side ? { from: side, to: o.flapTo, c: 0.74 } : undefined },
+  );
   if (o.winglet) {
     const tip = o.wingSecs[o.wingSecs.length - 1]!;
     panel(
@@ -1041,12 +1436,37 @@ function gaCommon(
     MAT_TAIL,
     { capTip: true },
   );
+
+  // gear: tricycle, fixed (rigid, always shown) or retractable
+  b.retract = o.retract;
+  b.gear.push({ x: 0, d: o.nose.d, top: prof(o.nose.d).zb + 0.15, r: o.nose.r, wheels: 1, w: 0.55 * o.nose.r, taxi: o.retract });
+  b.gear.push({ x: o.mains.x, d: o.mains.d, top: o.mains.top, ...(o.mains.topX !== undefined ? { topX: o.mains.topX } : {}), r: o.mains.r, wheels: 1, w: 0.6 * o.mains.r });
+
+  // lights: wingtip nav + strobes, white tail light, beacon on the fin tip, landing light in the cowl
+  const tip = o.wingSecs[o.wingSecs.length - 1]!;
+  const navR: V3 = [tip.le[0] + 0.08, tip.le[1] - 0.3 * tip.chord, tip.le[2]];
+  const strR: V3 = [tip.le[0] + 0.06, tip.le[1] - 0.6 * tip.chord, tip.le[2]];
+  b.light(navR, LIGHT_NAV_R, 1.7);
+  b.light([-navR[0], navR[1], navR[2]], LIGHT_NAV_L, 1.7);
+  b.light(strR, LIGHT_STROBE, 2.4);
+  b.light([-strR[0], strR[1], strR[2]], LIGHT_STROBE, 2.4);
+  b.anchors.navR = navR;
+  b.anchors.navL = [-navR[0], navR[1], navR[2]];
+  b.light([0, -(o.fin.rootLE + o.fin.rootChord + 0.06), finZ0 + 0.25], LIGHT_TAIL, 1.5);
+  const bTop: V3 = [0, -(o.fin.rootLE + o.fin.height * ftS + 0.45 * o.fin.tip), finZ0 + o.fin.height + 0.1];
+  b.light(bTop, LIGHT_BEACON, 1.9);
+  b.anchors.beaconTop = bTop;
+  if (!o.retract) b.landing([0, -(d0 + 0.15), zm(d0) - 0.32], 1.5, 0.6);
 }
 
 function singleHigh(b: Builder) {
   const dih = Math.tan(rad(1.7));
   const z = 0.97;
   gaCommon(b, {
+    nose: { d: 1.0, r: 0.2 },
+    mains: { x: 1.22, d: 3.55, r: 0.22, top: -0.38, topX: 0.42 },
+    retract: false,
+    flapTo: 2.6,
     L: 8.0,
     keys: [
       [0.4, 0.34, 0.3, -0.34],
@@ -1081,6 +1501,10 @@ function singleLow(b: Builder) {
   const dih = Math.tan(rad(6.5));
   const z = -0.32;
   gaCommon(b, {
+    nose: { d: 0.95, r: 0.2 },
+    mains: { x: 1.55, d: 2.95, r: 0.22, top: -0.2 },
+    retract: false,
+    flapTo: 2.7,
     L: 7.3,
     keys: [
       [0.4, 0.33, 0.25, -0.3],
@@ -1110,6 +1534,10 @@ function singleTurboprop(b: Builder) {
   const dih = Math.tan(rad(6));
   const z = -0.42;
   gaCommon(b, {
+    nose: { d: 1.9, r: 0.25 },
+    mains: { x: 2.0, d: 6.4, r: 0.3, top: -0.22 },
+    retract: true,
+    flapTo: 4.7,
     L: 14.0,
     keys: [
       [0.6, 0.3, 0.22, -0.3],
@@ -1222,6 +1650,22 @@ function heli(b: Builder) {
   // tail rotor on the left side of the fin
   b.disc([-0.22, -9.75, 1.0], [0, 1, 0], [0, 0, 1], 0.95, 2, 20);
   b.glass = { s: [0.02, 2.5], lo: [-0.56, 0.02], hi: [0.95, 0.9] };
+  // lights: nav + strobes on the stabiliser tips, tail light, beacons, landing light under the nose
+  const navR: V3 = [1.08, -7.75, 0.3];
+  b.light(navR, LIGHT_NAV_R, 1.6);
+  b.light([-navR[0], navR[1], navR[2]], LIGHT_NAV_L, 1.6);
+  b.light([1.08, -7.98, 0.3], LIGHT_STROBE, 2.2);
+  b.light([-1.08, -7.98, 0.3], LIGHT_STROBE, 2.2);
+  b.anchors.navR = navR;
+  b.anchors.navL = [-navR[0], navR[1], navR[2]];
+  b.light([0, -10.06, 0.42], LIGHT_TAIL, 1.4);
+  const bTop: V3 = [0, -4.9, 1.42];
+  const bBot: V3 = [0, -2.6, -0.86];
+  b.light(bTop, LIGHT_BEACON, 1.9);
+  b.light(bBot, LIGHT_BEACON, 1.9);
+  b.anchors.beaconTop = bTop;
+  b.anchors.beaconBottom = bBot;
+  b.landing([0, -0.7, -0.62], 1.6, 0.6);
 }
 
 function glider(b: Builder) {
@@ -1273,6 +1717,8 @@ function glider(b: Builder) {
     MAT_TAIL,
     { capTip: true },
   );
+  // single retractable main wheel, semi-recessed under the cockpit (no lights)
+  b.gear.push({ x: 0, d: 2.15, top: prof(2.15).zb + 0.1, r: 0.19, wheels: 1, w: 0.12 });
 }
 
 function fighter(b: Builder) {
@@ -1345,6 +1791,16 @@ function fighter(b: Builder) {
   );
   b.mirror(m);
   b.glass = null;
+  // tricycle gear: nose leg with the taxi light, mains under the intakes
+  b.gear.push({ x: 0, d: 4.3, top: prof(4.3).zb + 0.25, r: 0.33, wheels: 1, w: 0.22, taxi: true });
+  b.gear.push({ x: 1.35, d: 11.6, top: -0.55, r: 0.45, wheels: 1, w: 0.3 });
+  const tipX = 6.5;
+  const navR: V3 = [tipX + 0.1, -(7.6 + tipX * tanS + 0.6), tipX * dih];
+  b.light(navR, LIGHT_NAV_R, 1.8);
+  b.light([-navR[0], navR[1], navR[2]], LIGHT_NAV_L, 1.8);
+  b.anchors.navR = navR;
+  b.anchors.navL = [-navR[0], navR[1], navR[2]];
+  b.light([0, -19.2, 0.62], LIGHT_TAIL, 1.5);
 }
 
 const RECIPES: Record<ModelShape, { build: (b: Builder) => void; clearance: number }> = {
@@ -1371,34 +1827,85 @@ const RECIPES: Record<ModelShape, { build: (b: Builder) => void; clearance: numb
 /** Every supported shape (one recipe per ModelShape). */
 export const MODEL_SHAPES = Object.keys(RECIPES) as ModelShape[];
 
+// ------------------------------------------------------------------ landing gear
+/**
+ * Struts, bogies and wheels for every leg, reaching down to `groundZ`. Legs with x > 0 are
+ * mirrored. Main legs retract inwards (about the fore-aft axis), centre legs forwards.
+ */
+function buildGear(b: Builder, groundZ: number) {
+  if (DETAIL > 1) return; // a pixel or two at that size
+  const right = b.gear.filter((g) => g.x > 1e-6);
+  const centre = b.gear.filter((g) => g.x <= 1e-6);
+  const m = b.mark();
+  for (const g of right) gearLeg(b, g, groundZ, false);
+  b.mirror(m);
+  for (const g of centre) gearLeg(b, g, groundZ, true);
+  b.part = RIGID;
+}
+
+function gearLeg(b: Builder, g: GearLeg, groundZ: number, centre: boolean) {
+  const r = g.r;
+  const axles = g.axles ?? 1;
+  const wheels = g.wheels ?? 1;
+  const w = g.w ?? 0.72 * r;
+  const axleZ = groundZ + r * Math.cos(Math.PI / WHEEL_SEGS()); // the tyre's flat bottom facet sits on the ground
+  const sr = Math.max(0.045, 0.19 * r);
+  const top: V3 = [g.topX ?? g.x, -g.d, Math.max(g.top, axleZ + 0.1)];
+  const axis: V3 = centre ? [1, 0, 0] : [0, 1, 0];
+  b.part = b.retract ? [PART_GEAR, top[0], top[1], top[2], axis[0], axis[1], axis[2], 0] : RIGID;
+  const spacing = 2.3 * r;
+  tube(b, top, [g.x, -g.d, axles > 1 ? axleZ + 0.2 * r : axleZ], sr, 6, MAT_ENGINE);
+  if (axles > 1) {
+    const half = (spacing * (axles - 1)) / 2 + 0.25 * r;
+    tube(b, [g.x, -g.d + half, axleZ + 0.05 * r], [g.x, -g.d - half, axleZ + 0.05 * r], 0.17 * r, 6, MAT_ENGINE);
+  }
+  const off = wheels > 1 ? w * 0.5 + sr * 0.8 + 0.04 : 0;
+  for (let a = 0; a < axles; a++) {
+    const y = -g.d + (a - (axles - 1) / 2) * spacing;
+    if (wheels > 1) {
+      wheel(b, [g.x - off, y, axleZ], r, w);
+      wheel(b, [g.x + off, y, axleZ], r, w);
+    } else wheel(b, [g.x, y, axleZ], r, w);
+  }
+  if (g.taxi) {
+    const p: V3 = [0, -g.d + sr + 0.1, lerp(top[2], axleZ, 0.55)];
+    b.landing(p, Math.max(1.3, 3.2 * r), 1);
+  }
+  b.part = RIGID;
+}
+
 // ------------------------------------------------------------------ normalisation
-function finish(shape: ModelShape, b: Builder, clearance: number): ModelMesh {
+function finish(shape: ModelShape, lod: number, b: Builder, groundZ: number): ModelMesh {
   const S = b.solid;
   const C = b.clear;
   const nS = S.count;
   const n = nS + C.count;
   let minY = Infinity;
   let maxY = -Infinity;
-  let minZ = Infinity;
   for (let v = 0; v < nS; v++) {
     minY = Math.min(minY, S.p[v * 3 + 1]!);
     maxY = Math.max(maxY, S.p[v * 3 + 1]!);
-    minZ = Math.min(minZ, S.p[v * 3 + 2]!);
   }
   const length = maxY - minY;
   const sc = 1 / length;
   const yMid = (maxY + minY) / 2;
-  const zOff = -minZ + clearance;
+  const zOff = -groundZ;
+  const P = (q: V3): V3 => [q[0] * sc, (q[1] - yMid) * sc, (q[2] + zOff) * sc];
   const positions = new Float32Array(n * 3);
   const normals = new Float32Array(n * 3);
   const colorIndex = new Uint8Array(n);
   const disc = new Float32Array(n * 3);
+  const part = new Float32Array(n * 4);
+  const axis = new Float32Array(n * 4);
   const min: V3 = [Infinity, Infinity, Infinity];
   const max: V3 = [-Infinity, -Infinity, -Infinity];
+  let gearV = 0;
+  let flapV = 0;
+  let slatV = 0;
   let o = 0;
   for (const buf of [S, C]) {
     for (let v = 0; v < buf.count; v++, o++) {
-      const p: V3 = [buf.p[v * 3]! * sc, (buf.p[v * 3 + 1]! - yMid) * sc, (buf.p[v * 3 + 2]! + zOff) * sc];
+      const p = P([buf.p[v * 3]!, buf.p[v * 3 + 1]!, buf.p[v * 3 + 2]!]);
       const nn = norm([buf.n[v * 3]!, buf.n[v * 3 + 1]!, buf.n[v * 3 + 2]!]);
       for (let k = 0; k < 3; k++) {
         positions[o * 3 + k] = p[k]!;
@@ -1408,11 +1915,37 @@ function finish(shape: ModelShape, b: Builder, clearance: number): ModelMesh {
         max[k] = Math.max(max[k]!, p[k]!);
       }
       colorIndex[o] = buf.c[v]!;
+      const kind = buf.k[v * 4]!;
+      if (kind !== PART_RIGID) {
+        const pv = P([buf.k[v * 4 + 1]!, buf.k[v * 4 + 2]!, buf.k[v * 4 + 3]!]);
+        part.set([kind, pv[0], pv[1], pv[2]], o * 4);
+        axis.set([buf.a[v * 4]!, buf.a[v * 4 + 1]!, buf.a[v * 4 + 2]!, buf.a[v * 4 + 3]! * sc], o * 4);
+        if (kind === PART_GEAR) gearV++;
+        else if (kind === PART_FLAP) flapV++;
+        else if (kind === PART_SLAT) slatV++;
+      }
     }
   }
   const spanRatio = Math.max(Math.abs(min[0]), Math.abs(max[0])) * 2;
   const Y = (d: number) => (-d - yMid) * sc;
   const Z = (z: number) => (z + zOff) * sc;
+  const lights = new Float32Array(b.lights.length * LIGHT_STRIDE);
+  b.lights.forEach((l, i) => {
+    const p = P(l.p);
+    lights.set([p[0], p[1], p[2], l.type, l.size, l.k, 0, 0], i * LIGHT_STRIDE);
+  });
+  const anchor = (q: V3 | undefined, radiusM: number): [number, number, number, number] => {
+    if (!q) return [0, 0, 0, 0];
+    const p = P(q);
+    return [p[0], p[1], p[2], radiusM * sc];
+  };
+  const anchors: LightAnchors = {
+    navL: anchor(b.anchors.navL, 3.2),
+    navR: anchor(b.anchors.navR, 3.2),
+    beaconTop: anchor(b.anchors.beaconTop, 3.6),
+    beaconBottom: anchor(b.anchors.beaconBottom, 3.6),
+    logo: b.anchors.logo ? anchor(b.anchors.logo[0], b.anchors.logo[1]) : [0, 0, 0, 0],
+  };
   let glass: Float32Array | null = null;
   if (b.glass) {
     const g = b.glass;
@@ -1427,14 +1960,25 @@ function finish(shape: ModelShape, b: Builder, clearance: number): ModelMesh {
   }
   return {
     shape,
+    lod,
     positions,
     normals,
     colorIndex,
     disc,
+    part,
+    axis,
     spanRatio,
     vertexCount: n,
     opaqueVertexCount: nS,
     triangleCount: n / 3,
+    gearVertexCount: gearV,
+    flapVertexCount: flapV,
+    slatVertexCount: slatV,
+    gearTriangleCount: b.gearTriangles,
+    lights,
+    lightCount: b.lights.length,
+    anchors,
+    recipeLengthM: length,
     min,
     max,
     glass,
@@ -1442,22 +1986,36 @@ function finish(shape: ModelShape, b: Builder, clearance: number): ModelMesh {
   };
 }
 
-/** Builds (uncached) the mesh for a shape. */
-export function buildModelMesh(shape: ModelShape): ModelMesh {
+/** Builds (uncached) the mesh for a shape at a level of detail (0 full, 1 medium, 2 low). */
+export function buildModelMesh(shape: ModelShape, lod = 0): ModelMesh {
+  const level = Math.max(0, Math.min(2, Math.round(lod)));
   const r = RECIPES[shape] ?? RECIPES.narrow;
   const b = new Builder();
-  r.build(b);
-  return finish(shape, b, r.clearance);
+  DETAIL = level;
+  try {
+    r.build(b);
+    // the ground sits `clearance` metres below the lowest point of the airframe
+    let minZ = Infinity;
+    for (let v = 0; v < b.solid.count; v++) minZ = Math.min(minZ, b.solid.p[v * 3 + 2]!);
+    const groundZ = minZ - r.clearance;
+    const before = b.solid.count;
+    buildGear(b, groundZ);
+    b.gearTriangles = (b.solid.count - before) / 3;
+    return finish(shape, level, b, groundZ);
+  } finally {
+    DETAIL = 0;
+  }
 }
 
-const cache = new Map<ModelShape, ModelMesh>();
+const cache = new Map<string, ModelMesh>();
 
-/** Cached mesh for a shape (unknown shapes fall back to 'narrow'). */
-export function getModelMesh(shape: ModelShape): ModelMesh {
-  let m = cache.get(shape);
+/** Cached mesh for a shape and level of detail (unknown shapes fall back to 'narrow'). */
+export function getModelMesh(shape: ModelShape, lod = 0): ModelMesh {
+  const key = `${shape}|${Math.max(0, Math.min(2, Math.round(lod)))}`;
+  let m = cache.get(key);
   if (!m) {
-    m = buildModelMesh(RECIPES[shape] ? shape : 'narrow');
-    cache.set(shape, m);
+    m = buildModelMesh(RECIPES[shape] ? shape : 'narrow', lod);
+    cache.set(key, m);
   }
   return m;
 }

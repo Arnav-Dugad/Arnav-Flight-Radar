@@ -132,8 +132,12 @@ function procLetter(airport: string, runway: string, arrival: boolean): string {
 }
 
 export interface Procedure {
-  name: string; // e.g. "DET 2F"
+  name: string; // e.g. "DET 2F", or a published name like "DEEZZ6"
   fix: Fix; // departure exit / arrival entry fix
+  /** Published procedure source (e.g. "FAA CIFP 2610") when this is a real procedure. */
+  published?: string;
+  /** Every fix of a published procedure, in flight order. */
+  fixes?: Fix[];
 }
 
 /**
@@ -317,4 +321,130 @@ export function assignNat(a: { lat: number; lon: number }, b: { lat: number; lon
   const pick = cand[Math.min(cand.length - 1, hash(flight) % 3 === 0 ? 1 : 0)]!;
   const pts = natPoints(pick);
   return { track: pick, pts: eastbound ? pts.reverse() : pts };
+}
+
+// ---------------------------------------------------------------- other organised track systems
+
+export type OtsSystem = 'NAT' | 'PACOTS' | 'AUSOTS';
+
+export interface OtsTrack {
+  system: OtsSystem;
+  letter: string;
+  eastbound: boolean;
+  /** Track points in west → east order ([lat, lon]). */
+  pts: Pt[];
+  from: number;
+  to: number;
+  levels: number[];
+}
+
+const fmtLat = (la: number) => `${Math.abs(Math.round(la))}${la >= 0 ? 'N' : 'S'}`;
+const fmtLon = (lo: number) => {
+  const l = ((lo + 540) % 360) - 180;
+  return l === -180 || l === 180 ? '180' : `${Math.abs(Math.round(l))}${l >= 0 ? 'E' : 'W'}`;
+};
+export const otsString = (tr: OtsTrack) => (tr.system === 'NAT' ? tr.pts.map(([la, lo]) => `${la}/${-lo}`).join(' ') : tr.pts.map(([la, lo]) => `${fmtLat(la)}${fmtLon(lo)}`).join(' '));
+export const otsLabel = (s: OtsSystem) => (s === 'NAT' ? 'North Atlantic track' : s === 'PACOTS' ? 'Pacific track (PACOTS)' : 'Australian flex track');
+
+/** Pacific organised tracks: eastbound along the jet stream by day, westbound further north by night (UTC). */
+export function pacotsTracks(t: number, seed: number): OtsTrack[] {
+  const day = Math.floor(t / 86_400_000);
+  const D0 = day * 86_400_000;
+  const h = hash(`pac${day}${seed}`);
+  const m = new Date(t).getUTCMonth();
+  const jet = (m <= 2 || m >= 10 ? 37 : 42) + ((h % 5) - 2);
+  const lons = [150, 160, 170, 180, 190, 200, 210]; // 190 = 170°W …
+  const out: OtsTrack[] = [];
+  for (let i = 0; i < 5; i++) {
+    const base = jet - 4 + i * 2;
+    out.push({
+      system: 'PACOTS',
+      letter: String(i + 1),
+      eastbound: true,
+      pts: lons.map((lo, k) => [Math.max(28, Math.min(52, base + Math.round(Math.sin(((k + (h % 3)) / lons.length) * Math.PI) * 3))), lo > 180 ? lo - 360 : lo] as Pt),
+      from: D0 + 9 * 3_600_000,
+      to: D0 + 21 * 3_600_000,
+      levels: [330, 340, 350, 360, 370, 380, 390],
+    });
+  }
+  for (let i = 0; i < 5; i++) {
+    const base = jet + 8 + i * 2;
+    out.push({
+      system: 'PACOTS',
+      letter: 'ABCDE'[i]!,
+      eastbound: false,
+      // Westbound tracks stay south of the Kurils and Kamchatka (Russian airspace).
+      pts: lons.map((lo, k) => [Math.max(36, Math.min([44, 47, 51, 54, 56, 57, 57][k]!, base + (k === 3 ? 2 : 0) - Math.round(Math.abs(k - 3) * 0.8))), lo > 180 ? lo - 360 : lo] as Pt),
+      from: D0 - 4 * 3_600_000,
+      to: D0 + 9 * 3_600_000,
+      levels: [300, 310, 320, 330, 340, 350, 360],
+    });
+  }
+  return out;
+}
+
+/** Australian flex tracks between eastern Australia and Asia / the Middle East, re-optimised daily for winds. */
+export function ausotsTracks(t: number, seed: number): OtsTrack[] {
+  const day = Math.floor(t / 86_400_000);
+  const D0 = day * 86_400_000;
+  const h = hash(`aus${day}${seed}`);
+  const shift = (h % 7) - 3;
+  const out: OtsTrack[] = [];
+  for (let i = 0; i < 4; i++) {
+    const off = shift + i * 2 - 3;
+    out.push({
+      system: 'AUSOTS',
+      letter: ['MY', 'BP', 'TN', 'JQ'][i]!,
+      eastbound: false,
+      pts: [
+        [-17 + off, 120],
+        [-22 + off, 130],
+        [-27 + off, 140],
+      ],
+      from: D0,
+      to: D0 + 86_400_000,
+      levels: [340, 350, 360, 370, 380, 390, 400],
+    });
+  }
+  return out;
+}
+
+/**
+ * Track assignment on any organised track system, or null for a random route. Points come
+ * back in flight order.
+ */
+export function assignOts(a: { lat: number; lon: number }, b: { lat: number; lon: number }, tMid: number, seed: number, flight: string): { track: OtsTrack; pts: Pt[] } | null {
+  const nat = assignNat(a, b, tMid, seed, flight);
+  if (nat) return { track: { system: 'NAT', letter: nat.track.letter, eastbound: nat.track.eastbound, pts: natPoints(nat.track), from: nat.track.from, to: nat.track.to, levels: nat.track.levels }, pts: nat.pts };
+  const asia = (p: { lat: number; lon: number }) => p.lon > 100 && p.lat > 0;
+  const naWest = (p: { lat: number; lon: number }) => p.lon < -100 && p.lat > 28;
+  const day = Math.floor(tMid / 86_400_000);
+  if ((asia(a) && naWest(b)) || (naWest(a) && asia(b))) {
+    const eastbound = asia(a);
+    const cand = [...pacotsTracks((day - 1) * 86_400_000, seed), ...pacotsTracks(tMid, seed)].filter((t) => t.eastbound === eastbound && tMid >= t.from - 2 * 3_600_000 && tMid <= t.to + 2 * 3_600_000);
+    if (!cand.length) return null;
+    // Latitude of the great circle near the date line picks the nearest track.
+    let lat180 = NaN;
+    for (let k = 1; k < 64; k++) {
+      const p = intermediatePoint(a.lat, a.lon, b.lat, b.lon, k / 64);
+      if (Math.abs(Math.abs(p[1]) - 180) < 4) {
+        lat180 = p[0];
+        break;
+      }
+    }
+    if (!Number.isFinite(lat180)) return null;
+    cand.sort((x, y) => Math.abs(x.pts[3]![0] - lat180) - Math.abs(y.pts[3]![0] - lat180));
+    const pick = cand[Math.min(cand.length - 1, hash(flight) % 3 === 0 ? 1 : 0)]!;
+    const pts = [...pick.pts];
+    return { track: pick, pts: eastbound ? pts : pts.reverse() };
+  }
+  const ausEast = (p: { lat: number; lon: number }) => p.lat < -24 && p.lon > 138;
+  const northWest = (p: { lat: number; lon: number }) => p.lat > -5 && p.lon < 115 && p.lon > 30;
+  if ((ausEast(a) && northWest(b)) || (northWest(a) && ausEast(b))) {
+    const cand = ausotsTracks(tMid, seed);
+    const pick = cand[hash(flight) % cand.length]!;
+    const pts = [...pick.pts]; // west → east
+    return { track: pick, pts: ausEast(a) ? pts.reverse() : pts };
+  }
+  return null;
 }

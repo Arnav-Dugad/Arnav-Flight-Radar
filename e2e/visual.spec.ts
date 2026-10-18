@@ -16,7 +16,8 @@ async function open(page: Page, url: string) {
   await expect(page.locator('img[src="/brand/arnav-mark-animated.svg"]')).toHaveCount(0, { timeout: 30_000 });
   await expect(page.getByRole('button', { name: /Simulated world\. \d+ aircraft airborne/ })).toBeVisible({ timeout: 30_000 });
   await page.waitForLoadState('networkidle').catch(() => undefined);
-  await page.waitForTimeout(2500);
+  // The worker adds helicopter, glider and other extra traffic shortly after start-up.
+  await page.waitForTimeout(6000);
 }
 
 const dynamic = (page: Page) => [page.getByRole('contentinfo'), page.getByRole('button', { name: /Simulated world/ })];

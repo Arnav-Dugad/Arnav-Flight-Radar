@@ -183,6 +183,10 @@ body {
   outline: none;
   box-shadow: var(--focus);
 }
+/* The command palette's field sits inside its own focused dialog: no inner ring. */
+[role='combobox']:focus-visible {
+  box-shadow: none;
+}
 
 button {
   cursor: pointer;

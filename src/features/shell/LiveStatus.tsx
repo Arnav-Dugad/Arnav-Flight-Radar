@@ -74,7 +74,7 @@ export function LiveStatus({ compact = false }: { compact?: boolean }) {
         aria-expanded={open}
         aria-haspopup="dialog"
         title="Simulated air traffic — clock and speed"
-        aria-label={`${label} world. ${airborne} aircraft airborne. Simulated time ${clock} UTC${speed > 1 ? `, running ${speed} times faster` : ''}.`}
+        aria-label={loading ? `${label} world, loading.` : `${label} world. ${airborne} aircraft airborne. Simulated time ${clock} UTC${speed > 1 ? `, running ${speed} times faster` : ''}.`}
         className={cn(
           'glass-2 flex h-9 items-center gap-2 rounded-full pl-3 pr-3.5 text-[12px] font-medium text-fg-2 transition-colors hover:text-fg',
           compact && 'h-8 pl-2.5 pr-3',

@@ -4,36 +4,40 @@ import { motion } from 'motion/react';
 import { useState } from 'react';
 import { PlaneIcon } from '@/components/icons';
 import { airlineHue } from '@/data/airlines';
-import { airlineLogo, useMediaTable } from '@/data/media';
+import { airlineIcon, airlineLogo, useMediaTable } from '@/data/media';
+import { LogoTile, logoCredit } from './MakerLogo';
 import type { FlightInfo, FlightStatus } from '@/data/world';
 import { cn } from '@/lib/cn';
 import { fmtDistance, fmtHmUTC } from '@/lib/format';
 import { fmtHmIn, tzAbbrev, useTimeZone } from '@/lib/tz';
 import { useSettings } from '@/state/settings';
 
-/** Monogram badge drawn from the airline's code (fallback when no free logo exists). */
-export function AirlineBadge({ code, size = 40 }: { code: string; size?: number }) {
+/** Monogram chip drawn from the airline's code (fallback when no free logo exists). */
+export function AirlineBadge({ code, size = 40, wide = false }: { code: string; size?: number; wide?: boolean }) {
   const hue = airlineHue(code);
   return (
-    <span
-      aria-hidden="true"
-      className="grid shrink-0 place-items-center font-bold tracking-[0.02em] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.25)]"
-      style={{
-        width: size,
-        height: size,
-        borderRadius: Math.round(size * 0.28),
-        fontSize: size * (code.length > 2 ? 0.3 : 0.38),
-        background: `linear-gradient(140deg, hsl(${hue} 70% 52%), hsl(${(hue + 40) % 360} 65% 34%))`,
-      }}
-    >
-      {code}
+    <span aria-hidden="true" className="grid shrink-0 place-items-center" style={{ width: wide ? size * 2.2 : size, height: size }}>
+      <span
+        className="tnum grid place-items-center font-bold tracking-[0.02em] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.25),0_1px_2px_rgba(0,0,0,0.25)]"
+        style={{
+          width: size,
+          height: size,
+          borderRadius: Math.round(size * 0.28),
+          fontSize: size * (code.length > 2 ? 0.3 : 0.38),
+          background: `linear-gradient(140deg, hsl(${hue} 70% 52%), hsl(${(hue + 40) % 360} 65% 34%))`,
+        }}
+      >
+        {code}
+      </span>
     </span>
   );
 }
 
 /**
- * Airline logo from Wikimedia Commons (freely licensed / public-domain files only),
- * on a white tile like an app icon; falls back to the monogram.
+ * Airline logo from Wikimedia Commons (freely licensed / public-domain files only).
+ * Compact (square) badges prefer the airline's square icon / tail mark; wide chips use
+ * the wordmark. Dark logos get a light tile on dark themes (see LogoTile); falls back to
+ * the IATA-code chip when there is no logo or it fails to load.
  */
 export function AirlineLogo({
   icao,
@@ -50,17 +54,22 @@ export function AirlineLogo({
   wide?: boolean;
 }) {
   const media = useMediaTable();
-  const logo = airlineLogo(media.data, icao);
-  const [failed, setFailed] = useState(false);
-  if (!logo || failed) return <AirlineBadge code={code} size={size} />;
+  const wordmark = airlineLogo(media.data, icao);
+  const icon = wide ? undefined : airlineIcon(media.data, icao);
+  const [failed, setFailed] = useState<ReadonlySet<string>>(() => new Set());
+  const logo = [icon, wordmark].find((m) => m && !failed.has(m.src));
+  if (!logo) return <AirlineBadge code={code} size={size} wide={wide} />;
+  const label = name ?? icao ?? code;
   return (
-    <span
-      className="grid shrink-0 place-items-center overflow-hidden bg-white shadow-[0_0_0_0.5px_rgba(0,0,0,0.12),0_1px_3px_rgba(0,0,0,0.25)]"
-      style={{ width: wide ? size * 2.2 : size, height: size, borderRadius: Math.round(size * 0.28), padding: Math.max(2, Math.round(size * 0.1)) }}
-      title={`${name ?? icao} logo · ${logo.license}${logo.artist ? ` · ${logo.artist}` : ''} · Wikimedia Commons`}
-    >
-      <img src={logo.src} alt={`${name ?? icao} logo`} loading="lazy" referrerPolicy="strict-origin-when-cross-origin" onError={() => setFailed(true)} className="max-h-full max-w-full object-contain" />
-    </span>
+    <LogoTile
+      key={logo.src}
+      item={logo}
+      alt={`${label} logo`}
+      width={wide ? size * 2.2 : size}
+      height={size}
+      title={logoCredit(label, logo)}
+      onError={() => setFailed((s) => new Set(s).add(logo.src))}
+    />
   );
 }
 

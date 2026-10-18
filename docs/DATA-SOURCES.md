@@ -68,3 +68,20 @@ is requested from OurAirports at runtime.
 
 The classification is heuristic and some sites may be in the wrong group. The files are reference
 data for the simulation only and must not be used for navigation.
+
+## US published procedures (FAA CIFP)
+
+`npm run data:procedures` (`scripts/build-procedures.mjs`) builds `public/data/sim/procedures-us.json`
+from the FAA [Coded Instrument Flight Procedures](https://www.faa.gov/air_traffic/flight_info/aeronav/digital_products/cifp/)
+(CIFP), a public-domain U.S. Government dataset in ARINC 424-18 format published every 28 days by
+FAA Aeronautical Information Services. The current cycle's zip is downloaded once with an
+identifying User-Agent and cached in `node_modules/.cache/cifp/`; nothing is requested at runtime.
+
+For every large US airport in `index-major.json` the file lists the published SIDs (including
+named ODPs coded as SIDs) and STARs: the runways each serves, one fix sequence per en-route
+transition (with published altitude constraints) and the runway-transition fixes. Fix positions
+come from the CIFP terminal and en-route waypoint, VHF navaid and NDB records. Vector-only
+procedures (headings, no fixes) are left out, and CIFP has no holding records, so no published
+holds are included. `src/data/sim/usProcedures.ts` picks a SID or STAR for a runway and
+direction of flight. Procedure names, fixes and positions are real; the flights flying them are
+simulated. Reference data for the simulation only, not for navigation.

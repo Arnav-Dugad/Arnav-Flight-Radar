@@ -1,6 +1,6 @@
 // Airport operations for the simulated world: runway in use, hourly movements,
 // arrivals / departures boards, aircraft on the ground and the departure queue.
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import type { AirportDetail } from '@shared/types';
 import { RunwayIcon } from '@/components/icons';
 import { simBoard, simDepartureQueue, simMovementsByHour, simNow, simRunwayInUse, simStands, type BoardRow } from '@/data/world';
@@ -117,10 +117,9 @@ export function MovementChart({ buckets, binMin, title, note, nowT, tz }: { buck
 }
 
 export function HourlyMovements({ a }: { a: AirportDetail }) {
-  const now = useNow(60_000);
+  useNow(60_000);
   const tz = useTimeZone(a.lat, a.lon);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const hourly = useMemo(() => simMovementsByHour(a.ident, 6), [a.ident, Math.floor(now / 60_000)]);
+  const hourly = simMovementsByHour(a.ident, 6);
   if (!hourly) return null;
   return <MovementChart buckets={hourly} binMin={60} title="Movements per hour" note="Local time. Faded bars are the hours ahead (simulated schedule)." nowT={Math.floor(simNow() / 3_600_000) * 3_600_000} tz={tz} />;
 }
@@ -214,10 +213,9 @@ function BoardRows({ rows, dep, tz }: { rows: BoardRow[]; dep: boolean; tz: stri
 }
 
 export function BoardTab({ a, kind }: { a: AirportDetail; kind: 'arrivals' | 'departures' }) {
-  const now = useNow(5000);
+  useNow(5000);
   const tz = useTimeZone(a.lat, a.lon);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const board = useMemo(() => simBoard(a.ident, { pastMin: 45, aheadMin: 180 }), [a.ident, Math.floor(now / 15_000)]);
+  const board = simBoard(a.ident, { pastMin: 45, aheadMin: 180 });
   const [showAll, setShowAll] = useState(false);
   if (!board) return null;
   const rows = board[kind];
@@ -241,13 +239,11 @@ export function BoardTab({ a, kind }: { a: AirportDetail; kind: 'arrivals' | 'de
 
 export function GroundTab({ a }: { a: AirportDetail }) {
   useTrafficVersion();
-  const now = useNow(3000);
+  useNow(3000);
   const tz = useTimeZone(a.lat, a.lon);
   const select = useUI((s) => s.select);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const queue = useMemo(() => simDepartureQueue(a.ident), [a.ident, Math.floor(now / 3000)]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const stands = useMemo(() => simStands(a.ident), [a.ident, Math.floor(now / 10_000)]);
+  const queue = simDepartureQueue(a.ident);
+  const stands = simStands(a.ident);
   const onGround = traffic
     .current()
     .filter((ac) => ac.onGround && Math.abs(ac.lat - a.lat) < 0.06 && Math.abs(ac.lon - a.lon) < 0.08)

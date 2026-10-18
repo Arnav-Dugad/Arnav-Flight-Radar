@@ -4,7 +4,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { ChevronDown, ChevronUp, Minus, Plus, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { airportByCode, loadMajorAirports } from '@/data/airports';
 import { simBoard, simNow, simRunwayInUse, useSim, type BoardRow } from '@/data/world';
 import { api } from '@/lib/api';
@@ -36,7 +36,7 @@ function PinnedCard({ ident, index, count }: { ident: string; index: number; cou
   const selectAirport = useUI((s) => s.selectAirport);
   const loading = useSim((s) => s.loading);
   const [collapsed, setCollapsed] = useState(count > 2 && index > 0);
-  const now = useNow(10_000);
+  useNow(10_000);
   const idx = useQuery({ queryKey: ['major-airports'], queryFn: loadMajorAirports, staleTime: Infinity });
   const a = idx.data ? airportByCode(ident) : undefined;
   const tz = useTimeZone(a?.lat, a?.lon);
@@ -49,8 +49,7 @@ function PinnedCard({ ident, index, count }: { ident: string; index: number; cou
     refetchInterval: 10 * 60_000,
     retry: 0,
   });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const board = useMemo(() => (!loading && a ? simBoard(a.ident, { pastMin: 0, aheadMin: 120 }) : undefined), [loading, a?.ident, Math.floor(now / 20_000)]);
+  const board = (!loading && a ? simBoard(a.ident, { pastMin: 0, aheadMin: 120 }) : undefined);
   if (!a) return null;
   const m = metar.data?.data[0];
   const rw = simRunwayInUse(a.ident);
@@ -129,6 +128,7 @@ function PinnedCard({ ident, index, count }: { ident: string; index: number; cou
 }
 
 export function PinnedAirports() {
+  useSim((s) => s.rev); // re-render when the simulation worker answers
   const pins = useBookmarks((s) => s.pinnedAirports);
   // Installed-app shortcuts follow the pins (browsers read the manifest when installing).
   useEffect(() => {

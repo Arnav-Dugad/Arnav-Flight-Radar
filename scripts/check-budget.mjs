@@ -8,7 +8,8 @@ const DIST = 'dist/client';
 const BUDGET = {
   initialJsGz: 600 * 1024, // everything the HTML loads up front (entry + modulepreloads)
   initialCssGz: 32 * 1024,
-  lazyChunkGz: 40 * 1024, // any single on-demand chunk (MapLibre worker excluded)
+  lazyChunkGz: 40 * 1024, // any single on-demand chunk (workers excluded)
+  simWorkerGz: 120 * 1024, // the simulation worker (fetched in the background, runs off the main thread)
   majorAirportIndexGz: 260 * 1024,
 };
 
@@ -24,16 +25,18 @@ const cssGz = initialCss.reduce((a, r) => a + gz(r), 0);
 
 const initialSet = new Set(initialJs.map((r) => r.replace('/assets/', '')));
 const lazy = readdirSync(join(DIST, 'assets'))
-  .filter((f) => f.endsWith('.js') && !initialSet.has(f) && !f.startsWith('maplibre-gl-worker'))
+  .filter((f) => f.endsWith('.js') && !initialSet.has(f) && !f.startsWith('maplibre-gl-worker') && !f.startsWith('sim.worker'))
   .map((f) => ({ f, size: gz(`/assets/${f}`) }))
   .sort((a, b) => b.size - a.size);
 const airports = gz('/data/airports/index-major.json');
+const simWorker = readdirSync(join(DIST, 'assets')).find((f) => f.startsWith('sim.worker') && f.endsWith('.js'));
 
 const rows = [
   ['Initial JS (gzip)', jsGz, BUDGET.initialJsGz],
   ['Initial CSS (gzip)', cssGz, BUDGET.initialCssGz],
   [`Largest lazy chunk (${lazy[0]?.f ?? '—'})`, lazy[0]?.size ?? 0, BUDGET.lazyChunkGz],
   ['Major airport index (gzip)', airports, BUDGET.majorAirportIndexGz],
+  [`Simulation worker (${simWorker ?? '—'})`, simWorker ? gz(`/assets/${simWorker}`) : 0, BUDGET.simWorkerGz],
 ];
 let failed = false;
 for (const [name, size, max] of rows) {
