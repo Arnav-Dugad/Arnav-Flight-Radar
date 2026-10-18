@@ -191,13 +191,13 @@ export const AIRLINES: AirlineProfile[] = [
   A('ALK', 'UL', 'SriLankan Airlines', 'LK', '4R-LLL', 'VCBI', 'A320:1 A321:0.5 A333:0.4', 25, 0),
   A('BBC', 'BG', 'Biman Bangladesh', 'BD', 'S2-LLL', 'VGHS', 'B738:1 B788:0.3 B789:0.3 DH8D:0.3', 20, 0.3),
   // East & South-East Asia
-  A('CCA', 'CA', 'Air China', 'CN', 'B-####', 'ZBAA ZUUU ZBAD', 'A320:1 A20N:1 A321:1 B738:1 B38M:0.5 A333:0.3 B77W:0.3 B789:0.2 A359:0.2 B748:0.1', 450, 0.85),
+  A('CCA', 'CA', 'Air China', 'CN', 'B-####', 'ZBAA ZUTF ZBAD', 'A320:1 A20N:1 A321:1 B738:1 B38M:0.5 A333:0.3 B77W:0.3 B789:0.2 A359:0.2 B748:0.1', 450, 0.85),
   A('CES', 'MU', 'China Eastern', 'CN', 'B-####', 'ZSPD ZSSS ZSHC ZPPP', 'A320:2 A20N:1 A321:1 B738:1.5 A333:0.3 B77W:0.2 A359:0.2', 650, 0.9),
-  A('CSN', 'CZ', 'China Southern', 'CN', 'B-####', 'ZGGG ZGSZ ZBAD ZUUU ZWWW', 'A320:1.5 A20N:1.5 A321:1 B738:2 B38M:0.5 A333:0.3 B789:0.3 B77W:0.2', 700, 0.9),
+  A('CSN', 'CZ', 'China Southern', 'CN', 'B-####', 'ZGGG ZGSZ ZBAD ZUTF ZWWW', 'A320:1.5 A20N:1.5 A321:1 B738:2 B38M:0.5 A333:0.3 B789:0.3 B77W:0.2', 700, 0.9),
   A('CHH', 'HU', 'Hainan Airlines', 'CN', 'B-####', 'ZJHK ZBAA', 'B738:2 B789:0.5 B788:0.3 A333:0.3', 280, 0.85),
   A('CSZ', 'ZH', 'Shenzhen Airlines', 'CN', 'B-####', 'ZGSZ', 'A320:1 B738:1', 220, 0.95),
   A('CXA', 'MF', 'Xiamen Airlines', 'CN', 'B-####', 'ZSAM ZSFZ', 'B738:2 B38M:1 B789:0.3', 200, 0.9),
-  A('CSC', '3U', 'Sichuan Airlines', 'CN', 'B-####', 'ZUUU', 'A320:2 A321:1 A333:0.2', 180, 0.95),
+  A('CSC', '3U', 'Sichuan Airlines', 'CN', 'B-####', 'ZUUU ZUTF', 'A320:2 A321:1 A333:0.2', 180, 0.95),
   A('CPA', 'CX', 'Cathay Pacific', 'CN', 'B-HLL', 'VHHH', 'A333:1 A359:1 A35K:0.5 B77W:1 A321:0.5 A21N:0.5', 200, 0),
   A('JAL', 'JL', 'Japan Airlines', 'JP', 'JA###L', 'RJTT RJAA RJBB RJFF', 'B738:2 B789:0.6 B788:0.4 A359:0.5 B77W:0.3 E190:0.5', 230, 0.7),
   A('ANA', 'NH', 'All Nippon Airways', 'JP', 'JA###L', 'RJTT RJAA RJBB RJGG', 'B738:1 A320:0.5 A21N:0.5 B789:1 B788:0.7 B78X:0.3 B77W:0.4 B772:0.3', 280, 0.7),
@@ -252,4 +252,15 @@ export const GA_COUNTRIES: { iso: string; reg: string; share: number; squawk: st
   { iso: 'NZ', reg: 'ZK-LLL', share: 2, squawk: '1200' },
   { iso: 'SE', reg: 'SE-LLL', share: 2, squawk: '7000' },
   { iso: 'MX', reg: 'XA-LLL', share: 2, squawk: '1200' },
+];
+
+/**
+ * Global airline alliances (membership as publicly announced, late 2026), used only to
+ * give simulated demo flights plausible codeshare numbers. Only airlines simulated in
+ * demo mode are listed.
+ */
+export const ALLIANCES: { name: string; members: string[] }[] = [
+  { name: 'Star Alliance', members: ['UAL', 'DLH', 'SWR', 'AUA', 'BEL', 'LOT', 'TAP', 'AEE', 'THY', 'ACA', 'AVA', 'AIC', 'ANA', 'AAR', 'SIA', 'THA', 'EVA', 'CCA', 'CSZ', 'MSR', 'ETH', 'SAA', 'ANZ'] },
+  { name: 'oneworld', members: ['AAL', 'BAW', 'IBE', 'FIN', 'QFA', 'CPA', 'JAL', 'QTR', 'RJA', 'MAS', 'ASA', 'RAM', 'ALK'] },
+  { name: 'SkyTeam', members: ['DAL', 'AFR', 'KLM', 'KAL', 'CES', 'CXA', 'SVA', 'KQA', 'AMX', 'CAL', 'GIA', 'HVN', 'ARG', 'SAS'] },
 ];

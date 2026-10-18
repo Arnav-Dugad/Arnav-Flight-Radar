@@ -80,7 +80,7 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(cacheFirst(request));
     return;
   }
-  if (url.pathname.startsWith('/data/') || url.pathname.startsWith('/brand/')) {
+  if (url.pathname.startsWith('/data/') || url.pathname.startsWith('/brand/') || url.pathname.startsWith('/media/')) {
     event.respondWith(staleWhileRevalidate(request));
   }
 });

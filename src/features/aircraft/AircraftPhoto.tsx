@@ -12,6 +12,7 @@ import { ChevronLeft, ChevronRight, EyeOff } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useEffect, useState } from 'react';
 import { Skeleton } from '@/components/ui/Feedback';
+import { representativePhoto, useMediaTable } from '@/data/media';
 import { useBookmarks } from '@/state/bookmarks';
 
 interface Photo {
@@ -47,7 +48,63 @@ async function fetchPhotos(kind: 'hex' | 'reg', id: string, signal: AbortSignal)
   return out;
 }
 
-export function AircraftPhoto({ hex, registration }: { hex: string; registration?: string | undefined }) {
+/**
+ * Representative photo from Wikimedia Commons: the airline's livery on this aircraft
+ * type when available, otherwise the type. Always labelled as NOT this airframe.
+ */
+export function RepresentativePhoto({ type, typeName, airlineIcao, airlineName }: { type?: string | undefined; typeName?: string | undefined; airlineIcao?: string | undefined; airlineName?: string | undefined }) {
+  const media = useMediaTable();
+  const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const p = representativePhoto(media.data, type, airlineIcao);
+  if (media.isPending) return <Skeleton className="aspect-[3/2] w-full rounded-[18px]" />;
+  if (!p || failed) return null;
+  const what = p.kind === 'livery' ? `${airlineName ?? airlineIcao} ${typeName ?? type}` : (typeName ?? type);
+  return (
+    <figure className="space-y-1.5">
+      <a href={p.page} target="_blank" rel="noopener" className="group relative block overflow-hidden rounded-[18px] border border-[var(--line)]">
+        {!loaded && <Skeleton className="absolute inset-0 rounded-none" />}
+        <img
+          src={p.src}
+          alt={`Representative photo of a ${what}`}
+          loading="lazy"
+          referrerPolicy="strict-origin-when-cross-origin"
+          onLoad={() => setLoaded(true)}
+          onError={() => setFailed(true)}
+          className="aspect-[3/2] w-full object-cover transition-transform duration-700 group-hover:scale-[1.03]"
+        />
+        <span className="absolute left-2 top-2 rounded-full bg-black/55 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-white backdrop-blur">Representative</span>
+      </a>
+      <figcaption className="text-[11px] leading-snug text-fg-3">
+        <span className="block">
+          A {what} — not this aircraft{p.kind === 'type' && airlineName ? ', and not necessarily in this airline’s livery' : ''}.
+        </span>
+        <span className="block">
+          Photo{p.artist ? ` © ${p.artist}` : ''} · {p.license} ·{' '}
+          <a href={p.page} target="_blank" rel="noopener" className="text-[var(--accent)] hover:underline">
+            Wikimedia Commons
+          </a>
+        </span>
+      </figcaption>
+    </figure>
+  );
+}
+
+export function AircraftPhoto({
+  hex,
+  registration,
+  type,
+  typeName,
+  airlineIcao,
+  airlineName,
+}: {
+  hex: string;
+  registration?: string | undefined;
+  type?: string | undefined;
+  typeName?: string | undefined;
+  airlineIcao?: string | undefined;
+  airlineName?: string | undefined;
+}) {
   const [index, setIndex] = useState(0);
   const [loaded, setLoaded] = useState<Record<string, boolean>>({});
   const toggleHidden = useBookmarks((s) => s.toggleHiddenPhoto);
@@ -71,7 +128,11 @@ export function AircraftPhoto({ hex, registration }: { hex: string; registration
   const photos: Photo[] = [];
   for (const p of [...(byHex.data ?? []), ...(byReg.data ?? [])]) if (!photos.some((x) => x.link === p.link)) photos.push(p);
   if (byHex.isPending && !photos.length) return <Skeleton className="aspect-[3/2] w-full rounded-[18px]" />;
-  if (!photos.length) return null;
+  if (!photos.length) {
+    if (byReg.isPending && registration) return <Skeleton className="aspect-[3/2] w-full rounded-[18px]" />;
+    // No photo of this exact airframe: fall back to a clearly labelled representative one.
+    return <RepresentativePhoto type={type} typeName={typeName} airlineIcao={airlineIcao} airlineName={airlineName} />;
+  }
   const i = Math.min(index, photos.length - 1);
   const p = photos[i]!;
   const many = photos.length > 1;

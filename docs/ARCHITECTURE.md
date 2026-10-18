@@ -50,6 +50,7 @@ stop a single client from flooding the API.
 | Motion interpolates between real reports (cubic Hermite curve tangent to both reported tracks, or straight) and stops exactly at the newest one; a hollow ring marks it | `src/state/traffic.ts`, `src/map/aircraftLayer.ts` |
 | Demo traffic is opt-in, pauses live polling, and is labelled everywhere | `src/data/demo.ts` |
 | The demo world (`src/data/demo/sim.ts`) is a deterministic flight simulator. Its trails come from the simulated path, not stored reports, and it is lazy-loaded | `src/data/demo/` |
+| Representative photos are labelled "not this aircraft"; exact-airframe photos come only from Planespotters for live aircraft | `src/features/aircraft/AircraftPhoto.tsx` |
 | Runway-in-use and operator names are labelled as inferred | `shared/approach.ts`, `src/data/airlines.ts` |
 | Approach and movement figures are inferred geometry, labelled as such | `shared/approach.ts` |
 | Trails contain only received positions; gaps over 150 s or jumps over 1,100 kt break the line | `src/state/traffic.ts` |

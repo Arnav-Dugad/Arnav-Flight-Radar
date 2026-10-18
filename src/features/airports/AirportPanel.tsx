@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { ExternalLink, Navigation, Share2, Star } from 'lucide-react';
+import { ExternalLink, Navigation, Pin, Share2, Star } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { AIRPORT_TYPE_LABEL } from '@shared/airports';
 import { classifyAircraft } from '@shared/classify';
@@ -86,6 +86,8 @@ function AirportBody({ a }: { a: AirportDetail }) {
   const openPanel = useUI((s) => s.openPanel);
   const toast = useUI((s) => s.toast);
   const isFav = favs.includes(a.ident);
+  const pinned = useBookmarks((s) => s.pinnedAirport);
+  const setPinned = useBookmarks((s) => s.setPinnedAirport);
   const station = a.icao && /^[A-Z]{4}$/.test(a.icao) ? a.icao : /^[A-Z]{4}$/.test(a.ident) ? a.ident : null;
 
   useEffect(() => {
@@ -156,6 +158,15 @@ function AirportBody({ a }: { a: AirportDetail }) {
         </IconButton>
         <IconButton label="Share link" variant="glass" size={32} onClick={() => void share()}>
           <Share2 size={15} />
+        </IconButton>
+        <IconButton
+          label={pinned === a.ident ? 'Unpin from map' : 'Pin to map'}
+          variant="glass"
+          size={32}
+          active={pinned === a.ident}
+          onClick={() => setPinned(pinned === a.ident ? null : a.ident)}
+        >
+          <Pin size={15} />
         </IconButton>
       </div>
 

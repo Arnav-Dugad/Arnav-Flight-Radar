@@ -129,7 +129,7 @@ export function installAircraftLayers(map: MlMap) {
       'fill-extrusion-color': ['get', 'c'],
       'fill-extrusion-height': ['get', 'h'],
       'fill-extrusion-base': 0,
-      'fill-extrusion-opacity': 0.42,
+      'fill-extrusion-opacity': s.path3dOpacity,
       'fill-extrusion-vertical-gradient': true,
     },
   });
@@ -293,6 +293,7 @@ export function applyAircraftSettings(map: MlMap) {
   map.setLayoutProperty('ac-heat', 'visibility', s.showHeatmap ? 'visible' : 'none');
   map.setLayoutProperty('ac-trails', 'visibility', s.showAllTrails ? 'visible' : 'none');
   map.setLayoutProperty('ac-sel-ribbon', 'visibility', s.show3dPath ? 'visible' : 'none');
+  map.setPaintProperty('ac-sel-ribbon', 'fill-extrusion-opacity', s.path3dOpacity);
   map.setPaintProperty('ac-icons', 'icon-halo-width', ['case', ['boolean', ['feature-state', 'hover'], false], 2.4, s.highContrast ? 2.2 : 1.3] as never);
   map.setLayoutProperty('ac-labels', 'text-size', s.highContrast ? 12 : 10.5);
 }
@@ -435,6 +436,8 @@ export function startAircraftEngine(map: MlMap): AircraftEngine {
         s.showHeatmap !== prev.showHeatmap ||
         s.showAllTrails !== prev.showAllTrails ||
         s.show3dPath !== prev.show3dPath ||
+        s.path3dOpacity !== prev.path3dOpacity ||
+        s.path3dColor !== prev.path3dColor ||
         s.highContrast !== prev.highContrast
       ) {
         applyAircraftSettings(map);
@@ -615,7 +618,7 @@ export function startAircraftEngine(map: MlMap): AircraftEngine {
     if (ribbon && getSettings().show3dPath && (now - lastRibbon > 400 || ribbonId !== id)) {
       lastRibbon = now;
       ribbonId = id;
-      ribbon.setData({ type: 'FeatureCollection', features: map.getPitch() > 8 ? ribbonFeatures(trail, [pos.lon, pos.lat], map.getZoom(), getSettings().trailColorMode) : [] });
+      ribbon.setData({ type: 'FeatureCollection', features: map.getPitch() > 8 ? ribbonFeatures(trail, [pos.lon, pos.lat], map.getZoom(), getSettings().path3dColor) : [] });
     }
 
     // Breathing selection ring (cheap paint update; skipped with reduced motion).

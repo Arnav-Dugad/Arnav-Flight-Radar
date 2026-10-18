@@ -1,14 +1,16 @@
-import { LogOut, Orbit, Undo2, X } from 'lucide-react';
+import { LogOut, Orbit, Shuffle, Undo2, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useEffect, useRef, useState } from 'react';
 import { classifyAircraft } from '@shared/classify';
 import { AircraftGlyph, BrandMark, FollowIcon, MeasureIcon } from '@/components/icons';
 import { GlassButton, IconButton } from '@/components/ui/Glass';
 import { fmtAltitude, fmtBearing, fmtDistance, fmtSpeed } from '@/lib/format';
-import { useSelectedTrack, useTrafficVersion } from '@/lib/hooks';
+import { useNow, useSelectedTrack, useTrafficVersion } from '@/lib/hooks';
 import { useIsMobile } from '@/lib/useMedia';
-import { getMap, motionMs, startFollow, stopFollow } from '@/map/controller';
+import { followRandomFlight, getMap, motionMs, startFollow, stopFollow } from '@/map/controller';
+import { solarElevation, subsolarPoint } from '@/map/extraOverlays';
 import { measureLegs } from '@/map/overlays';
+import { useView } from '@/state/view';
 import { useTour } from '@/map/tour';
 import { useSettings } from '@/state/settings';
 import { traffic } from '@/state/traffic';
@@ -136,6 +138,9 @@ export function PresentationOverlay() {
             <LiveStatus compact />
           </div>
           <div className="pointer-events-auto absolute right-5 top-5 flex gap-2">
+            <GlassButton size="sm" variant="glass" onClick={() => followRandomFlight()}>
+              <Shuffle size={14} /> Random flight
+            </GlassButton>
             <GlassButton size="sm" variant={orbit ? 'accent' : 'glass'} onClick={() => setOrbit((o) => !o)}>
               <Orbit size={14} /> {orbit ? 'Stop orbit' : 'Cinematic orbit'}
             </GlassButton>
@@ -187,13 +192,29 @@ export function PresentationOverlay() {
   );
 }
 
+/** Sweep colour from the sun's elevation at the map centre: cyan by day, amber at twilight, phosphor green at night. */
+function sweepColor(elev: number): string {
+  const day = [92, 225, 255, 0.075];
+  const dusk = [255, 168, 92, 0.085];
+  const night = [90, 255, 170, 0.09];
+  const mix = (a: number[], b: number[], k: number) => a.map((v, i) => v + (b[i]! - v) * Math.min(1, Math.max(0, k)));
+  const c = elev >= 6 ? day : elev >= -3 ? mix(dusk, day, (elev + 3) / 9) : elev >= -12 ? mix(night, dusk, (elev + 12) / 9) : night;
+  return `rgba(${Math.round(c[0]!)}, ${Math.round(c[1]!)}, ${Math.round(c[2]!)}, ${c[3]!.toFixed(3)})`;
+}
+
 export function RadarSweep() {
   const on = useSettings((s) => s.radarSweep);
   const motionLevel = useSettings((s) => s.motion);
+  const lat = useView((v) => Math.round(v.lat));
+  const lon = useView((v) => Math.round(v.lon));
+  const demoActive = useDemo((s) => s.active);
+  useNow(30_000);
   if (!on || motionLevel === 'off') return null;
+  const t = demoActive ? demoNow() : Date.now();
+  const color = sweepColor(solarElevation(lat, lon, subsolarPoint(t)));
   return (
     <div className="pointer-events-none absolute inset-0 z-[5] overflow-hidden" aria-hidden="true">
-      <div className="radar-scan absolute left-1/2 top-1/2 aspect-square w-[160vmax] -translate-x-1/2 -translate-y-1/2" />
+      <div className="radar-scan absolute left-1/2 top-1/2 aspect-square w-[160vmax] -translate-x-1/2 -translate-y-1/2" style={{ ['--sweep' as string]: color }} />
     </div>
   );
 }

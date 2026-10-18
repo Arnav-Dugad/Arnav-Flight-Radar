@@ -41,6 +41,9 @@ interface BookmarkStore {
   /** Aircraft (hex) whose photos the user chose not to see. */
   hiddenPhotos: string[];
   toggleHiddenPhoto: (hex: string) => void;
+  /** Airport whose live board is pinned to the map. */
+  pinnedAirport: string | null;
+  setPinnedAirport: (ident: string | null) => void;
   toggleAirport: (ident: string) => void;
   toggleAircraft: (a: Omit<FavoriteAircraft, 'addedAt'>) => void;
   saveView: (v: Omit<SavedView, 'id' | 'createdAt'>) => void;
@@ -58,6 +61,8 @@ export const useBookmarks = create<BookmarkStore>()(
       views: [],
       recents: [],
       hiddenPhotos: [],
+      pinnedAirport: null,
+      setPinnedAirport: (ident) => set({ pinnedAirport: ident }),
       toggleHiddenPhoto: (hex) =>
         set((s) => ({
           hiddenPhotos: s.hiddenPhotos.includes(hex) ? s.hiddenPhotos.filter((x) => x !== hex) : [...s.hiddenPhotos, hex].slice(-500),

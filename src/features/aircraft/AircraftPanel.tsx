@@ -32,7 +32,9 @@ import { useBookmarks } from '@/state/bookmarks';
 import { useSettings } from '@/state/settings';
 import { traffic, type Track } from '@/state/traffic';
 import { useUI } from '@/state/ui';
-import { AircraftPhoto } from './AircraftPhoto';
+import { airlinePrefix, useAirline } from '@/data/airlines';
+import { demoFlight } from '@/data/demo';
+import { AircraftPhoto, RepresentativePhoto } from './AircraftPhoto';
 import { RouteCard } from './RouteCard';
 import { AltitudeGauge, HeadingGauge, SpeedGauge, VerticalSpeedGauge } from './Gauges';
 import { TrailProfile } from './TrailProfile';
@@ -141,6 +143,8 @@ function AircraftDetails({ t }: { t: Track }) {
   const hiddenPhotos = useBookmarks((s) => s.hiddenPhotos);
   const toggleHiddenPhoto = useBookmarks((s) => s.toggleHiddenPhoto);
   const photoHidden = hiddenPhotos.includes(a.icao24);
+  const operator = useAirline(demo ? undefined : a.callsign);
+  const demoAirline = demo ? demoFlight(a.id)?.airline : undefined;
   const glow = aircraftColor(colorMode, palette, { onGround: a.onGround, alt, gs: a.groundSpeed, vr: a.verticalRate, stale: state !== 'live' });
 
   useEffect(() => {
@@ -265,7 +269,19 @@ function AircraftDetails({ t }: { t: Track }) {
       )}
       {!demo && showPhotos && !a.privacy && !a.icao24.startsWith('~') && !photoHidden && (
         <div className="px-5 pb-3">
-          <AircraftPhoto hex={a.icao24} registration={a.registration} />
+          <AircraftPhoto
+            hex={a.icao24}
+            registration={a.registration}
+            type={a.aircraftType}
+            typeName={a.typeDescription}
+            airlineIcao={airlinePrefix(a.callsign)}
+            airlineName={operator.data?.name}
+          />
+        </div>
+      )}
+      {demo && showPhotos && (
+        <div className="px-5 pb-3">
+          <RepresentativePhoto type={a.aircraftType} typeName={a.typeDescription} airlineIcao={demoAirline?.icao} airlineName={demoAirline?.name} />
         </div>
       )}
       {!demo && photoHidden && (

@@ -51,6 +51,8 @@ export interface Settings {
   showRadar: boolean;
   showPhotos: boolean;
   show3dPath: boolean; // extruded flight path for the selected aircraft when the map is tilted
+  path3dColor: TrailColorMode;
+  path3dOpacity: number; // 0.15 – 0.9
   showDayNight: boolean;
   showAirspace: boolean; // FAA class airspace (United States)
   showLightning: boolean; // NASA lightning climatology (long-term average, not live)
@@ -94,6 +96,8 @@ export const DEFAULT_SETTINGS: Settings = {
   showRadar: false,
   showPhotos: true,
   show3dPath: true,
+  path3dColor: 'altitude',
+  path3dOpacity: 0.45,
   showDayNight: false,
   showAirspace: false,
   showLightning: false,

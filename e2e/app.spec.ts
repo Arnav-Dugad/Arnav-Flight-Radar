@@ -152,6 +152,28 @@ test.describe('desktop', () => {
     await expect(panel).toContainText(/Simulated board \(demo mode\)/);
   });
 
+  test('pins an airport to the map and follows a random demo flight', async ({ page }) => {
+    await ready(page);
+    await page.keyboard.press('Control+k');
+    await page.getByRole('combobox').fill('LHR');
+    await expect(page.getByRole('option').first()).toContainText('Heathrow');
+    await page.keyboard.press('Enter');
+    const panel = page.getByRole('complementary', { name: 'Airport details' });
+    await panel.getByRole('button', { name: 'Pin to map' }).click();
+    const pinned = page.getByRole('region', { name: 'Pinned airport LHR' });
+    await expect(pinned).toBeVisible();
+    await page.keyboard.press('Escape');
+    await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Discover' }).click();
+    await page.getByRole('button', { name: /^Demo mode/ }).click();
+    await expect(page.getByRole('status').filter({ hasText: /airborne/ })).toBeVisible({ timeout: 20_000 });
+    await expect(pinned).toContainText('Simulated schedule');
+    await page.locator('main canvas.maplibregl-canvas').first().click({ position: { x: 600, y: 500 } });
+    await page.keyboard.press('j');
+    await expect(page.getByRole('status').filter({ hasText: /Following|Paused following/ })).toBeVisible();
+    await pinned.getByRole('button', { name: 'Unpin airport' }).click();
+    await expect(pinned).toHaveCount(0);
+  });
+
   test('keyboard cycling selects aircraft and announces them', async ({ page }) => {
     await ready(page);
     await page.waitForTimeout(3000);

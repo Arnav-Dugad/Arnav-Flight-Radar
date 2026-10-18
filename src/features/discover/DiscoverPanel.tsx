@@ -24,7 +24,7 @@ import { HUBS } from '@/data/airports';
 import { startDemo, stopDemo, useDemo } from '@/data/demo';
 import { fmtAltitude, fmtSpeed } from '@/lib/format';
 import { useTrafficVersion } from '@/lib/hooks';
-import { focusAircraft, setProjection, startFollow } from '@/map/controller';
+import { focusAircraft, followRandomFlight, setProjection, startFollow } from '@/map/controller';
 import { startTour, stopTour, useTour } from '@/map/tour';
 import { useSettings } from '@/state/settings';
 import { traffic } from '@/state/traffic';
@@ -66,6 +66,16 @@ export function DiscoverPanel() {
       icon: <FollowIcon />,
       disabled: ui.selectedId ? undefined : 'Select an aircraft first',
       run: () => ui.selectedId && startFollow(ui.selectedId),
+    },
+    {
+      key: 'random',
+      title: 'Follow a random flight',
+      body: 'Jump the camera onto a random airborne aircraft, preferably one in view.',
+      icon: <FollowIcon />,
+      disabled: stats.airborne > 0 ? undefined : 'No airborne aircraft right now',
+      run: () => {
+        if (followRandomFlight()) openPanel(null);
+      },
     },
     { key: 'spotter', title: 'Spotter mode', body: 'Distraction-free view of traffic around an airport.', icon: <SpotterIcon />, run: () => openPanel('spotter') },
     { key: 'analytics', title: 'Analytics', body: 'Live statistics of the observed regional sample.', icon: <AnalyticsIcon />, run: () => openPanel('analytics') },

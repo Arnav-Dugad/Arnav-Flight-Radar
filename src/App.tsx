@@ -20,6 +20,8 @@ import { ShortcutsModal, useGlobalShortcuts } from '@/features/shell/Shortcuts';
 import { Announcer, HoverCard } from '@/features/shell/HoverCard';
 import { useSelectionAnnouncer } from '@/features/shell/cycle';
 import { StatusBar } from '@/features/shell/StatusBar';
+import { PathProfileHud } from '@/features/aircraft/PathProfileHud';
+import { PinnedAirport } from '@/features/airports/PinnedAirport';
 import { VerticalProfile } from '@/features/shell/VerticalProfile';
 import { TopBar } from '@/features/shell/TopBar';
 import { ReplayBar, TimelinePanel } from '@/features/timeline/Timeline';
@@ -96,6 +98,8 @@ export function App() {
             <MapControls />
             {!mobile && <StatusBar />}
             <AnimatePresence>{!mobile && showProfile && <VerticalProfile key="profile" />}</AnimatePresence>
+            {!mobile && !showProfile && <PathProfileHud />}
+            {!mobile && <PinnedAirport />}
             {mobile && <MobileNav />}
             <TopNotices />
             <MeasureHUD />

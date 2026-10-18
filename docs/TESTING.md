@@ -1,8 +1,8 @@
 # Testing
 
 ```bash
-npm test             # Vitest: unit + integration (no network) — 106 tests
-npm run test:e2e     # Playwright against the local dev server — 22 tests
+npm test             # Vitest: unit + integration (no network) — 116 tests
+npm run test:e2e     # Playwright against the local dev server — 23 tests
 npm run test:visual  # screenshot regression vs. committed baselines (mocked feed)
 npm run budget       # performance budget (after npm run build)
 BASE_URL=https://<deployment> npm run test:e2e   # against production
@@ -25,6 +25,8 @@ BASE_URL=https://<deployment> npm run test:e2e   # against production
 | Airport intelligence | runway ends, approach detection (3° final found; climbing/off-axis/receding/high/ground rejected), observed arrivals/departures |
 | Great-circle routes | start/end/midpoint correctness |
 | Demo world | every airline hub is a real airport and every fleet type is known; worldwide density (5k–16k airborne); physically consistent legs (no teleporting, altitudes within type limits, arrival at the destination); landing and take-off on the runway in use; legs chain; balanced hub arrivals/departures with a night lull; deterministic seeds |
+| Demo operations | repeating flight numbers per route; alliance-only codeshares; arrival sequencing (rare, short holds); fog diversions; METAR-driven runway choice; OpenStreetMap stands and taxi routing; jet-stream winds; moving ETAs |
+| Airspace & sky | FAA feature validation (malformed features dropped), non-collection responses rejected; Moon phase on known dates and declination range |
 | Runway in use | approaches outrank wind; headwind choice; no guess in calm/variable wind |
 | Day/night | sub-solar point at the solstice and its hourly drift; nested twilight bands; lit/dark sides |
 | Airlines & privacy | callsign-prefix extraction; OpenFlights rows; LADD/PIA flags from `dbFlags` |

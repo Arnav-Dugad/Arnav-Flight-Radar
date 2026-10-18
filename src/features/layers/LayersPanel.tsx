@@ -10,7 +10,7 @@ import { cn } from '@/lib/cn';
 import { FLIGHT_CAT_COLOR, getRadarState, onRadarChange, onWeatherChange, weatherNotice } from '@/map/overlays';
 import { AIRSPACE_MIN_ZOOM, airspaceState, onAirspaceChange } from '@/map/extraOverlays';
 import { STYLE_META } from '@/map/styles';
-import { useSettings, type ColorMode } from '@/state/settings';
+import { useSettings, type ColorMode, type TrailColorMode } from '@/state/settings';
 import { useUI } from '@/state/ui';
 import { Legend } from './Legend';
 
@@ -21,7 +21,7 @@ function AirspaceStatus() {
     status === 'zoom'
       ? `Zoom in to level ${AIRSPACE_MIN_ZOOM} or closer to load airspace.`
       : status === 'outside'
-        ? 'This view is outside the United States — FAA airspace only covers the US.'
+        ? 'No airspace data here — coverage is the United States (FAA), Canada and Europe (openAIP).'
         : status === 'loading'
           ? 'Loading airspace…'
           : status === 'error'
@@ -33,6 +33,9 @@ function AirspaceStatus() {
     <div className="space-y-1.5 rounded-[12px] bg-[var(--line)] px-3 py-2.5 text-[11.5px] text-fg-2">
       <div className="flex flex-wrap gap-3">
         <span className="flex items-center gap-1.5">
+          <span className="h-0.5 w-4 bg-[#ff6b7d]" /> A
+        </span>
+        <span className="flex items-center gap-1.5">
           <span className="h-0.5 w-4 bg-[#4f8dff]" /> Class B
         </span>
         <span className="flex items-center gap-1.5">
@@ -41,9 +44,18 @@ function AirspaceStatus() {
         <span className="flex items-center gap-1.5">
           <span className="h-0.5 w-4 border-t-2 border-dashed border-[#5aa9ff]" /> Class D
         </span>
+        <span className="flex items-center gap-1.5">
+          <span className="h-0.5 w-4 border-t-2 border-dotted border-[#8fa3bd]" /> E
+        </span>
       </div>
       {text && <p className="text-fg-3">{text}</p>}
-      <p className="text-fg-3">Source: FAA Aeronautical Data Delivery Service (public domain).</p>
+      <p className="text-fg-3">
+        Sources: FAA Aeronautical Data Delivery Service (US, public domain);{' '}
+        <a href="https://www.openaip.net" target="_blank" rel="noopener" className="text-[var(--accent)] hover:underline">
+          openAIP
+        </a>{' '}
+        (Canada &amp; Europe, CC BY-NC 4.0).
+      </p>
     </div>
   );
 }
@@ -146,8 +158,8 @@ export function LayersPanel() {
             onChange={(v) => s.set('showDayNight', v)}
           />
           <Toggle
-            label="Controlled airspace (US)"
-            description="FAA Class B, C and D boundaries with ceiling/floor in hundreds of feet. United States only, from zoom 6. Not for navigation."
+            label="Controlled airspace"
+            description="Class A–E control zones and terminal areas with ceiling/floor (hundreds of feet or flight levels). United States, Canada and Europe, from zoom 6. Not for navigation."
             checked={s.showAirspace}
             onChange={(v) => s.set('showAirspace', v)}
           />
@@ -179,6 +191,23 @@ export function LayersPanel() {
             checked={s.show3dPath}
             onChange={(v) => s.set('show3dPath', v)}
           />
+          {s.show3dPath && (
+            <div className="space-y-3 rounded-[12px] bg-[var(--line)] px-3 py-2.5">
+              <SegmentedControl<TrailColorMode>
+                size="sm"
+                label="3D path colour"
+                value={s.path3dColor}
+                onChange={(v) => s.set('path3dColor', v)}
+                options={[
+                  { value: 'altitude', label: 'Altitude' },
+                  { value: 'speed', label: 'Speed' },
+                  { value: 'vertical', label: 'Climb rate' },
+                  { value: 'time', label: 'Time' },
+                ]}
+              />
+              <Slider label="3D path opacity" min={0.15} max={0.9} step={0.05} value={s.path3dOpacity} onChange={(v) => s.set('path3dOpacity', v)} format={(v) => `${Math.round(v * 100)}%`} />
+            </div>
+          )}
           <Toggle
             label="Range rings"
             description="Distance rings around the selected aircraft or airport (or the map centre)."

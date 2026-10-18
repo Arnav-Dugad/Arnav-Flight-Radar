@@ -13,7 +13,8 @@ import { useNow, useTrafficVersion } from '@/lib/hooks';
 import { focusAircraft } from '@/map/controller';
 import { traffic } from '@/state/traffic';
 import { useUI } from '@/state/ui';
-import { AirlineBadge } from '@/features/aircraft/RouteCard';
+import { AirlineLogo } from '@/features/aircraft/RouteCard';
+import { fmtHmIn, tzAbbrev, useTimeZone } from '@/lib/tz';
 
 // ---------------------------------------------------------------- runway in use
 
@@ -32,7 +33,15 @@ export function RunwayInUseCard({ a, demo }: { a: AirportDetail; demo: boolean }
     const rw = demoRunwayInUse(a.ident);
     if (!rw) return null;
     return (
-      <Card runway={rw} title="Runway in use (simulated)" body="Demo traffic lands and departs on this runway direction." />
+      <Card
+        runway={rw.runway}
+        title="Runway in use (simulated)"
+        body={
+          rw.basis === 'metar'
+            ? `Demo traffic uses the runway best aligned with the real reported wind (${rw.wind}).`
+            : 'Demo traffic lands and departs on this runway direction (simulated wind).'
+        }
+      />
     );
   }
   if (!ends.length) return null;
@@ -152,6 +161,9 @@ export function MovementChart({ buckets, binMin, title, note, nowT }: { buckets:
 // ---------------------------------------------------------------- demo board
 
 const STATUS_COLOR: Record<string, string> = {
+  Delayed: 'text-[#ffb547]',
+  Holding: 'text-[#ffb547]',
+  Diverted: 'text-[#ff8a9a]',
   Scheduled: 'text-fg-3',
   Boarding: 'text-[#ffd28a]',
   Taxiing: 'text-[#ffd28a]',
@@ -162,7 +174,7 @@ const STATUS_COLOR: Record<string, string> = {
   Departed: 'text-[#7ee2a8]',
 };
 
-function BoardRows({ rows, dep }: { rows: BoardRow[]; dep: boolean }) {
+function BoardRows({ rows, dep, tz }: { rows: BoardRow[]; dep: boolean; tz: string | null }) {
   const select = useUI((s) => s.select);
   if (!rows.length) return <p className="glass-2 rounded-[14px] px-3.5 py-3 text-[12px] text-fg-3">No simulated {dep ? 'departures' : 'arrivals'} in this window.</p>;
   return (
@@ -181,18 +193,22 @@ function BoardRows({ rows, dep }: { rows: BoardRow[]; dep: boolean }) {
               }}
               className="flex w-full items-center gap-2.5 px-3 py-2 text-left enabled:hover:bg-[var(--line)] disabled:cursor-default"
             >
-              <div className="tnum w-[46px] shrink-0">
-                <div className="text-[12.5px] font-semibold text-fg">{fmtHmUTC(r.scheduled).slice(0, 5)}</div>
-                <div className={`text-[10.5px] ${late ? 'text-[#ffb547]' : 'text-fg-3'}`}>{fmtHmUTC(r.actual ?? r.estimated).slice(0, 5)}</div>
+              <div className="tnum w-[50px] shrink-0">
+                <div className="text-[13px] font-semibold text-fg">{fmtHmIn(r.scheduled, tz)}</div>
+                <div className={`text-[10.5px] ${late ? 'text-[#ffb547]' : 'text-fg-3'}`}>{fmtHmIn(r.actual ?? r.estimated, tz)}</div>
+                <div className="text-[9.5px] text-fg-3">{fmtHmUTC(r.scheduled).slice(0, 5)}Z</div>
               </div>
-              <AirlineBadge code={r.airlineIata ?? r.flight.slice(0, 2)} size={28} />
+              <AirlineLogo icao={r.airlineIcao} code={r.airlineIata ?? r.flight.slice(0, 2)} size={26} name={r.airline} wide />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-[12.5px] font-semibold text-fg">
                   {r.other.iata ?? r.other.ident} <span className="font-normal text-fg-2">{r.other.city ?? r.other.name}</span>
                 </div>
                 <div className="tnum truncate text-[10.5px] text-fg-3">
-                  {r.flightIata ?? r.flight} · {r.type} · {r.reg}
+                  {r.flightIata ?? r.flight} · {r.type}
+                  {r.gate ? ` · Stand ${r.gate}` : ''}
+                  {r.codeshares.length ? ` · also ${r.codeshares.join(', ')}` : ''}
                 </div>
+                {r.divertedTo && <div className="text-[10.5px] text-[#ff8a9a]">Diverted to {r.divertedTo.iata ?? r.divertedTo.ident} ({r.divertedTo.city ?? r.divertedTo.name})</div>}
               </div>
               <span className={`shrink-0 text-right text-[11px] font-semibold ${STATUS_COLOR[r.status] ?? 'text-fg-2'}`}>
                 {r.status}
@@ -208,6 +224,7 @@ function BoardRows({ rows, dep }: { rows: BoardRow[]; dep: boolean }) {
 
 export function DemoAirportOps({ a }: { a: AirportDetail }) {
   const now = useNow(5000);
+  const tz = useTimeZone(a.lat, a.lon);
   const [tab, setTab] = useState<'arrivals' | 'departures'>('arrivals');
   const board = useMemo(() => demoBoard(a.ident, { pastMin: 45, aheadMin: 150 }), [a.ident, Math.floor(now / 15_000)]); // eslint-disable-line react-hooks/exhaustive-deps
   const hourly = useMemo(() => demoMovementsByHour(a.ident, 6), [a.ident, Math.floor(now / 60_000)]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -226,8 +243,10 @@ export function DemoAirportOps({ a }: { a: AirportDetail }) {
           { id: 'departures', label: `Departures (${board.departures.length})` },
         ]}
       />
-      <BoardRows rows={rows.slice(0, 60)} dep={tab === 'departures'} />
-      <p className="text-[11px] leading-snug text-fg-3">Simulated board (demo mode): real airlines and airports, invented flights and times. Times UTC; second line is the estimate or actual time.</p>
+      <BoardRows rows={rows.slice(0, 60)} dep={tab === 'departures'} tz={tz} />
+      <p className="text-[11px] leading-snug text-fg-3">
+        Simulated board (demo mode): real airlines and airports, invented flights, codeshares and times. Local time ({tzAbbrev(demoNow(), tz)}), then the estimate or actual time, then UTC. Stands from OpenStreetMap where mapped.
+      </p>
     </div>
   );
 }

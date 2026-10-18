@@ -61,16 +61,17 @@
   --fg-2: #b4c2d4;
   --fg-3: #7d8ea5;
   --accent: #5ce1ff;
-  --surface: rgba(10, 18, 34, 0.62);
-  --surface-2: rgba(22, 34, 56, 0.55);
-  --surface-solid: #0b1426;
-  --line: rgba(160, 205, 255, 0.1);
-  --line-strong: rgba(160, 205, 255, 0.2);
-  --glass-highlight: rgba(255, 255, 255, 0.07);
-  --glass-shadow: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 0 0 1px rgba(0, 0, 0, 0.25),
-    0 18px 50px -12px rgba(0, 0, 0, 0.65), 0 4px 14px -4px rgba(0, 0, 0, 0.4);
-  --glass-blur: 22px;
-  --glass-saturate: 160%;
+  /* Apple-style "regular" material: mostly opaque, neutral, heavily blurred and saturated. */
+  --surface: rgba(20, 24, 33, 0.8);
+  --surface-2: rgba(255, 255, 255, 0.055);
+  --surface-solid: #141821;
+  --line: rgba(255, 255, 255, 0.09);
+  --line-strong: rgba(255, 255, 255, 0.17);
+  --glass-highlight: rgba(255, 255, 255, 0.08);
+  --glass-shadow: 0 0.5px 0 rgba(255, 255, 255, 0.12) inset, 0 0 0 0.5px rgba(0, 0, 0, 0.5),
+    0 22px 48px -16px rgba(0, 0, 0, 0.6), 0 6px 16px -8px rgba(0, 0, 0, 0.45);
+  --glass-blur: 34px;
+  --glass-saturate: 185%;
   --focus: 0 0 0 2px var(--canvas), 0 0 0 4px rgba(92, 225, 255, 0.85);
   --scrim: rgba(2, 5, 10, 0.55);
   /* Chart tokens (validated with the dataviz palette validator against #0b1426) */
@@ -87,14 +88,14 @@
   --fg-2: #33445c;
   --fg-3: #627389;
   --accent: #0a84d6;
-  --surface: rgba(255, 255, 255, 0.68);
-  --surface-2: rgba(240, 245, 251, 0.75);
-  --surface-solid: #f7f9fc;
-  --line: rgba(11, 20, 38, 0.08);
-  --line-strong: rgba(11, 20, 38, 0.16);
-  --glass-highlight: rgba(255, 255, 255, 0.7);
-  --glass-shadow: 0 1px 0 rgba(255, 255, 255, 0.9) inset, 0 0 0 1px rgba(11, 20, 38, 0.06),
-    0 18px 50px -14px rgba(16, 32, 64, 0.28), 0 4px 14px -6px rgba(16, 32, 64, 0.18);
+  --surface: rgba(248, 249, 251, 0.82);
+  --surface-2: rgba(118, 128, 148, 0.08);
+  --surface-solid: #f8f9fb;
+  --line: rgba(11, 20, 38, 0.09);
+  --line-strong: rgba(11, 20, 38, 0.17);
+  --glass-highlight: rgba(255, 255, 255, 0.75);
+  --glass-shadow: 0 0.5px 0 rgba(255, 255, 255, 0.95) inset, 0 0 0 0.5px rgba(11, 20, 38, 0.12),
+    0 22px 48px -18px rgba(16, 32, 64, 0.3), 0 6px 16px -8px rgba(16, 32, 64, 0.16);
   --focus: 0 0 0 2px var(--canvas), 0 0 0 4px rgba(10, 132, 214, 0.8);
   --scrim: rgba(230, 236, 244, 0.5);
   --viz-1: #2a78d6;
@@ -106,12 +107,12 @@
 /* Reduced-effects mode: cheaper glass for low-end GPUs or by preference. */
 :root[data-effects='reduced'] {
   --glass-blur: 0px;
-  --surface: rgba(10, 18, 34, 0.94);
-  --surface-2: rgba(22, 34, 56, 0.94);
+  --surface: rgba(20, 24, 33, 0.96);
+  --surface-2: rgba(255, 255, 255, 0.06);
 }
 :root[data-effects='reduced'][data-theme='light'] {
-  --surface: rgba(255, 255, 255, 0.96);
-  --surface-2: rgba(240, 245, 251, 0.96);
+  --surface: rgba(255, 255, 255, 0.97);
+  --surface-2: rgba(118, 128, 148, 0.08);
 }
 
 /* High-contrast mode (Settings → Appearance), also applied for prefers-contrast: more. */
@@ -197,12 +198,13 @@ button:disabled {
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   box-shadow: var(--glass-shadow);
-  border: 1px solid var(--line);
+  border: 0.5px solid var(--line-strong);
 }
 
+/* Grouped content inside glass (like iOS inset-grouped cells): a quiet fill, hairline edge. */
 @utility glass-2 {
   background: var(--surface-2);
-  border: 1px solid var(--line);
+  border: 0.5px solid var(--line);
 }
 
 @utility tnum {
@@ -306,7 +308,9 @@ button:disabled {
 
 /* Optional radar scan overlay */
 .radar-scan {
-  background: conic-gradient(from 0deg, transparent 0deg, rgba(92, 225, 255, 0.08) 40deg, transparent 60deg);
+  /* --sweep follows the sun at the map centre (day / twilight / night), set from JS. */
+  background: conic-gradient(from 0deg, transparent 0deg, var(--sweep, rgba(92, 225, 255, 0.08)) 40deg, transparent 60deg);
+  transition: --sweep 2s;
   animation: radar-spin 8s linear infinite;
   mask-image: radial-gradient(circle, black 0%, black 55%, transparent 72%);
 }

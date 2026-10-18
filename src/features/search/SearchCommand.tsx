@@ -154,8 +154,26 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
       });
     }
 
-    // Live aircraft in the current area (instant, local)
+    // An exact airport code (e.g. "LHR", "EGLL") goes straight to the top.
     const up = query.toUpperCase().replace(/\s+/g, '');
+    const airportHits = airports ? searchAirports(airports, query, { limit: 7 }) : [];
+    const exactAirport = airportHits.length > 0 && (airportHits[0]!.iata === up || airportHits[0]!.icao === up || airportHits[0]!.ident === up);
+    const airportResults: Result[] = airportHits.map((a) => ({
+      key: `apt-${a.ident}`,
+      group: 'Airports',
+      icon: <AirportIcon size={17} />,
+      title: (
+        <span>
+          {a.iata && <span className="mr-2 font-semibold text-[var(--accent)]">{a.iata}</span>}
+          {a.name}
+        </span>
+      ),
+      sub: [a.icao ?? a.ident, a.city, a.country].filter(Boolean).join(' · '),
+      run: () => goAirport(a),
+    }));
+    if (exactAirport) out.push(...airportResults);
+
+    // Live aircraft in the current area (instant, local)
     const local = [...traffic.tracks.values()]
       .map((t) => t.ac)
       .filter((a) => a.callsign?.includes(up) || a.registration?.replace(/-/g, '').includes(up.replace(/-/g, '')) || a.icao24.toUpperCase().startsWith(up) || a.aircraftType === up)
@@ -181,23 +199,7 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
     }
 
     // Airports
-    if (airports) {
-      searchAirports(airports, query, { limit: 7 }).forEach((a) =>
-        out.push({
-          key: `apt-${a.ident}`,
-          group: 'Airports',
-          icon: <AirportIcon size={17} />,
-          title: (
-            <span>
-              {a.iata && <span className="mr-2 font-semibold text-[var(--accent)]">{a.iata}</span>}
-              {a.name}
-            </span>
-          ),
-          sub: [a.icao ?? a.ident, a.city, a.country].filter(Boolean).join(' · '),
-          run: () => goAirport(a),
-        }),
-      );
-    }
+    if (!exactAirport) out.push(...airportResults);
 
     // Cities (derived from airport municipalities) and countries
     if (airports && query.length >= 3) {

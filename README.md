@@ -57,9 +57,15 @@ built around three rules:
   - precipitation radar from RainViewer, with colours tuned per map style
   - METAR stations, a density heatmap and 3D terrain
   - day/night shading with civil, nautical and astronomical twilight
-  - FAA Class B/C/D airspace (United States)
+  - controlled airspace:
+    - United States: FAA Class B/C/D
+    - Canada and Europe: openAIP control zones and terminal areas, classes A–E
+  - the Moon and its phase, and the sub-solar point
   - NASA lightning **climatology** (long-term averages, clearly not live strikes)
 - 3D flight path: when the map is tilted, the selected aircraft's path becomes a curtain at its true altitude.
+  - You can colour it by altitude, speed, climb rate or time, and adjust its opacity.
+  - A mini profile chart shows altitude against distance.
+- Pin a favourite airport to the map: a live mini-board with local time, weather and runway in use.
 
 **Tracking**
 - Aircraft panel with animated instruments (altitude tape, speed arc, heading compass, VSI),
@@ -71,11 +77,15 @@ built around three rules:
 - Lost-tracking and stale-data banners. A selected aircraft that leaves the live area keeps updating
   through single-aircraft lookups.
 - Airframe photos from Planespotters.net in a small carousel (looked up by ICAO address and by
-  registration), with photographer credit and links to the originals.
+  registration), with photographer credit and links to the originals. When no photo of that exact
+  airframe exists, a **representative** photo is shown from Wikimedia Commons, clearly labelled
+  "not this aircraft". It shows the airline's livery on that type where available, otherwise the type.
+- Airline logos for around 900 airlines, from Wikidata/Wikimedia Commons (free or public-domain files;
+  logos are trademarks of their owners and are used only for identification). There is a monogram
+  fallback.
   - Photos are never shown for aircraft flagged FAA LADD or using a privacy ICAO address (PIA).
   - You can hide photos for any individual aircraft.
-- Operator name inferred from the callsign prefix (OpenFlights), shown with a monogram badge (never a
-  trademarked logo).
+- Operator name inferred from the callsign prefix (OpenFlights), shown with its logo.
 - Emergency-squawk alerts (in-app, plus optional browser notifications) for live data only.
 
 **Exploration**
@@ -98,8 +108,17 @@ built around three rules:
   - Over 100 real airlines fly real aircraft types from their real hubs.
   - Routes are great circles between real airports.
   - There are general-aviation and helicopter hops, and a night-time lull at most airports.
-- Every phase is simulated: gate, taxi, take-off and climb-out from the runway in use, cruise,
-  descent, a 12 NM final, landing and taxi-in. The aircraft then turns around for its next flight.
+- Every phase is simulated, gate to gate:
+  - stands and taxiways come from OpenStreetMap at the busiest hubs;
+  - departures queue for their runway slot;
+  - the climb, cruise and descent fly through jet-stream winds, so estimated arrival times change in flight;
+  - arrivals are vectored onto final over downwind and base legs;
+  - aircraft hold in racetrack patterns when a hub is saturated, with ground delays for longer waits;
+  - aircraft divert in fog or strong gusts.
+- The runway in use and runway capacity follow **real METAR weather** at the busiest hubs and at
+  airports in view.
+- Repeating airline-style flight numbers (odd outbound from the hub, even inbound, stable per route)
+  and codeshares from the operating airline's alliance.
 - Flight cards show the route, schedule, delay and progress. Airports show arrivals/departures
   boards, an hourly movement chart and the runway in use.
 - A time-lapse control runs the world at 1×, 5×, 15× or 30×. Search works by flight number (e.g.

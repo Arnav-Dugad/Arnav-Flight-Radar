@@ -4,7 +4,8 @@ import { describe, expect, it } from 'vitest';
 import { decodeRow, type AirportRow } from '@shared/airports';
 import { distanceNm } from '@shared/geo';
 import { AIRLINES, TYPES } from '@/data/demo/fleet';
-import { DemoWorld } from '@/data/demo/sim';
+import { ALLIANCES } from '@/data/demo/fleet';
+import { DemoWorld, windAloft } from '@/data/demo/sim';
 
 const airports = (JSON.parse(majorRaw) as { rows: AirportRow[] }).rows.map(decodeRow);
 const runways = (JSON.parse(runwaysRaw) as { runways: Record<string, never[]> }).runways;
@@ -104,6 +105,89 @@ describe('demo world simulator', () => {
     const night = byHour.slice(0, 4).reduce((a, b) => a + b, 0);
     const day = byHour.slice(9, 13).reduce((a, b) => a + b, 0);
     expect(night).toBeLessThan(day);
+  });
+
+  it('keeps a repeating timetable: same route, same number; odd outbound / even inbound', () => {
+    const w = world(0.3);
+    const byRoute = new Map<string, Set<string>>();
+    for (const af of w.airframes) {
+      if (!af.airline || af.airline.alnum) continue;
+      const l = af.leg;
+      const k = `${af.airline.icao}:${l.from.ident}>${l.to.ident}`;
+      const num = Number(l.flightIata!.slice(af.airline.iata.length));
+      // Same city pair → the same family of numbers (waves differ by 2).
+      byRoute.set(k, (byRoute.get(k) ?? new Set()).add(String(Math.floor(num / 8))));
+      if (af.airline.hubs.includes(l.from.ident) && !af.airline.hubs.includes(l.to.ident)) {
+        const back = af.airline.hubs.includes(l.to.ident);
+        expect(back).toBe(false);
+      }
+    }
+    const consistent = [...byRoute.values()].filter((v) => v.size === 1).length / byRoute.size;
+    expect(consistent).toBeGreaterThan(0.95);
+  });
+
+  it('only gives codeshares from the operating airline’s alliance', () => {
+    const w = world(0.3);
+    let seen = 0;
+    for (const af of w.airframes) {
+      if (!af.airline || !af.leg.codeshares.length) continue;
+      const alliance = ALLIANCES.find((a) => a.members.includes(af.airline!.icao))!;
+      const iatas = alliance.members.map((m) => w.airframes.find((x) => x.airline?.icao === m)?.airline?.iata).filter(Boolean);
+      for (const c of af.leg.codeshares) expect(iatas).toContain(c.slice(0, 2));
+      seen++;
+    }
+    expect(seen).toBeGreaterThan(50);
+  });
+
+  it('sequences arrivals: holding is rare and short, and fog causes diversions', () => {
+    const w = new DemoWorld(42, airports, runways);
+    w.setWeather('EGLL', { category: 'LIFR', windDir: 250, windKt: 18 });
+    w.populate(NOW, 0.75);
+    for (let k = 0; k < 18; k++) w.advance(NOW + k * 600_000);
+    const legs = w.airframes.map((a) => a.leg);
+    const held = legs.filter((l) => l.holdMs > 0);
+    expect(held.length / legs.length).toBeLessThan(0.08);
+    expect(held.reduce((a, l) => a + l.holdMs, 0) / held.length / 60_000).toBeLessThan(20);
+    const diverted = legs.filter((l) => l.divertedFrom?.ident === 'EGLL');
+    expect(diverted.length).toBeGreaterThan(0);
+    for (const l of diverted) expect(l.to.ident).not.toBe('EGLL');
+    // The METAR wind picks the runway: 250° → a 27x runway at Heathrow.
+    expect(w.airports.get('EGLL')!.inUse.ident).toMatch(/^27/);
+    expect(w.airports.get('EGLL')!.inUseBasis).toBe('metar');
+  });
+
+  it('parks on real stands and taxis along a supplied taxiway graph', () => {
+    const w = new DemoWorld(7, airports, runways);
+    const apt = airports.find((a) => a.ident === 'EGLL')!;
+    w.setStands({ EGLL: [[apt.lat + 0.001, apt.lon + 0.002, '501', 90], [apt.lat - 0.001, apt.lon - 0.002, '502', null]] });
+    w.populate(NOW, 0.3);
+    const atLhr = w.airframes.filter((a) => a.airline && a.leg.from.ident === 'EGLL');
+    expect(atLhr.some((a) => a.leg.stand.ref === '501' || a.leg.stand.ref === '502')).toBe(true);
+    // A tiny taxiway network: future taxi segments become paths along it.
+    const thr = w.airports.get('EGLL')!.inUse;
+    w.setTaxiGraph('EGLL', { nodes: [[apt.lat, apt.lon], [(apt.lat + thr.lat) / 2, (apt.lon + thr.lon) / 2], [thr.lat, thr.lon]], adj: [[1], [0, 2], [1]] }, NOW - 3_600_000);
+    const rerouted = w.airframes.some((a) => a.leg.segs.some((s) => s.phase === 'taxi' && s.kind === 'path'));
+    expect(rerouted).toBe(true);
+  });
+
+  it('models jet streams: strong westerlies in mid-latitudes, light easterlies in the tropics', () => {
+    const jet = windAloft(42, -40, NOW, 0);
+    expect(jet.kt).toBeGreaterThan(45);
+    expect(Math.abs(jet.dir - 270)).toBeLessThan(30);
+    const trade = windAloft(10, -40, NOW, 0);
+    expect(trade.kt).toBeLessThan(25);
+    expect(Math.abs(trade.dir - 90)).toBeLessThan(30);
+  });
+
+  it('updates the estimated arrival with the wind en route', () => {
+    const w = world(0.3);
+    const now = NOW + 2 * 3_600_000;
+    w.advance(now);
+    const cruising = w.airframes.filter((a) => w.state(a, now).phase === 'cruise');
+    expect(cruising.length).toBeGreaterThan(100);
+    const moved = cruising.filter((a) => Math.abs(w.eta(a, now) - a.leg.tOn) > 30_000).length;
+    expect(moved).toBeGreaterThan(cruising.length * 0.15);
+    for (const a of cruising) expect(Math.abs(w.eta(a, now) - a.leg.tOn)).toBeLessThan(90 * 60_000);
   });
 
   it('is deterministic for a given seed', () => {

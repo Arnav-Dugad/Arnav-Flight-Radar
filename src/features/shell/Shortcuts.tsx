@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { create } from 'zustand';
 import { Kbd } from '@/components/ui/Feedback';
 import { Modal } from '@/components/ui/Sheet';
-import { resetNorth, setProjection, startFollow, stopFollow, zoomBy } from '@/map/controller';
+import { followRandomFlight, resetNorth, setProjection, startFollow, stopFollow, zoomBy } from '@/map/controller';
 import { useSettings } from '@/state/settings';
 import { useUI } from '@/state/ui';
 import { cycleAircraft } from './cycle';
@@ -20,6 +20,7 @@ const LIST: [string[], string][] = [
   [['Esc'], 'Close / deselect / exit mode'],
   [['C'], 'Follow or stop following the selected aircraft'],
   [['[', ']'], 'Previous / next aircraft in view'],
+  [['J'], 'Jump to and follow a random flight'],
   [['V'], 'Vertical profile'],
   [['R'], 'Range rings'],
   [['F'], 'Filters'],
@@ -102,6 +103,7 @@ export function useGlobalShortcuts() {
           if (ui.following && !ui.followPaused) stopFollow();
           else startFollow(ui.selectedId);
         },
+        j: () => void followRandomFlight(),
         '[': () => cycleAircraft(-1),
         ']': () => cycleAircraft(1),
         v: () => useSettings.getState().set('showProfile', !useSettings.getState().showProfile),

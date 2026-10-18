@@ -234,6 +234,21 @@ export function focusAircraft(id: string, zoom?: number) {
   flyTo(pos.lon, pos.lat, zoom ?? Math.max(map.getZoom(), 8.5));
 }
 
+/** Select and follow a random airborne aircraft (prefers ones in view). Returns its id. */
+export function followRandomFlight(): string | null {
+  if (!map) return null;
+  const b = map.getBounds();
+  const air = traffic.current().filter((a) => !a.onGround && (a.altitudeBarometric ?? a.altitudeGeometric ?? 0) > 3000);
+  const inView = air.filter((a) => b.contains([a.lon, a.lat]));
+  const pool = inView.length >= 3 ? inView : air;
+  if (!pool.length) return null;
+  const a = pool[Math.floor(Math.random() * pool.length)]!;
+  ui().select(a.id);
+  startFollow(a.id);
+  ui().announce(`Following ${a.callsign ?? a.registration ?? 'a random aircraft'}`);
+  return a.id;
+}
+
 export function startFollow(id: string) {
   const t = traffic.get(id);
   if (!t || !map) return;

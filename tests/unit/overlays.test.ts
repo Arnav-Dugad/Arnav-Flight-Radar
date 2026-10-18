@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { inferRunwayInUse, type ApproachTarget, type RunwayEnd } from '@shared/approach';
 import { airlinePrefix, decodeAirline } from '@/data/airlines';
-import { nightFeatures, solarElevation, subsolarPoint } from '@/map/extraOverlays';
+import { moonPosition, nightFeatures, parseAirspace, solarElevation, subsolarPoint } from '@/map/extraOverlays';
 
 const ENDS: RunwayEnd[] = [
   { ident: '09L', lat: 51.4775, lon: -0.4849, headingDeg: 90 },
@@ -73,5 +73,40 @@ describe('airline from callsign', () => {
       country: 'United Kingdom',
       active: true,
     });
+  });
+});
+
+describe('moon', () => {
+  it('is full and new on known dates', () => {
+    expect(moonPosition(Date.UTC(2024, 11, 15, 9, 2)).illumination).toBeGreaterThan(0.97); // full moon 15 Dec 2024
+    expect(moonPosition(Date.UTC(2024, 11, 30, 22, 27)).illumination).toBeLessThan(0.03); // new moon 30 Dec 2024
+    expect(moonPosition(Date.UTC(2024, 11, 8, 15, 27)).waxing).toBe(true); // first quarter 8 Dec 2024
+    const q = moonPosition(Date.UTC(2024, 11, 8, 15, 27)).illumination;
+    expect(q).toBeGreaterThan(0.4);
+    expect(q).toBeLessThan(0.6);
+  });
+  it('keeps the sub-lunar point within the lunar declination range', () => {
+    for (let d = 0; d < 30; d++) expect(Math.abs(moonPosition(Date.UTC(2026, 9, 1) + d * 86_400_000).lat)).toBeLessThan(29.5);
+  });
+});
+
+describe('airspace data', () => {
+  const ring = [[-118.5, 33.8], [-118.2, 33.8], [-118.2, 34.0], [-118.5, 33.8]];
+  it('validates FAA features and drops malformed ones instead of guessing', () => {
+    const { features, dropped } = parseAirspace({
+      type: 'FeatureCollection',
+      features: [
+        { type: 'Feature', geometry: { type: 'Polygon', coordinates: [ring] }, properties: { NAME: 'LOS ANGELES CLASS B', CLASS: 'B', LOWER_VAL: 0, LOWER_CODE: 'SFC', UPPER_VAL: 10000 } },
+        { type: 'Feature', geometry: { type: 'Polygon', coordinates: [ring] }, properties: { NAME: 'MODE C', CLASS: null } },
+        { type: 'Feature', geometry: { type: 'Point', coordinates: [0, 0] }, properties: { CLASS: 'D' } },
+        { type: 'Feature', geometry: { type: 'Polygon', coordinates: [[[500, 0], [1, 1], [2, 2], [500, 0]]] }, properties: { CLASS: 'C' } },
+      ],
+    });
+    expect(features).toHaveLength(1);
+    expect(dropped).toBe(3);
+    expect(features[0]!.properties).toMatchObject({ CLASS: 'B', lbl: 'B 100/SFC', src: 'faa', name: 'LOS ANGELES CLASS B' });
+  });
+  it('rejects a response that is not a feature collection', () => {
+    expect(() => parseAirspace({ error: { code: 400 } })).toThrow();
   });
 });
