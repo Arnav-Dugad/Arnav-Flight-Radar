@@ -4,7 +4,7 @@ for (const width of [360, 390, 768]) {
   test(`purpose-built mobile layout at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
     await page.goto('/?lat=51.47&lon=-0.45&z=8');
-    await expect(page.locator('canvas.maplibregl-canvas')).toBeVisible();
+    await expect(page.locator('main canvas.maplibregl-canvas')).toBeVisible();
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
     expect(overflow).toBe(false);
     if (width < 768) {

@@ -32,6 +32,7 @@ import { useBookmarks } from '@/state/bookmarks';
 import { useSettings } from '@/state/settings';
 import { traffic, type Track } from '@/state/traffic';
 import { useUI } from '@/state/ui';
+import { AircraftPhoto } from './AircraftPhoto';
 import { AltitudeGauge, HeadingGauge, SpeedGauge, VerticalSpeedGauge } from './Gauges';
 import { TrailProfile } from './TrailProfile';
 
@@ -134,6 +135,8 @@ function AircraftDetails({ t }: { t: Track }) {
   const ident = a.callsign ?? a.registration ?? a.icao24.toUpperCase();
   const isFav = favorites.some((f) => f.hex === a.icao24);
   const special = a.squawk ? SPECIAL_SQUAWKS[a.squawk] : undefined;
+  const demo = a.provider === 'demo';
+  const showPhotos = useSettings((s) => s.showPhotos);
   const glow = aircraftColor(colorMode, palette, { onGround: a.onGround, alt, gs: a.groundSpeed, vr: a.verticalRate, stale: state !== 'live' });
 
   useEffect(() => {
@@ -178,7 +181,7 @@ function AircraftDetails({ t }: { t: Track }) {
         <div className="relative flex items-start gap-3">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-1.5">
-              <FreshnessBadge state={state} age={fmtAge(age)} />
+              <FreshnessBadge state={demo ? 'demo' : state} age={demo ? undefined : fmtAge(age)} />
               <Badge tone="accent" title="How the position was determined">
                 {SOURCE_LABEL[a.positionSource]}
               </Badge>
@@ -229,7 +232,7 @@ function AircraftDetails({ t }: { t: Track }) {
           <IconButton label={isFav ? 'Remove from favourites' : 'Add to favourites'} variant="glass" size={32} active={isFav} onClick={() => toggleFav({ hex: a.icao24, label: ident, type: a.aircraftType })}>
             <Star size={15} fill={isFav ? 'currentColor' : 'none'} />
           </IconButton>
-          <IconButton label="Share link" variant="glass" size={32} onClick={() => void share()}>
+          <IconButton label="Share link" variant="glass" size={32} disabled={demo} onClick={() => void share()}>
             <Share2 size={15} />
           </IconButton>
           <IconButton label="Compare with another aircraft" variant="glass" size={32} onClick={onCompare}>
@@ -240,6 +243,17 @@ function AircraftDetails({ t }: { t: Track }) {
           </IconButton>
         </div>
       </div>
+
+      {demo && (
+        <div role="status" className="mx-5 mb-3 rounded-[14px] border border-[rgba(167,139,250,0.4)] bg-[rgba(167,139,250,0.1)] px-3.5 py-2.5 text-[12px] leading-snug text-[#d8cdfd]">
+          Simulated aircraft (demo mode). Its callsign, route and telemetry are invented to show how the interface works — it is not a real flight.
+        </div>
+      )}
+      {!demo && showPhotos && !a.icao24.startsWith('~') && (
+        <div className="px-5 pb-3">
+          <AircraftPhoto hex={a.icao24} />
+        </div>
+      )}
 
       {/* ------------------------------------------------ state banners */}
       <AnimatePresence>
@@ -300,7 +314,7 @@ function AircraftDetails({ t }: { t: Track }) {
                 <Row label="Owner / operator" value={a.ext?.ownerOperator} />
                 <Row label="Registry country" value={country?.name} hint="From the ICAO 24-bit address allocation" />
                 <Row label="Squawk" value={a.squawk ? `${a.squawk}${special ? ` · ${special}` : ''}` : undefined} mono />
-                <Row label="Data source" value={`${t.ac.provider === 'adsbfi' ? 'adsb.fi' : t.ac.provider} · ${SOURCE_LABEL[a.positionSource]}`} />
+                <Row label="Data source" value={demo ? 'Simulated (demo mode)' : `adsb.fi · ${SOURCE_LABEL[a.positionSource]}`} />
                 <Row label="Origin / destination" value={undefined} hint="Not provided by the permitted data source; never inferred." />
               </Rows>
             )}

@@ -11,7 +11,8 @@ export type MotionLevel = 'full' | 'reduced' | 'off';
 export type LabelDensity = 'none' | 'low' | 'normal' | 'high';
 export type CameraMode = 'north-up' | 'heading-up';
 export type TrailColorMode = 'altitude' | 'speed' | 'vertical' | 'time';
-export type SmoothMotion = 'interpolate' | 'off';
+export type SmoothMotion = 'curved' | 'linear' | 'off';
+export type EmergencyAlerts = 'off' | 'in-app' | 'notify';
 
 export interface Settings {
   appearance: Appearance;
@@ -29,6 +30,7 @@ export interface Settings {
   labelDensity: LabelDensity;
   motion: MotionLevel;
   reducedEffects: boolean;
+  highContrast: boolean;
   smoothMotion: SmoothMotion;
   pollIntervalSec: number; // 10 – 60
   trailMinutes: number; // trail length kept per aircraft
@@ -43,6 +45,12 @@ export interface Settings {
   showWeather: boolean;
   showCoverage: boolean;
   showHeatmap: boolean;
+  showRangeRings: boolean;
+  showMinimap: boolean;
+  showProfile: boolean;
+  showRadar: boolean;
+  showPhotos: boolean;
+  emergencyAlerts: EmergencyAlerts;
   terrain3d: boolean;
   defaultView: { lat: number; lon: number; zoom: number } | null;
   rememberLastView: boolean;
@@ -61,7 +69,8 @@ export const DEFAULT_SETTINGS: Settings = {
   labelDensity: 'normal',
   motion: 'full',
   reducedEffects: false,
-  smoothMotion: 'interpolate',
+  highContrast: false,
+  smoothMotion: 'curved',
   pollIntervalSec: 15,
   trailMinutes: 20,
   trailColorMode: 'altitude',
@@ -75,6 +84,12 @@ export const DEFAULT_SETTINGS: Settings = {
   showWeather: false,
   showCoverage: true,
   showHeatmap: false,
+  showRangeRings: false,
+  showMinimap: true,
+  showProfile: false,
+  showRadar: false,
+  showPhotos: true,
+  emergencyAlerts: 'in-app',
   terrain3d: false,
   defaultView: null,
   rememberLastView: true,
@@ -99,9 +114,14 @@ export const useSettings = create<SettingsStore>()(
     }),
     {
       name: 'settings',
-      version: 2,
+      version: 3,
       storage: createJSONStorage(() => safeStorage),
-      migrate: (persisted) => ({ ...(persisted as Partial<Settings>), appearance: 'map' }) as unknown as SettingsStore,
+      migrate: (persisted, version) => {
+        const p = { ...(persisted as Record<string, unknown>) };
+        if (version < 2) p.appearance = 'map';
+        if (p.smoothMotion === 'interpolate') p.smoothMotion = 'curved';
+        return p as unknown as SettingsStore;
+      },
       partialize: (s) => {
         const { set: _a, setUnit: _b, reset: _c, ...rest } = s;
         void _a;

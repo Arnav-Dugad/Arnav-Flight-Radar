@@ -1,4 +1,5 @@
-import { Keyboard, RotateCcw, Settings } from 'lucide-react';
+import { Download, Keyboard, RotateCcw, Settings } from 'lucide-react';
+import { useInstall } from '@/lib/pwa';
 import { SegmentedControl, Slider, Toggle } from '@/components/ui/Controls';
 import { GlassButton, Section } from '@/components/ui/Glass';
 import { Panel } from '@/components/ui/Sheet';
@@ -14,6 +15,8 @@ export function SettingsPanel() {
   const toast = useUI((s) => s.toast);
   const s = useSettings();
   const showShortcuts = useShortcutsModal((m) => m.setOpen);
+  const installPrompt = useInstall((i) => i.prompt);
+  const install = useInstall((i) => i.install);
 
   const useCurrentAsDefault = () => {
     const m = getMap();
@@ -39,6 +42,12 @@ export function SettingsPanel() {
             ]}
           />
           <p className="text-[11.5px] text-fg-3">“Match map” uses light glass over Arctic Glass and dark glass over the darker styles.</p>
+          <Toggle
+            label="High contrast"
+            description="Opaque panels, stronger borders and focus rings, brighter secondary text and heavier aircraft outlines."
+            checked={s.highContrast}
+            onChange={(v) => s.set('highContrast', v)}
+          />
         </Section>
 
         <Section title="Units">
@@ -72,12 +81,23 @@ export function SettingsPanel() {
               { value: 'off', label: 'Off' },
             ]}
           />
-          <Toggle
-            label="Smooth aircraft motion"
-            description="Glide icons between real position reports. Never extrapolates beyond the newest report."
-            checked={s.smoothMotion === 'interpolate'}
-            onChange={(v) => s.set('smoothMotion', v ? 'interpolate' : 'off')}
-          />
+          <div className="space-y-1.5">
+            <span className="text-[13px] font-medium text-fg">Aircraft motion between reports</span>
+            <SegmentedControl
+              label="Aircraft motion between reports"
+              value={s.smoothMotion}
+              onChange={(v) => s.set('smoothMotion', v)}
+              options={[
+                { value: 'curved', label: 'Curved' },
+                { value: 'linear', label: 'Straight' },
+                { value: 'off', label: 'Jump' },
+              ]}
+            />
+            <p className="text-[11.5px] leading-snug text-fg-3">
+              Curved follows the reported track at both ends; Straight glides in a line; Jump shows only reported positions. Motion always stops at the
+              newest real report — never beyond it.
+            </p>
+          </div>
           <Toggle label="Reduced glass effects" description="Solid panels instead of blur — lighter on older GPUs and batteries." checked={s.reducedEffects} onChange={(v) => s.set('reducedEffects', v)} />
           <Toggle label="Ambient globe rotation" description="Slowly turn the globe when idle and zoomed out." checked={s.globeAutoRotate} onChange={(v) => s.set('globeAutoRotate', v)} />
         </Section>
@@ -100,6 +120,39 @@ export function SettingsPanel() {
               if (!v) traffic.clearSession();
             }}
           />
+        </Section>
+
+        <Section title="Aircraft details & alerts">
+          <Toggle
+            label="Aircraft photos"
+            description="Airframe photos from Planespotters.net with photographer credit. Loaded by your browser on demand."
+            checked={s.showPhotos}
+            onChange={(v) => s.set('showPhotos', v)}
+          />
+          <div className="space-y-1.5">
+            <span className="text-[13px] font-medium text-fg">Emergency squawk alerts</span>
+            <SegmentedControl
+              label="Emergency squawk alerts"
+              value={s.emergencyAlerts}
+              onChange={async (v) => {
+                if (v === 'notify' && 'Notification' in window && Notification.permission !== 'granted') {
+                  const perm = await Notification.requestPermission().catch(() => 'denied' as NotificationPermission);
+                  if (perm !== 'granted') {
+                    toast({ kind: 'warning', title: 'Notifications are blocked', body: 'In-app alerts stay on. Allow notifications for this site in your browser to enable them.' });
+                    s.set('emergencyAlerts', 'in-app');
+                    return;
+                  }
+                }
+                s.set('emergencyAlerts', v);
+              }}
+              options={[
+                { value: 'off', label: 'Off' },
+                { value: 'in-app', label: 'In app' },
+                { value: 'notify', label: '+ Notifications' },
+              ]}
+            />
+            <p className="text-[11.5px] leading-snug text-fg-3">Alerts when a live aircraft in your area squawks 7500, 7600 or 7700. Never for demo traffic.</p>
+          </div>
         </Section>
 
         <Section title="Camera">
@@ -129,6 +182,11 @@ export function SettingsPanel() {
 
         <Section title="More">
           <div className="flex flex-wrap gap-2">
+            {installPrompt && (
+              <GlassButton size="sm" variant="accent" onClick={() => void install()}>
+                <Download size={14} /> Install app
+              </GlassButton>
+            )}
             <GlassButton size="sm" onClick={() => showShortcuts(true)}>
               <Keyboard size={14} /> Keyboard shortcuts
             </GlassButton>

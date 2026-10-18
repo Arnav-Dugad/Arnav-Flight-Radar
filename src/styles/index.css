@@ -114,6 +114,33 @@
   --surface-2: rgba(240, 245, 251, 0.96);
 }
 
+/* High-contrast mode (Settings → Appearance), also applied for prefers-contrast: more. */
+:root[data-contrast='high'] {
+  --glass-blur: 0px;
+  --surface: #050a14;
+  --surface-2: #0d1626;
+  --surface-solid: #050a14;
+  --line: rgba(220, 238, 255, 0.42);
+  --line-strong: rgba(235, 245, 255, 0.7);
+  --fg: #ffffff;
+  --fg-2: #e3ecf7;
+  --fg-3: #c2d0e2;
+  --accent: #7deaff;
+  --focus: 0 0 0 2px #000, 0 0 0 5px #ffd166;
+}
+:root[data-contrast='high'][data-theme='light'] {
+  --surface: #ffffff;
+  --surface-2: #f1f4f8;
+  --surface-solid: #ffffff;
+  --line: rgba(0, 0, 0, 0.5);
+  --line-strong: rgba(0, 0, 0, 0.8);
+  --fg: #000000;
+  --fg-2: #111a26;
+  --fg-3: #26364a;
+  --accent: #0059a8;
+  --focus: 0 0 0 2px #fff, 0 0 0 5px #0059a8;
+}
+
 @media (prefers-contrast: more) {
   :root {
     --line: rgba(200, 230, 255, 0.35);

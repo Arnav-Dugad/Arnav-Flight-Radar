@@ -23,6 +23,7 @@ import { useSettings } from '@/state/settings';
 import { traffic } from '@/state/traffic';
 import { useUI } from '@/state/ui';
 import { MetarCard, TafCard, WeatherAttribution } from '@/features/weather/WeatherCards';
+import { ApproachExplorer, ObservedMovements } from './Approach';
 
 type Tab = 'overview' | 'weather' | 'runways' | 'activity';
 
@@ -248,6 +249,7 @@ function Runways({ a }: { a: AirportDetail }) {
   return (
     <div className="space-y-3">
       <RunwayDiagram a={a} />
+      <ApproachExplorer a={a} />
       {a.runways.map((r, i) => (
         <div key={i} className="glass-2 rounded-[16px] px-3.5 py-3">
           <div className="flex items-center justify-between">
@@ -356,6 +358,7 @@ function Activity({ a }: { a: AirportDetail }) {
           </div>
         ))}
       </div>
+      <ObservedMovements a={a} />
       <p className="text-[11px] text-fg-3">
         Observed aircraft near the airport right now. These are live observations, not an arrivals/departures schedule — origins and destinations are not
         provided by the data source and are never guessed.

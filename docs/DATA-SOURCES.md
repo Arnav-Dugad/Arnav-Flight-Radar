@@ -9,6 +9,18 @@
 | **AWS Terrain Tiles** | Open data, attribution to the listed elevation sources. | Used only by Terrain Explorer and 3D terrain; attribution shown while active. |
 | **EOxCloudless 2025** | CC BY-NC-SA 4.0 for non-commercial use, with attribution. | Used only by the Satellite style, labelled as an annual cloud-free mosaic (not live), with the full EOX attribution while active. |
 
+| **RainViewer** | Free for personal/educational use; attribution; 100 req/IP/min; max zoom 7 from 2026. | Browser-side only when the radar layer is enabled; one index request per 10 minutes plus the tiles in view; latest frame only (no animation, which would exceed the limit). |
+| **Planespotters.net Photo API** | Free; photographer credit next to the image; plain link to the photo page; no storing/re-hosting; requests from a real webpage. | Requested by the viewer's browser when an aircraft panel opens; only the documented image and link hosts are accepted; the service worker never caches third-party responses. |
+
+## Demo mode
+
+Demo mode exists because live data may be unavailable (see below). It is opt-in from the outage notice or
+Discover, never the default and never persisted. While it runs, live polling stops and all live tracks are
+cleared, so simulated and real aircraft never appear together. Simulated aircraft use `DMO` callsigns and
+non-ICAO `~d…` addresses with no registrations. The interface shows a persistent DEMO banner, a "Demo"
+status pill, "Simulated (demo)" attribution and badges in every panel. Analytics are labelled as describing
+simulated aircraft. Nothing simulated is recorded for replay, exported, alerted on or searched for worldwide.
+
 ## Why the map is not "worldwide live"
 
 adsb.fi's public API allows regional queries (≤ 250 NM), not global snapshots, and asks for at most

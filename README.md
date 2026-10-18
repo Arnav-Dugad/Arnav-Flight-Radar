@@ -32,6 +32,9 @@ built around three rules:
 >   live aircraft are unavailable (nothing is simulated);
 > - **`npm run dev` shows full live traffic**, because requests then come from your own connection.
 >
+> - an opt-in **demo mode** (Discover → Demo mode) shows clearly labelled simulated traffic so visitors can
+>   explore the interface; it is never the default and never mixes with live data.
+>
 > Once adsb.fi (or another permitted source) approves access, the hosted site works with no code changes.
 
 ## Features
@@ -45,8 +48,11 @@ built around three rules:
   - They are rendered as GPU signed-distance fields, rotated to track and coloured by altitude,
     speed, vertical rate or data age, with a colour-blind-safe palette option.
   - Classification uses only the reported ICAO type code or the ADS-B emitter category.
-- Smooth motion that interpolates between real reports and never extrapolates past the newest one.
-  A hollow ring marks the latest reported position.
+- Smooth motion between real reports: curved paths that follow the reported track at both ends (or
+  straight lines, or none). It never extrapolates past the newest report, and a hollow ring marks it.
+- Hover cards, range rings, an overview minimap, and a vertical profile strip (a side view of the
+  aircraft in view by altitude).
+- Precipitation radar overlay from RainViewer, METAR station layer, density heatmap and 3D terrain.
 
 **Tracking**
 - Aircraft panel with animated instruments (altitude tape, speed arc, heading compass, VSI),
@@ -57,6 +63,8 @@ built around three rules:
   gaps are never bridged.
 - Lost-tracking and stale-data banners. A selected aircraft that leaves the live area keeps updating
   through single-aircraft lookups.
+- Airframe photos from Planespotters.net with photographer credit and a link to the original.
+- Emergency-squawk alerts (in-app, plus optional browser notifications) for live data only.
 
 **Exploration**
 - Spotlight-style search (Ctrl/⌘ + K) across live aircraft, 20,000+ airports, cities, countries and
@@ -65,6 +73,9 @@ built around three rules:
   - runways (with map overlay and diagram), radio frequencies, local and UTC clocks
   - decoded METAR and TAF
   - nearby observed traffic (never presented as a schedule) and nearby airports
+  - an approach explorer: aircraft lined up with each runway, plotted against a 3° reference, with
+    extended centrelines on the map
+  - observed arrivals and departures counted from recorded trails (lower bounds, not a schedule)
 - METAR weather layer showing station flight categories and reported winds.
 
 **Experience modes**
@@ -79,7 +90,9 @@ built around three rules:
 
 **Platform**
 - Purpose-built mobile layout (bottom navigation, draggable sheets).
-- Keyboard shortcuts (`?`), a reduced-motion setting and a reduced-glass-effects mode.
+- Installable app (service worker): the shell and airports work offline; live data is never cached.
+- Keyboard shortcuts (`?`), including `[` / `]` to step through aircraft with screen-reader
+  announcements. High-contrast, reduced-motion and reduced-glass-effects modes.
 - Shareable URLs, saved viewpoints, favourites and filter presets, all stored locally with no accounts.
 
 ## Quick start
@@ -102,6 +115,8 @@ Open <http://localhost:5173>. No API keys or secrets are needed.
 | `npm run lint` | ESLint |
 | `npm test` | Unit and integration tests (Vitest) |
 | `npm run test:e2e` | Playwright end-to-end tests (`BASE_URL=… ` to target a deployment) |
+| `npm run test:visual` | Screenshot regression tests against a mocked feed (`-- --update-snapshots` to refresh) |
+| `npm run budget` | Fails if the first-visit download exceeds the performance budget |
 | `npm run deploy` | Build and `wrangler deploy` |
 | `npm run brand` | Regenerate the logo assets in `/brand` |
 

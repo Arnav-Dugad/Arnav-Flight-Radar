@@ -15,9 +15,12 @@ import { Dock } from '@/features/shell/Dock';
 import { MapControls } from '@/features/shell/MapControls';
 import { MapView } from '@/features/shell/MapView';
 import { MobileHeader, MobileNav } from '@/features/shell/Mobile';
-import { CoverageNotice, FollowBanner, MeasureHUD, PresentationOverlay, RadarSweep, TourBadge } from '@/features/shell/Overlays';
+import { MeasureHUD, PresentationOverlay, RadarSweep, TopNotices, TourBadge } from '@/features/shell/Overlays';
 import { ShortcutsModal, useGlobalShortcuts } from '@/features/shell/Shortcuts';
+import { Announcer, HoverCard } from '@/features/shell/HoverCard';
+import { useSelectionAnnouncer } from '@/features/shell/cycle';
 import { StatusBar } from '@/features/shell/StatusBar';
+import { VerticalProfile } from '@/features/shell/VerticalProfile';
 import { TopBar } from '@/features/shell/TopBar';
 import { ReplayBar, TimelinePanel } from '@/features/timeline/Timeline';
 
@@ -25,6 +28,7 @@ function useThemeSync() {
   const appearance = useSettings((s) => s.appearance);
   const mapStyle = useSettings((s) => s.mapStyle);
   const reducedEffects = useSettings((s) => s.reducedEffects);
+  const highContrast = useSettings((s) => s.highContrast);
   const motionLevel = useSettings((s) => s.motion);
   const prefersLight = useMedia('(prefers-color-scheme: light)');
   useEffect(() => {
@@ -33,9 +37,10 @@ function useThemeSync() {
     const root = document.documentElement;
     root.dataset.theme = theme;
     root.dataset.effects = reducedEffects ? 'reduced' : 'full';
+    root.dataset.contrast = highContrast ? 'high' : 'normal';
     root.dataset.motion = motionLevel === 'full' ? 'full' : 'reduced';
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'light' ? '#EEF2F7' : '#03060B');
-  }, [appearance, mapStyle, prefersLight, reducedEffects, motionLevel]);
+  }, [appearance, mapStyle, prefersLight, reducedEffects, highContrast, motionLevel]);
 }
 
 function Splash() {
@@ -70,9 +75,11 @@ function Splash() {
 export function App() {
   useThemeSync();
   useGlobalShortcuts();
+  useSelectionAnnouncer();
   useEffect(prefetchPanels, []);
   const mobile = useIsMobile();
   const presentation = useUI((s) => s.presentation);
+  const showProfile = useSettings((s) => s.showProfile);
   const motionLevel = useSettings((s) => s.motion);
 
   return (
@@ -88,9 +95,9 @@ export function App() {
             {!mobile && <Dock />}
             <MapControls />
             {!mobile && <StatusBar />}
+            <AnimatePresence>{!mobile && showProfile && <VerticalProfile key="profile" />}</AnimatePresence>
             {mobile && <MobileNav />}
-            <FollowBanner />
-            <CoverageNotice />
+            <TopNotices />
             <MeasureHUD />
             <ReplayBar />
           </div>
@@ -107,6 +114,8 @@ export function App() {
         <PresentationOverlay />
         <SearchCommand />
         <ShortcutsModal />
+        <HoverCard />
+        <Announcer />
         <Toasts />
         <Splash />
       </div>

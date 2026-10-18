@@ -168,7 +168,7 @@ export function installAircraftLayers(map: MlMap) {
     paint: {
       'icon-color': color,
       'icon-halo-color': ['case', ['boolean', ['feature-state', 'hover'], false], '#5ce1ff', iconHalo],
-      'icon-halo-width': ['case', ['boolean', ['feature-state', 'hover'], false], 2.4, 1.3],
+      'icon-halo-width': ['case', ['boolean', ['feature-state', 'hover'], false], 2.4, s.highContrast ? 2.2 : 1.3],
       'icon-halo-blur': 0.4,
       'icon-opacity': [
         'case',
@@ -191,7 +191,7 @@ export function installAircraftLayers(map: MlMap) {
     layout: {
       'text-field': ['get', 'lbl'],
       'text-font': ['Noto Sans Bold'],
-      'text-size': 10.5,
+      'text-size': s.highContrast ? 12 : 10.5,
       'text-offset': [0, 1.55],
       'text-anchor': 'top',
       'text-letter-spacing': 0.06,
@@ -290,6 +290,8 @@ export function applyAircraftSettings(map: MlMap) {
   map.setLayerZoomRange('ac-labels', labelMinZoom(s.labelDensity), 24);
   map.setLayoutProperty('ac-heat', 'visibility', s.showHeatmap ? 'visible' : 'none');
   map.setLayoutProperty('ac-trails', 'visibility', s.showAllTrails ? 'visible' : 'none');
+  map.setPaintProperty('ac-icons', 'icon-halo-width', ['case', ['boolean', ['feature-state', 'hover'], false], 2.4, s.highContrast ? 2.2 : 1.3] as never);
+  map.setLayoutProperty('ac-labels', 'text-size', s.highContrast ? 12 : 10.5);
 }
 
 // ---------------------------------------------------------------- trail colouring
@@ -381,7 +383,8 @@ export function startAircraftEngine(map: MlMap): AircraftEngine {
         s.symbolScale !== prev.symbolScale ||
         s.labelDensity !== prev.labelDensity ||
         s.showHeatmap !== prev.showHeatmap ||
-        s.showAllTrails !== prev.showAllTrails
+        s.showAllTrails !== prev.showAllTrails ||
+        s.highContrast !== prev.highContrast
       ) {
         applyAircraftSettings(map);
         dirty = true;
@@ -552,9 +555,17 @@ export function startAircraftEngine(map: MlMap): AircraftEngine {
 
   // ---------------------------------------------------------------- interaction
   const interactive = ['ac-icons', 'ac-dots'];
+  let hoverRaf = 0;
   const onMove = (e: MapLayerMouseEvent) => {
     const f = e.features?.[0];
     const id = (f?.properties?.id as string | undefined) ?? null;
+    if (id && !hoverRaf) {
+      const pt = { x: e.point.x, y: e.point.y };
+      hoverRaf = requestAnimationFrame(() => {
+        hoverRaf = 0;
+        ui().setHoverPoint(pt);
+      });
+    }
     if (id === hovered) return;
     if (hovered) map.setFeatureState({ source: SRC, id: hovered }, { hover: false });
     hovered = id;
@@ -567,6 +578,7 @@ export function startAircraftEngine(map: MlMap): AircraftEngine {
     hovered = null;
     map.getCanvas().style.cursor = '';
     ui().setHovered(null);
+    ui().setHoverPoint(null);
   };
   const onClick = (e: MapLayerMouseEvent) => {
     const id = e.features?.[0]?.properties?.id as string | undefined;

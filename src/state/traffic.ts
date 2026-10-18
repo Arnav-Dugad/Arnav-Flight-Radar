@@ -44,6 +44,7 @@ export interface Track {
 }
 
 export interface FeedMeta {
+  provider: AircraftResponse['provider'];
   region: RegionQuery;
   fetchedAt: number;
   servedAt: number;
@@ -83,6 +84,7 @@ class TrafficEngine {
   // Tunables pushed from settings.
   expectedIntervalMs = 15_000;
   smooth = true;
+  curved = true;
   trailMs = 20 * 60_000;
   staleSec = 45;
   lostSec = 90;
@@ -123,13 +125,21 @@ class TrafficEngine {
     return this.ageMs(t, clientNow) / 1000 <= Math.max(LIVE_SEC, Math.min(this.staleSec, 120)) ? 'live' : 'stale';
   }
 
-  /** Where to draw the aircraft now (interpolated between real reports). */
+  /**
+   * Where to draw the aircraft now. Between two real reports the icon follows a
+   * cubic Hermite curve tangent to the reported track at both ends (so turns look
+   * like turns), and it always ends exactly on the newest report — never beyond.
+   */
   displayPosition(t: Track, clientNow = Date.now()): { lat: number; lon: number; trk: number | undefined; settled: boolean } {
     const to = t.ac;
     const toTrk = to.track ?? to.ext?.trueHeading ?? to.ext?.magHeading;
     if (!this.smooth || t.animDur <= 0) return { lat: to.lat, lon: to.lon, trk: toTrk, settled: true };
     const p = Math.min(1, Math.max(0, (clientNow - t.animStart) / t.animDur));
     if (p >= 1) return { lat: to.lat, lon: to.lon, trk: toTrk, settled: true };
+    if (this.curved && t.fromTrk !== undefined && toTrk !== undefined) {
+      const c = hermite(t.fromLat, t.fromLon, t.fromTrk, to.lat, to.lon, toTrk, p);
+      if (c) return { ...c, settled: false };
+    }
     const [lat, lon] = lerpPosition([t.fromLat, t.fromLon], [to.lat, to.lon], p);
     // Heading turns a little faster than position so the nose leads the turn.
     const hp = Math.min(1, p * 2.2);
@@ -160,6 +170,7 @@ class TrafficEngine {
     }
 
     this.meta = {
+      provider: resp.provider,
       region: r,
       fetchedAt: resp.fetchedAt,
       servedAt: resp.servedAt,
@@ -173,7 +184,9 @@ class TrafficEngine {
     if (resp.degraded) this.meta.degraded = resp.degraded;
 
     const last = this.regionsQueried[this.regionsQueried.length - 1];
-    if (!last || last.region.lat !== r.lat || last.region.lon !== r.lon || last.region.radiusNm !== r.radiusNm) {
+    if (resp.provider === 'demo') {
+      // Simulated traffic has no "coverage area".
+    } else if (!last || last.region.lat !== r.lat || last.region.lon !== r.lon || last.region.radiusNm !== r.radiusNm) {
       this.regionsQueried.push({ region: r, at: clientNow });
       if (this.regionsQueried.length > 12) this.regionsQueried.shift();
     } else last.at = clientNow;
@@ -274,6 +287,15 @@ class TrafficEngine {
     }
   }
 
+  /** Forget everything (used when switching between live data and demo mode). */
+  reset() {
+    this.tracks.clear();
+    this.meta = null;
+    this.snapshots = [];
+    this.regionsQueried = [];
+    this.emit();
+  }
+
   clearSession() {
     this.snapshots = [];
     for (const t of this.tracks.values()) t.trail = t.trail.slice(-1);
@@ -298,6 +320,44 @@ class TrafficEngine {
   touch() {
     this.emit();
   }
+}
+
+const D2R = Math.PI / 180;
+
+/**
+ * Cubic Hermite interpolation in a local east/north plane (NM). Returns null when
+ * the geometry is unsuitable (tiny moves, near-reversals), so the caller falls back
+ * to straight-line interpolation.
+ */
+function hermite(lat0: number, lon0: number, trk0: number, lat1: number, lon1: number, trk1: number, t: number) {
+  const k = Math.cos(lat0 * D2R);
+  let dLon = lon1 - lon0;
+  if (dLon > 180) dLon -= 360;
+  if (dLon < -180) dLon += 360;
+  const x1 = dLon * 60 * k;
+  const y1 = (lat1 - lat0) * 60;
+  const d = Math.hypot(x1, y1);
+  const turn = Math.abs(((trk1 - trk0 + 540) % 360) - 180);
+  if (d < 0.05 || turn > 150) return null;
+  const tx0 = Math.sin(trk0 * D2R) * d;
+  const ty0 = Math.cos(trk0 * D2R) * d;
+  const tx1 = Math.sin(trk1 * D2R) * d;
+  const ty1 = Math.cos(trk1 * D2R) * d;
+  const t2 = t * t;
+  const t3 = t2 * t;
+  const h10 = t3 - 2 * t2 + t;
+  const h01 = -2 * t3 + 3 * t2;
+  const h11 = t3 - t2;
+  const x = h10 * tx0 + h01 * x1 + h11 * tx1;
+  const y = h10 * ty0 + h01 * y1 + h11 * ty1;
+  // Derivative → heading along the curve.
+  const dh10 = 3 * t2 - 4 * t + 1;
+  const dh01 = -6 * t2 + 6 * t;
+  const dh11 = 3 * t2 - 2 * t;
+  const dx = dh10 * tx0 + dh01 * x1 + dh11 * tx1;
+  const dy = dh10 * ty0 + dh01 * y1 + dh11 * ty1;
+  const trk = ((Math.atan2(dx, dy) / D2R) + 360) % 360;
+  return { lat: lat0 + y / 60, lon: ((lon0 + x / (60 * k) + 540) % 360) - 180, trk };
 }
 
 function point(ac: Aircraft): TrailPoint {

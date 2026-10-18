@@ -5,7 +5,9 @@ import { GlobeIcon, LayersIcon, TiltIcon } from '@/components/icons';
 import { IconButton } from '@/components/ui/Glass';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { cn } from '@/lib/cn';
-import { useIsMobile } from '@/lib/useMedia';
+import { useIsMobile, useMedia } from '@/lib/useMedia';
+import { useSettings } from '@/state/settings';
+import { Minimap } from './Minimap';
 import { locateUser, resetNorth, setPitch, setProjection, zoomBy } from '@/map/controller';
 import { useUI } from '@/state/ui';
 import { useView } from '@/state/view';
@@ -18,6 +20,9 @@ export function MapControls() {
   const togglePanel = useUI((s) => s.togglePanel);
   const toast = useUI((s) => s.toast);
   const mobile = useIsMobile();
+  const roomy = useMedia('(min-width: 1100px) and (min-height: 700px)');
+  const showMinimap = useSettings((s) => s.showMinimap) && roomy && !mobile;
+  const profile = useSettings((s) => s.showProfile) && !mobile;
   const [fs, setFs] = useState(false);
   const [locating, setLocating] = useState(false);
 
@@ -52,11 +57,14 @@ export function MapControls() {
       initial={{ opacity: 0, x: 16 }}
       animate={{ opacity: 1, x: panelOpen ? -404 : 0 }}
       transition={{ type: 'spring', stiffness: 320, damping: 32 }}
-      className={cn(
-        'pointer-events-auto absolute right-4 z-20 flex flex-col gap-2',
-        mobile ? 'top-[72px]' : 'bottom-[76px]',
-      )}
+      style={mobile ? undefined : { bottom: profile ? 76 + 158 : 76 }}
+      className={cn('pointer-events-auto absolute right-4 z-20 flex flex-col gap-2 transition-[bottom] duration-300', mobile && 'top-[72px]')}
     >
+      {showMinimap && (
+        <div className="absolute bottom-0 right-full mr-3">
+          <Minimap />
+        </div>
+      )}
       <div className="glass flex flex-col rounded-[16px] p-1">
         <IconButton label="Zoom in" shortcut="+" tooltipSide={side} size={size} onClick={() => zoomBy(1)}>
           <Plus size={18} />

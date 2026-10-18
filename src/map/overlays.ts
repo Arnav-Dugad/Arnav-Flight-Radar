@@ -7,7 +7,8 @@
 import type * as GeoJSON from 'geojson';
 import type { GeoJSONSource, Map as MlMap, MapMouseEvent } from 'maplibre-gl';
 import type { Metar } from '@shared/types';
-import { bearingDeg, circlePolygon, distanceNm } from '@shared/geo';
+import { bearingDeg, circlePolygon, destination, distanceNm } from '@shared/geo';
+import { airportByCode } from '@/data/airports';
 import { api } from '@/lib/api';
 import { getSettings, useSettings } from '@/state/settings';
 import { traffic } from '@/state/traffic';
@@ -64,7 +65,7 @@ export function installCoverage(map: MlMap) {
 export function updateCoverage(map: MlMap) {
   const src = map.getSource('coverage') as GeoJSONSource | undefined;
   if (!src) return;
-  const current = traffic.meta?.region;
+  const current = traffic.meta?.provider === 'demo' ? undefined : traffic.meta?.region;
   const features: GeoJSON.Feature[] = traffic.regionsQueried.map(({ region }) => ({
     type: 'Feature',
     geometry: { type: 'Polygon', coordinates: [circlePolygon(region.lat, region.lon, region.radiusNm)] },
@@ -346,6 +347,183 @@ export function bindMeasure(map: MlMap): () => void {
   });
   return () => {
     map.off('click', onClick);
+    unsub();
+  };
+}
+
+// ---------------------------------------------------------------- range rings
+
+const RING_SETS: Record<'nm' | 'km' | 'mi', { values: number[]; toNm: number; unit: string }> = {
+  nm: { values: [5, 10, 25, 50, 100], toNm: 1, unit: 'NM' },
+  km: { values: [10, 25, 50, 100, 200], toNm: 1 / 1.852, unit: 'km' },
+  mi: { values: [5, 10, 25, 50, 100], toNm: 1 / 1.150779, unit: 'mi' },
+};
+
+/** Rings centre: selected aircraft → selected/spotter airport → map centre. */
+function ringCentre(map: MlMap): { lat: number; lon: number } {
+  const u = ui();
+  const t = traffic.get(u.selectedId);
+  if (t) {
+    const p = traffic.displayPosition(t);
+    return { lat: p.lat, lon: p.lon };
+  }
+  const apt = u.selectedAirport ?? u.spotterAirport;
+  const a = apt ? airportByCode(apt) : undefined;
+  if (a) return { lat: a.lat, lon: a.lon };
+  const c = map.getCenter();
+  return { lat: c.lat, lon: c.lng };
+}
+
+export function installRings(map: MlMap) {
+  if (!map.getSource('rings')) map.addSource('rings', { type: 'geojson', data: EMPTY });
+  const dark = getSettings().mapStyle !== 'arctic';
+  const vis = getSettings().showRangeRings ? 'visible' : 'none';
+  const before = map.getLayer('ac-heat') ? 'ac-heat' : undefined;
+  if (!map.getLayer('rings-line'))
+    map.addLayer(
+      {
+        id: 'rings-line',
+        type: 'line',
+        source: 'rings',
+        filter: ['==', ['geometry-type'], 'LineString'],
+        layout: { visibility: vis },
+        paint: { 'line-color': dark ? 'rgba(255,181,71,0.55)' : 'rgba(200,110,0,0.6)', 'line-width': 1.2, 'line-dasharray': [4, 3] },
+      },
+      before,
+    );
+  if (!map.getLayer('rings-label'))
+    map.addLayer(
+      {
+        id: 'rings-label',
+        type: 'symbol',
+        source: 'rings',
+        filter: ['==', ['geometry-type'], 'Point'],
+        layout: { visibility: vis, 'text-field': ['get', 'lbl'], 'text-font': ['Noto Sans Bold'], 'text-size': 10.5, 'text-allow-overlap': true },
+        paint: { 'text-color': dark ? '#ffd28a' : '#9a5a00', 'text-halo-color': dark ? 'rgba(3,6,11,0.9)' : '#ffffff', 'text-halo-width': 1.4 },
+      },
+      before,
+    );
+  renderRings(map);
+}
+
+function renderRings(map: MlMap) {
+  const src = map.getSource('rings') as GeoJSONSource | undefined;
+  if (!src) return;
+  if (!getSettings().showRangeRings) {
+    src.setData(EMPTY);
+    return;
+  }
+  const c = ringCentre(map);
+  const set = RING_SETS[getSettings().units.distance];
+  const features: GeoJSON.Feature[] = [];
+  // Only rings that are legible at this zoom (≥ 28 px radius, ≤ 2.5 screens).
+  const mPerPx = (40075016.686 * Math.cos((c.lat * Math.PI) / 180)) / (512 * 2 ** map.getZoom());
+  const screen = Math.max(map.getCanvas().clientWidth, map.getCanvas().clientHeight);
+  for (const v of set.values) {
+    const nm = v * set.toNm;
+    const px = (nm * 1852) / mPerPx;
+    if (px < 28 || px > screen * 2.5) continue;
+    features.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: circlePolygon(c.lat, c.lon, nm, 120) }, properties: {} });
+    const [la, lo] = destination(c.lat, c.lon, 0, nm);
+    features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [lo, la] }, properties: { lbl: `${v} ${set.unit}` } });
+  }
+  src.setData({ type: 'FeatureCollection', features });
+}
+
+export function bindRings(map: MlMap): () => void {
+  const timer = setInterval(() => {
+    if (getSettings().showRangeRings && ui().selectedId) renderRings(map);
+  }, 1000);
+  const onMove = () => {
+    if (getSettings().showRangeRings) renderRings(map);
+  };
+  map.on('moveend', onMove);
+  const u1 = useUI.subscribe((s, p) => {
+    if (s.selectedId !== p.selectedId || s.selectedAirport !== p.selectedAirport || s.spotterAirport !== p.spotterAirport) renderRings(map);
+  });
+  const u2 = useSettings.subscribe((s, p) => {
+    if (s.showRangeRings !== p.showRangeRings || s.units.distance !== p.units.distance) {
+      for (const l of ['rings-line', 'rings-label']) if (map.getLayer(l)) map.setLayoutProperty(l, 'visibility', s.showRangeRings ? 'visible' : 'none');
+      renderRings(map);
+    }
+  });
+  return () => {
+    clearInterval(timer);
+    map.off('moveend', onMove);
+    u1();
+    u2();
+  };
+}
+
+// ---------------------------------------------------------------- precipitation radar (RainViewer)
+// Free tier for personal/educational use with attribution; max zoom 7; latest
+// past frame only (well inside the 100 requests/minute/IP limit). Tiles are
+// requested by the viewer's browser and never stored by us.
+
+export const radarState: { time: number | null; error: string | null } = { time: null, error: null };
+const radarListeners = new Set<() => void>();
+export const onRadarChange = (fn: () => void) => {
+  radarListeners.add(fn);
+  return () => radarListeners.delete(fn);
+};
+export const getRadarState = () => radarState.time ?? radarState.error;
+let radarTiles: string | null = null;
+let radarFetchedAt = 0;
+
+async function loadRadarFrame(): Promise<string | null> {
+  if (radarTiles && Date.now() - radarFetchedAt < 10 * 60_000) return radarTiles;
+  try {
+    const r = await fetch('https://api.rainviewer.com/public/weather-maps.json', { headers: { Accept: 'application/json' } });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = (await r.json()) as { host?: string; radar?: { past?: { time: number; path: string }[] } };
+    const last = j.radar?.past?.at(-1);
+    // Only accept the documented host/path shapes; never build URLs from arbitrary data.
+    if (!j.host || !last || !/^https:\/\/[a-z0-9.-]+\.rainviewer\.com$/.test(j.host) || !/^\/v2\/radar\/[A-Za-z0-9]+$/.test(last.path))
+      throw new Error('unexpected response');
+    radarTiles = `${j.host}${last.path}/256/{z}/{x}/{y}/2/1_1.png`;
+    radarFetchedAt = Date.now();
+    radarState.time = last.time * 1000;
+    radarState.error = null;
+  } catch (e) {
+    radarState.error = `Radar unavailable (${(e as Error).message}).`;
+  }
+  radarListeners.forEach((f) => f());
+  return radarTiles;
+}
+
+export async function installRadar(map: MlMap) {
+  if (!getSettings().showRadar) {
+    if (map.getLayer('radar')) map.removeLayer('radar');
+    if (map.getSource('radar')) map.removeSource('radar');
+    return;
+  }
+  const tiles = await loadRadarFrame();
+  if (!tiles || !getSettings().showRadar) return;
+  const src = map.getSource('radar') as { setTiles?: (t: string[]) => void } | undefined;
+  if (src) src.setTiles?.([tiles]);
+  else
+    map.addSource('radar', {
+      type: 'raster',
+      tiles: [tiles],
+      tileSize: 256,
+      maxzoom: 7,
+      attribution: '<a href="https://www.rainviewer.com/" target="_blank" rel="noopener">Weather data by Rain Viewer</a>',
+    });
+  if (!map.getLayer('radar')) {
+    const before = ['coverage-fill', 'wx-station', 'apt-cluster', 'ac-heat'].find((l) => map.getLayer(l));
+    map.addLayer({ id: 'radar', type: 'raster', source: 'radar', paint: { 'raster-opacity': 0.62, 'raster-fade-duration': 300 } }, before);
+  }
+}
+
+export function bindRadar(map: MlMap): () => void {
+  const timer = setInterval(() => {
+    if (getSettings().showRadar) void installRadar(map);
+  }, 10 * 60_000);
+  const unsub = useSettings.subscribe((s, p) => {
+    if (s.showRadar !== p.showRadar) void installRadar(map);
+  });
+  return () => {
+    clearInterval(timer);
     unsub();
   };
 }

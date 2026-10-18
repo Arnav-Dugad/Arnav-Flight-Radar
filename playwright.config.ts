@@ -19,9 +19,14 @@ export default defineConfig({
     // WebGL in headless Chromium.
     launchOptions: { args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] },
   },
+  // Visual baselines are platform-specific; they run only with VISUAL=1.
+  snapshotPathTemplate: '{testDir}/__screenshots__/{platform}/{arg}{ext}',
   projects: [
-    { name: 'desktop', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } } },
+    { name: 'desktop', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } }, testIgnore: /visual\.spec\.ts/ },
     { name: 'mobile', use: { ...devices['Pixel 7'], viewport: { width: 390, height: 844 } }, testMatch: /mobile\.spec\.ts/ },
+    ...(process.env.VISUAL
+      ? [{ name: 'visual', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } }, testMatch: /visual\.spec\.ts/ }]
+      : []),
   ],
   webServer: local
     ? { command: 'npm run dev -- --port 5173 --strictPort --host 127.0.0.1', url: 'http://127.0.0.1:5173', reuseExistingServer: true, timeout: 120_000 }

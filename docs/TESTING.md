@@ -1,8 +1,10 @@
 # Testing
 
 ```bash
-npm test             # Vitest: unit + integration (no network)
-npm run test:e2e     # Playwright against the local dev server
+npm test             # Vitest: unit + integration (no network) — 90 tests
+npm run test:e2e     # Playwright against the local dev server — 21 tests
+npm run test:visual  # screenshot regression vs. committed baselines (mocked feed)
+npm run budget       # performance budget (after npm run build)
 BASE_URL=https://<deployment> npm run test:e2e   # against production
 ```
 
@@ -19,7 +21,9 @@ BASE_URL=https://<deployment> npm run test:e2e   # against production
 | Statistics | population summaries, unknown vertical rates, emergencies, empty samples |
 | Weather | METAR/TAF normalization, variable wind, present-weather decoding |
 | Filters | every filter, unknown-value handling, combinations |
-| Traffic engine | interpolation never overshooting the latest report, gap-breaking trails, lost-aircraft lifecycle, clock-skew immunity |
+| Traffic engine | interpolation never overshooting the latest report, curved motion following a turn and ending exactly on the report, reset, gap-breaking trails, lost-aircraft lifecycle, clock-skew immunity |
+| Airport intelligence | runway ends, approach detection (3° final found; climbing/off-axis/receding/high/ground rejected), observed arrivals/departures |
+| Great-circle routes | start/end/midpoint correctness |
 
 ## Integration (`tests/integration`)
 
@@ -45,3 +49,19 @@ Runs at 360, 390, 768, 1280, 1440 and 1920 px:
 - no horizontal overflow at any width.
 
 Synthetic fixtures are used only in unit and integration tests and are never shown as live data.
+
+## Visual regression (`e2e/visual.spec.ts`)
+
+Five screenshots (Obsidian radar, Arctic radar, aircraft panel, analytics panel, mobile) against a mocked,
+clearly synthetic aircraft feed. Baselines live in `e2e/__screenshots__/<platform>/`; they are
+platform-specific (fonts and GPU rasterization differ), so CI does not run them. Refresh with
+`npm run test:visual -- --update-snapshots` after intended UI changes.
+
+## Performance budget (`scripts/check-budget.mjs`, runs in CI)
+
+| Budget | Limit | Current |
+| --- | --- | --- |
+| Initial JS (gzip) | 600 KB | ~505 KB (MapLibre ~280 KB) |
+| Initial CSS (gzip) | 32 KB | ~21 KB |
+| Largest lazy chunk | 40 KB | ~29 KB (time-zone lookup) |
+| Major airport index | 260 KB | ~212 KB |

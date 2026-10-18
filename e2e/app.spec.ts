@@ -6,7 +6,7 @@ async function ready(page: Page, url = LONDON) {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(url);
-  await expect(page.locator('canvas.maplibregl-canvas')).toBeVisible();
+  await expect(page.locator('main canvas.maplibregl-canvas')).toBeVisible();
   // Splash disappears once the map has loaded.
   await expect(page.locator('img[src="/brand/arnav-mark-animated.svg"]')).toHaveCount(0, { timeout: 30_000 });
   return errors;
@@ -22,7 +22,7 @@ test.describe('desktop', () => {
     await expect(status).toBeVisible();
     await expect(page.getByRole('contentinfo')).toContainText('adsb.fi');
     await expect(page.getByRole('contentinfo')).toContainText('OpenStreetMap');
-    const box = await page.locator('canvas.maplibregl-canvas').boundingBox();
+    const box = await page.locator('main canvas.maplibregl-canvas').boundingBox();
     expect(box!.height).toBeGreaterThan(600);
     expect(errors).toEqual([]);
   });
@@ -114,11 +114,47 @@ test.describe('desktop', () => {
     await settings.getByRole('radio', { name: 'Feet' }).click();
   });
 
+  test('demo mode is opt-in, unmistakably labelled and fully reversible', async ({ page }) => {
+    await ready(page);
+    await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Discover' }).click();
+    await page.getByRole('button', { name: /^Demo mode/ }).click();
+    const banner = page.getByRole('status').filter({ hasText: 'Simulated aircraft — not real flights' });
+    await expect(banner).toBeVisible();
+    await expect(page.getByRole('banner')).toContainText('Demo');
+    await expect(page.getByRole('contentinfo')).toContainText('Simulated (demo)');
+    await page.keyboard.press('a');
+    await expect(page.getByRole('complementary', { name: 'Traffic analytics' })).toContainText('not real traffic statistics');
+    await banner.getByRole('button', { name: 'Exit demo' }).click();
+    await expect(banner).toHaveCount(0);
+    await expect(page.getByRole('contentinfo')).not.toContainText('Simulated');
+  });
+
+  test('keyboard cycling selects aircraft and announces them', async ({ page }) => {
+    await ready(page);
+    await page.waitForTimeout(3000);
+    const live = page.locator('[aria-live="polite"].sr-only');
+    await page.keyboard.press(']');
+    await expect(live).toContainText(/Selected .+|No aircraft in view/);
+  });
+
+  test('vertical profile and range rings toggle from the keyboard', async ({ page }) => {
+    await ready(page);
+    await page.keyboard.press('v');
+    const profile = page.getByRole('region', { name: 'Vertical profile of aircraft in view' });
+    await expect(profile).toBeVisible();
+    await page.keyboard.press('v');
+    await expect(profile).toHaveCount(0);
+    await page.keyboard.press('r');
+    await page.keyboard.press('l');
+    await expect(page.getByRole('switch', { name: 'Range rings' })).toHaveAttribute('aria-checked', 'true');
+    await page.keyboard.press('r');
+  });
+
   test('analytics labels its sample honestly', async ({ page }) => {
     await ready(page);
     await page.keyboard.press('a');
     const panel = page.getByRole('complementary', { name: 'Traffic analytics' });
-    await expect(panel).toContainText('never a worldwide total');
+    await expect(panel).toContainText('not worldwide');
     await expect(panel).toContainText(/Sample: \d+ aircraft/);
   });
 });

@@ -4,6 +4,7 @@
 import type * as GeoJSON from 'geojson';
 import { GeoJSONSource, Map as MlMap, setWorkerUrl, type LngLatLike } from 'maplibre-gl';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
+import { startEmergencyAlerts } from '@/data/alerts';
 import { startFeed } from '@/data/feed';
 import { readUrlState, writeUrlState } from '@/lib/urlState';
 import { load, save } from '@/lib/storage';
@@ -13,7 +14,7 @@ import { ui, useUI, type Projection } from '@/state/ui';
 import { useView } from '@/state/view';
 import { installAircraftLayers, startAircraftEngine, AIRCRAFT_LAYERS, type AircraftEngine } from './aircraftLayer';
 import { bindAirportInteraction, installAirportLayers, AIRPORT_LAYERS } from './airportsLayer';
-import { bindMeasure, bindWeather, installCoverage, installMeasure, installWeather, refreshWeather } from './overlays';
+import { bindMeasure, bindRadar, bindRings, bindWeather, installCoverage, installMeasure, installRadar, installRings, installWeather, refreshWeather } from './overlays';
 import { cameraFlags, viewOffset, viewPadding } from './camera';
 import { buildStyle, TERRAIN_SOURCE } from './styles';
 
@@ -40,6 +41,8 @@ function installAll(m: MlMap) {
   installWeather(m);
   void installAirportLayers(m);
   installMeasure(m);
+  installRings(m);
+  void installRadar(m);
   installUserLocation(m);
   applyTerrain(m);
   engine?.markDirty();
@@ -78,6 +81,8 @@ export function createMap(container: HTMLElement): MlMap {
     renderWorldCopies: true,
   });
   const m = map;
+  // Development-only handle for automated tests and debugging (not in production builds).
+  if (import.meta.env.DEV) Object.assign(window, { __arnav: { map: m, traffic } });
   m.on('style.load', () => {
     installAll(m);
     setTimeout(() => ui().setStyleLoading(false), 120);
@@ -94,6 +99,9 @@ export function createMap(container: HTMLElement): MlMap {
     cleanups.push(bindAirportInteraction(m));
     cleanups.push(bindWeather(m));
     cleanups.push(bindMeasure(m));
+    cleanups.push(bindRings(m));
+    cleanups.push(startEmergencyAlerts());
+    cleanups.push(bindRadar(m));
     cleanups.push(bindUrlSync(m));
     cleanups.push(bindAutoRotate(m));
     cleanups.push(bindCursor(m));

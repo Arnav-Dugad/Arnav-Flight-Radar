@@ -24,7 +24,8 @@ export default defineConfig({
             { name: 'maplibre', test: /node_modules[\\/]maplibre-gl/, priority: 30 },
             { name: 'react', test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/, priority: 20 },
             { name: 'motion', test: /node_modules[\\/](motion|motion-dom|motion-utils|framer-motion)[\\/]/, priority: 15 },
-            { name: 'vendor', test: /node_modules[\\/]/, priority: 10 },
+            // Lazily imported libraries stay out of the eager vendor chunk.
+            { name: 'vendor', test: /node_modules[\\/](?!@photostructure[\\/]tz-lookup)/, priority: 10 },
           ],
         },
       },

@@ -3,6 +3,7 @@ import { useMemo } from 'react';
 import { classifyAircraft } from '@shared/classify';
 import { formatLatLon } from '@shared/geo';
 import { AircraftGlyph } from '@/components/icons';
+import { useDemo } from '@/data/demo';
 import { useFeed } from '@/data/feed';
 import { fmtAge, fmtAltitude, fmtSpeed } from '@/lib/format';
 import { useNow, useSelectedTrack } from '@/lib/hooks';
@@ -41,6 +42,8 @@ export function StatusBar() {
   const units = useSettings((s) => s.units);
   const style = useSettings((s) => s.mapStyle);
   const terrain = useSettings((s) => s.terrain3d);
+  const radar = useSettings((s) => s.showRadar);
+  const demo = useDemo((d) => d.active);
   const zoom = useView((s) => s.zoom);
   const clipped = useFeed((s) => s.viewportClipped);
   const meta = traffic.meta;
@@ -72,7 +75,9 @@ export function StatusBar() {
       </span>
       <span className="tnum hidden shrink-0 xl:inline">z {zoom.toFixed(1)}</span>
       <span className="hidden shrink-0 lg:inline">
-        {meta ? (
+        {demo ? (
+          'Demo mode — simulated traffic'
+        ) : meta ? (
           <>
             Data {fmtAge(age ?? 0)} old{meta.cacheHit ? ' · shared snapshot' : ''}
             {clipped && ' · live area clipped to 250 NM'}
@@ -83,9 +88,13 @@ export function StatusBar() {
       </span>
       <div className="ml-auto flex min-w-0 items-center gap-1.5 truncate">
         <span className="shrink-0">Data</span>
-        <a className="shrink-0 text-fg-2 hover:text-fg" href="https://adsb.fi" target="_blank" rel="noopener noreferrer">
-          adsb.fi
-        </a>
+        {demo ? (
+          <span className="shrink-0 font-semibold text-[#c4b5fd]">Simulated (demo)</span>
+        ) : (
+          <a className="shrink-0 text-fg-2 hover:text-fg" href="https://adsb.fi" target="_blank" rel="noopener noreferrer">
+            adsb.fi
+          </a>
+        )}
         <span>·</span>
         <a className="shrink-0 text-fg-2 hover:text-fg" href="https://ourairports.com/data/" target="_blank" rel="noopener noreferrer">
           OurAirports
@@ -94,6 +103,14 @@ export function StatusBar() {
         <a className="shrink-0 text-fg-2 hover:text-fg" href="https://aviationweather.gov" target="_blank" rel="noopener noreferrer">
           NOAA AWC
         </a>
+        {radar && (
+          <>
+            <span>·</span>
+            <a className="shrink-0 text-fg-2 hover:text-fg" href="https://www.rainviewer.com/" target="_blank" rel="noopener">
+              Rain Viewer
+            </a>
+          </>
+        )}
         <span className="mx-1 h-3 w-px bg-[var(--line-strong)]" />
         <span className="truncate">
           {styleAttribution(style, terrain).map((a, i) => (

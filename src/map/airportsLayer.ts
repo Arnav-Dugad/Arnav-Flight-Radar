@@ -4,6 +4,8 @@
 
 import type * as GeoJSON from 'geojson';
 import type { GeoJSONSource, Map as MlMap, MapLayerMouseEvent } from 'maplibre-gl';
+import { runwayEnds } from '@shared/approach';
+import { destination } from '@shared/geo';
 import type { AirportDetail, AirportIndexEntry } from '@shared/types';
 import { loadMajorAirports } from '@/data/airports';
 import { getSettings, useSettings } from '@/state/settings';
@@ -18,6 +20,7 @@ const SRC_RWY = 'apt-rwy';
 export const AIRPORT_LAYERS = [
   'apt-cluster',
   'apt-cluster-count',
+  'apt-appr-line',
   'apt-rwy-line',
   'apt-rwy-label',
   'apt-other-icon',
@@ -89,7 +92,7 @@ export async function installAirportLayers(map: MlMap) {
   add('apt-cluster', {
     type: 'circle',
     source: SRC_OTHER,
-    minzoom: 4, // world views stay clean: only large airports there
+    minzoom: 5.5, // wide views stay clean: only large airports there
     filter: ['has', 'point_count'],
     paint: {
       'circle-color': dark ? 'rgba(20,34,56,0.85)' : 'rgba(255,255,255,0.9)',
@@ -101,7 +104,7 @@ export async function installAirportLayers(map: MlMap) {
   add('apt-cluster-count', {
     type: 'symbol',
     source: SRC_OTHER,
-    minzoom: 4,
+    minzoom: 5.5,
     filter: ['has', 'point_count'],
     layout: {
       'text-field': ['get', 'point_count_abbreviated'],
@@ -111,10 +114,17 @@ export async function installAirportLayers(map: MlMap) {
     },
     paint: { 'text-color': dark ? '#9fb3cc' : '#33445c' },
   });
+  add('apt-appr-line', {
+    type: 'line',
+    source: SRC_RWY,
+    minzoom: 7,
+    filter: ['all', ['==', ['geometry-type'], 'LineString'], ['==', ['get', 'appr'], 1]],
+    paint: { 'line-color': dark ? 'rgba(92,225,255,0.45)' : 'rgba(10,132,214,0.5)', 'line-width': 1, 'line-dasharray': [3, 3] },
+  });
   add('apt-rwy-line', {
     type: 'line',
     source: SRC_RWY,
-    filter: ['==', ['geometry-type'], 'LineString'],
+    filter: ['all', ['==', ['geometry-type'], 'LineString'], ['!=', ['get', 'appr'], 1]],
     layout: { 'line-cap': 'butt' },
     paint: {
       'line-color': dark ? 'rgba(92,225,255,0.85)' : 'rgba(10,132,214,0.9)',
@@ -262,6 +272,11 @@ function renderSelected(map: MlMap) {
         geometry: { type: 'Point', coordinates: [r.heLon, r.heLat] },
         properties: { id: r.heIdent, rot: r.heHeadingDegT ?? 0 },
       });
+  }
+  // Extended centrelines (10 NM) off each landing direction.
+  for (const e of runwayEnds(d.runways)) {
+    const [la, lo] = destination(e.lat, e.lon, e.headingDeg + 180, 10);
+    feats.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: [[e.lon, e.lat], [lo, la]] }, properties: { appr: 1 } });
   }
   rwy.setData({ type: 'FeatureCollection', features: feats });
 }

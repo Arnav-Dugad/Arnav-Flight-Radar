@@ -14,8 +14,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "test:visual": "node scripts/run-visual.mjs",
     "data:airports": "node scripts/build-airports.mjs",
     "brand": "node brand/scripts/build-logo.mjs",
+    "budget": "node scripts/check-budget.mjs",
     "deploy": "npm run build && wrangler deploy",
     "cf-typegen": "wrangler types worker/worker-configuration.d.ts"
   },

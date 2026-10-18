@@ -47,7 +47,9 @@ stop a single client from flooding the API.
 | Missing fields stay absent; the UI shows "Not available" | `shared/normalize.ts`, `src/components/ui/Data.tsx` |
 | Implausible values (altitude > 80,000 ft, track > 360°, …) are dropped, not fixed | `shared/normalize.ts` |
 | Ages are measured on the provider's clock and carried forward with our server clock, so device clock skew can't make data look fresh | `src/state/traffic.ts` |
-| Motion interpolates between real reports and stops at the newest one; a hollow ring marks it | `src/state/traffic.ts`, `src/map/aircraftLayer.ts` |
+| Motion interpolates between real reports (cubic Hermite curve tangent to both reported tracks, or straight) and stops exactly at the newest one; a hollow ring marks it | `src/state/traffic.ts`, `src/map/aircraftLayer.ts` |
+| Demo traffic is opt-in, pauses live polling, and is labelled everywhere | `src/data/demo.ts` |
+| Approach and movement figures are inferred geometry, labelled as such | `shared/approach.ts` |
 | Trails contain only received positions; gaps over 150 s or jumps over 1,100 kt break the line | `src/state/traffic.ts` |
 | Aircraft that vanish inside the queried area become **lost**, then are removed | `src/state/traffic.ts` |
 | Symbol classes come only from the ICAO type code or ADS-B emitter category; otherwise the symbol is generic | `shared/classify.ts` |
@@ -89,3 +91,10 @@ stop a single client from flooding the API.
 - API payloads omit absent fields; Cloudflare compresses JSON automatically.
 - `reduced` glass effects drop `backdrop-filter` for weaker GPUs. `prefers-reduced-motion` and the
   in-app motion setting disable decorative animation.
+
+## Offline & installability
+
+`public/sw.js` caches the app shell (network-first), hashed assets (cache-first) and airport data
+(stale-while-revalidate). `/api/*` is never cached, so stale aircraft can never appear live, and
+third-party requests (tiles, photos, radar) are never intercepted. `src/lib/pwa.ts` registers it in
+production, exposes the install prompt in Settings and shows online/offline toasts.

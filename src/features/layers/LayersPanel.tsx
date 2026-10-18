@@ -7,7 +7,7 @@ import { Section } from '@/components/ui/Glass';
 import { Panel } from '@/components/ui/Sheet';
 import { STYLE_IDS } from '@/lib/styleIds';
 import { cn } from '@/lib/cn';
-import { onWeatherChange, weatherNotice, FLIGHT_CAT_COLOR } from '@/map/overlays';
+import { FLIGHT_CAT_COLOR, getRadarState, onRadarChange, onWeatherChange, weatherNotice } from '@/map/overlays';
 import { STYLE_META } from '@/map/styles';
 import { useSettings, type ColorMode } from '@/state/settings';
 import { useUI } from '@/state/ui';
@@ -18,6 +18,7 @@ export function LayersPanel() {
   const openPanel = useUI((s) => s.openPanel);
   const s = useSettings();
   const notice = useSyncExternalStore(onWeatherChange, () => weatherNotice);
+  const radar = useSyncExternalStore(onRadarChange, getRadarState);
 
   return (
     <Panel open={open} onClose={() => openPanel(null)} title="Map & layers" icon={<LayersIcon size={18} />} ariaLabel="Map styles and layers" subtitle="Cartography, overlays and aircraft colouring">
@@ -77,11 +78,48 @@ export function LayersPanel() {
               {notice && <p className="text-[#ffc56e]">{notice}</p>}
             </div>
           )}
+          <Toggle
+            label="Precipitation radar"
+            description="Latest RainViewer composite (updated every 10 min). Detail is limited to zoom 7; coverage depends on national radar networks."
+            checked={s.showRadar}
+            onChange={(v) => s.set('showRadar', v)}
+          />
+          {s.showRadar && (
+            <div className="space-y-2 rounded-[12px] bg-[var(--line)] px-3 py-2.5 text-[11.5px] text-fg-2">
+              <div className="h-2 rounded-full" style={{ background: 'linear-gradient(90deg, #88ddee, #0099cc, #0077aa, #ffee00, #ffaa00, #ff4400, #c10000, #ffaaff)' }} />
+              <div className="flex justify-between text-[10.5px] text-fg-3">
+                <span>Light</span>
+                <span>Moderate</span>
+                <span>Heavy</span>
+              </div>
+              <p className="text-fg-3">
+                {radar === null
+                  ? 'Loading radar…'
+                  : typeof radar === 'string'
+                    ? radar
+                    : `Frame ${new Date(radar).toISOString().slice(11, 16)}Z (${Math.max(0, Math.round((Date.now() - radar) / 60000))} min ago).`}{' '}
+                <a href="https://www.rainviewer.com/" target="_blank" rel="noopener" className="text-[var(--accent)] hover:underline">
+                  Weather data by Rain Viewer
+                </a>
+              </p>
+            </div>
+          )}
+          <Toggle
+            label="Range rings"
+            description="Distance rings around the selected aircraft or airport (or the map centre)."
+            checked={s.showRangeRings}
+            onChange={(v) => s.set('showRangeRings', v)}
+          />
           <Toggle label="Live coverage area" description="Outline of the region actually queried for live aircraft." checked={s.showCoverage} onChange={(v) => s.set('showCoverage', v)} />
           <Toggle label="Traffic density heatmap" description="Built only from aircraft positions currently retrieved." checked={s.showHeatmap} onChange={(v) => s.set('showHeatmap', v)} />
           <Toggle label="Trails for all aircraft" description="Short trails from positions observed this session." checked={s.showAllTrails} onChange={(v) => s.set('showAllTrails', v)} />
           <Toggle label="3D terrain" description="Elevation from AWS Terrain Tiles; tilt the map to see relief." checked={s.terrain3d} onChange={(v) => s.set('terrain3d', v)} />
           <Toggle label="Radar sweep" description="Decorative scan overlay. Off by default." checked={s.radarSweep} onChange={(v) => s.set('radarSweep', v)} />
+        </Section>
+
+        <Section title="Panels">
+          <Toggle label="Overview minimap" description="Shows your view and the live area on a world inset (larger screens)." checked={s.showMinimap} onChange={(v) => s.set('showMinimap', v)} />
+          <Toggle label="Vertical profile" description="Side view of aircraft in view by altitude (shortcut V)." checked={s.showProfile} onChange={(v) => s.set('showProfile', v)} />
         </Section>
 
         <Section title="Aircraft colour">
