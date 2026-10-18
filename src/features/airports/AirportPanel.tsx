@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import { ExternalLink, Navigation, Pin, Share2, Star } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { ExternalLink, Navigation, Pin, Share2, Star, Video } from 'lucide-react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AIRPORT_TYPE_LABEL } from '@shared/airports';
 import { distanceNm } from '@shared/geo';
 import type { AirportDetail, AirportType } from '@shared/types';
@@ -21,11 +21,15 @@ import { useSettings } from '@/state/settings';
 import { useUI } from '@/state/ui';
 import { MetarCard, TafCard, WeatherAttribution } from '@/features/weather/WeatherCards';
 import { simNow } from '@/data/world';
+import { webcamsFor } from '@/data/webcams';
 import { ApproachExplorer } from './Approach';
 import { BoardTab, GroundTab, HourlyMovements, RunwayInUseCard } from './AirportOps';
 import { SkyTimesCard } from './SkyTimes';
 
-type Tab = 'overview' | 'arrivals' | 'departures' | 'ground' | 'weather' | 'runways';
+// The delays tab (charts and the TAF impact model) loads the first time it is opened.
+const AirportDelays = lazy(() => import('./AirportDelays').then((m) => ({ default: m.AirportDelays })));
+
+type Tab = 'overview' | 'arrivals' | 'departures' | 'ground' | 'delays' | 'weather' | 'runways';
 
 export function AirportPanel() {
   const ident = useUI((s) => s.selectedAirport);
@@ -106,7 +110,11 @@ function AirportBody({ a }: { a: AirportDetail }) {
   const share = async () => {
     const url = shareUrl({ airport: a.ident });
     try {
-      if (navigator.share) await navigator.share({ title: `${a.name} on Arnav Flight Radar`, url });
+      if (navigator.share)
+        await navigator.share({
+          title: `${a.name} on Arnav Flight Radar`,
+          url,
+        });
       else {
         await navigator.clipboard.writeText(url);
         toast({ kind: 'success', title: 'Link copied' });
@@ -157,30 +165,27 @@ function AirportBody({ a }: { a: AirportDetail }) {
         <IconButton label="Share link" variant="glass" size={32} onClick={() => void share()}>
           <Share2 size={15} />
         </IconButton>
-        <IconButton
-          label={pinned ? 'Unpin from map' : 'Pin to map'}
-          variant="glass"
-          size={32}
-          active={pinned}
-          onClick={() => togglePin(a.ident)}
-        >
+        <IconButton label={pinned ? 'Unpin from map' : 'Pin to map'} variant="glass" size={32} active={pinned} onClick={() => togglePin(a.ident)}>
           <Pin size={15} />
         </IconButton>
       </div>
 
-      <Tabs
-        label="Airport information"
-        value={tab}
-        onChange={setTab}
-        tabs={[
-          { id: 'overview', label: 'Overview' },
-          { id: 'arrivals', label: 'Arrivals' },
-          { id: 'departures', label: 'Departures' },
-          { id: 'ground', label: 'Ground' },
-          { id: 'weather', label: 'Weather' },
-          { id: 'runways', label: 'Runways' },
-        ]}
-      />
+      <TabScroller active={tab}>
+        <Tabs
+          label="Airport information"
+          value={tab}
+          onChange={setTab}
+          tabs={[
+            { id: 'overview', label: 'Overview' },
+            { id: 'arrivals', label: 'Arrivals' },
+            { id: 'departures', label: 'Departures' },
+            { id: 'ground', label: 'Ground' },
+            { id: 'delays', label: 'Delays' },
+            { id: 'weather', label: 'Weather' },
+            { id: 'runways', label: 'Runways' },
+          ]}
+        />
+      </TabScroller>
 
       {tab === 'overview' && (
         <div className="space-y-4">
@@ -215,6 +220,7 @@ function AirportBody({ a }: { a: AirportDetail }) {
             </Section>
           )}
           <NearbyAirports a={a} />
+          <LiveViews a={a} />
           {(a.homeLink || a.wikipedia) && (
             <div className="flex flex-wrap gap-2">
               {a.homeLink && (
@@ -255,6 +261,11 @@ function AirportBody({ a }: { a: AirportDetail }) {
       {tab === 'arrivals' && <BoardTab a={a} kind="arrivals" />}
       {tab === 'departures' && <BoardTab a={a} kind="departures" />}
       {tab === 'ground' && <GroundTab a={a} />}
+      {tab === 'delays' && (
+        <Suspense fallback={<div className="skeleton h-40 rounded-[16px]" aria-hidden="true" />}>
+          <AirportDelays a={a} station={station} />
+        </Suspense>
+      )}
     </div>
   );
 }
@@ -339,7 +350,11 @@ function RunwayDiagram({ a }: { a: AirportDetail }) {
 function NearbyAirports({ a }: { a: AirportDetail }) {
   const selectAirport = useUI((s) => s.selectAirport);
   const unit = useSettings((s) => s.units.distance);
-  const q = useQuery({ queryKey: ['major-airports'], queryFn: loadMajorAirports, staleTime: Infinity });
+  const q = useQuery({
+    queryKey: ['major-airports'],
+    queryFn: loadMajorAirports,
+    staleTime: Infinity,
+  });
   const near = useMemo(
     () =>
       (q.data ?? [])
@@ -372,5 +387,66 @@ function NearbyAirports({ a }: { a: AirportDetail }) {
         ))}
       </ul>
     </Section>
+  );
+}
+
+function LiveViews({ a }: { a: AirportDetail }) {
+  const cams = useMemo(() => webcamsFor(a.icao ?? a.ident, a.lat, a.lon), [a.icao, a.ident, a.lat, a.lon]);
+  if (!cams.length) return null;
+  return (
+    <Section title="Live views">
+      <ul className="glass-2 divide-y divide-[var(--line)] overflow-hidden rounded-[16px]">
+        {cams.map((c) => (
+          <li key={c.url}>
+            <a href={c.url} target="_blank" rel="noopener noreferrer" className="group flex items-center gap-3 px-3.5 py-2.5 hover:bg-[var(--line)]">
+              <Video size={15} className="shrink-0 text-fg-3" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[12.5px] font-medium text-fg">{c.label}</span>
+                <span className="block truncate text-[11px] text-fg-3">{c.source}</span>
+              </span>
+              <ExternalLink size={13} className="shrink-0 text-fg-3 group-hover:text-[var(--accent)]" aria-hidden />
+              <span className="sr-only">(opens in a new tab)</span>
+            </a>
+          </li>
+        ))}
+      </ul>
+      <p className="text-[11px] text-fg-3">External sites — not affiliated. They may change or go offline.</p>
+    </Section>
+  );
+}
+
+/** Horizontally scrollable tab strip: fades the clipped edge and keeps the active tab in view. */
+function TabScroller({ active, children }: { active: string; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState({ start: true, end: true });
+  const measure = () => {
+    const el = ref.current;
+    if (!el) return;
+    setEdges({ start: el.scrollLeft <= 1, end: el.scrollLeft + el.clientWidth >= el.scrollWidth - 1 });
+  };
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const tab = el.querySelector<HTMLElement>('[role=tab][aria-selected=true]');
+    if (tab) {
+      const box = el.getBoundingClientRect();
+      const t = tab.getBoundingClientRect();
+      if (t.left < box.left + 24 || t.right > box.right - 24) el.scrollTo({ left: el.scrollLeft + t.left - box.left - (box.width - t.width) / 2, behavior: 'smooth' });
+    }
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [active]);
+  const mask = `linear-gradient(to right, ${edges.start ? '#000' : 'transparent'}, #000 28px, #000 calc(100% - 28px), ${edges.end ? '#000' : 'transparent'})`;
+  return (
+    <div
+      ref={ref}
+      onScroll={measure}
+      className="-mx-1 overflow-x-auto px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&_[role=tab]]:whitespace-nowrap [&_[role=tab]]:px-2.5 [&_[role=tablist]]:min-w-max [&_[role=tablist]]:gap-0.5"
+      style={{ maskImage: mask, WebkitMaskImage: mask }}
+    >
+      {children}
+    </div>
   );
 }

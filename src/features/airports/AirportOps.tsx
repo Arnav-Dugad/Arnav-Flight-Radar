@@ -127,6 +127,26 @@ export function HourlyMovements({ a }: { a: AirportDetail }) {
 
 // ---------------------------------------------------------------- boards
 
+const COMPASS: Record<string, string> = { north: 'N', south: 'S', east: 'E', west: 'W', central: 'C', international: 'I', domestic: 'D', main: 'M' };
+
+/** Board-style terminal code: 'Terminal 5' → 'T5', 'Terminal 2E' → 'T2E', 'North Terminal' → 'N', 'Terminal A' → 'A'. */
+function terminalCode(name: string): string {
+  const n = name.trim();
+  const num = /^(?:terminal|term\.?|t)\s*(\d+[a-z]?)$/i.exec(n);
+  if (num) return `T${num[1]!.toUpperCase()}`;
+  const letter = /^(?:terminal|concourse)\s+([a-z])$/i.exec(n);
+  if (letter) return letter[1]!.toUpperCase();
+  const side = /^(\w+)\s+terminal$/i.exec(n);
+  if (side && COMPASS[side[1]!.toLowerCase()]) return COMPASS[side[1]!.toLowerCase()]!;
+  if (n.length <= 4) return n.toUpperCase();
+  const initials = n
+    .split(/[\s-]+/)
+    .filter((w) => /^[A-Za-z0-9]/.test(w))
+    .map((w) => (/^\d/.test(w) ? w : w[0]!.toUpperCase()))
+    .join('');
+  return initials.slice(0, 4) || n.slice(0, 3).toUpperCase();
+}
+
 function BoardRows({ rows, dep, tz }: { rows: BoardRow[]; dep: boolean; tz: string | null }) {
   const select = useUI((s) => s.select);
   if (!rows.length) return <p className="glass-2 rounded-[14px] px-3.5 py-3 text-[12px] text-fg-3">No {dep ? 'departures' : 'arrivals'} in this window.</p>;
@@ -157,7 +177,12 @@ function BoardRows({ rows, dep, tz }: { rows: BoardRow[]; dep: boolean; tz: stri
                 </div>
                 <div className="tnum truncate text-[10.5px] text-fg-3">
                   {r.flightIata ?? r.flight} · {r.type}
-                  {r.gate ? ` · Stand ${r.gate}` : ''}
+                  {r.gate || r.terminal ? (
+                    <span className="xs:hidden">
+                      {r.terminal ? ` · ${terminalCode(r.terminal)}` : ''}
+                      {r.gate ? ` · Stand ${r.gate}` : ''}
+                    </span>
+                  ) : null}
                   {r.codeshares.length ? ` · also ${r.codeshares.join(', ')}` : ''}
                 </div>
                 {r.divertedTo && (
@@ -166,7 +191,17 @@ function BoardRows({ rows, dep, tz }: { rows: BoardRow[]; dep: boolean; tz: stri
                   </div>
                 )}
               </div>
-              <span className={cn('shrink-0 text-right text-[11px] font-semibold', STATUS_TEXT[r.status])}>
+              {(r.terminal || r.gate) && (
+                <div
+                  className="tnum hidden w-[30px] shrink-0 text-center leading-tight xs:block"
+                  title={[r.terminal, r.gate && `Stand ${r.gate}`].filter(Boolean).join(' · ')}
+                  aria-label={[r.terminal, r.gate && `stand ${r.gate}`].filter(Boolean).join(', ')}
+                >
+                  <div className="truncate text-[12px] font-semibold text-fg">{r.terminal ? terminalCode(r.terminal) : '—'}</div>
+                  {r.gate && <div className="truncate text-[10px] text-fg-3">{r.gate}</div>}
+                </div>
+              )}
+              <span className={cn('w-[60px] shrink-0 break-words text-right text-[11px] font-semibold leading-tight', STATUS_TEXT[r.status])}>
                 {r.status}
                 {late && r.status !== 'Arrived' && r.status !== 'Landed' && r.status !== 'Canceled' && <span className="block text-[10px] font-normal text-[#ffb547]">+{r.delayMin} min</span>}
               </span>
@@ -195,8 +230,8 @@ export function BoardTab({ a, kind }: { a: AirportDetail; kind: 'arrivals' | 'de
         </button>
       )}
       <p className="text-[11px] leading-snug text-fg-3">
-        Simulated schedule: real airlines and airports, invented flights, codeshares and times. Local time ({tzAbbrev(simNow(), tz)}), then the estimated or actual time. Stands
-        from OpenStreetMap where mapped.
+        Simulated schedule: real airlines and airports, invented flights, codeshares and times. Local time ({tzAbbrev(simNow(), tz)}), then the estimated or actual time. Terminal
+        (e.g. T5) above the stand; stands and terminals from OpenStreetMap where mapped.
       </p>
     </div>
   );

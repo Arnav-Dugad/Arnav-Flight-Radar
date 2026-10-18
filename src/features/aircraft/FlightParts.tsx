@@ -93,6 +93,11 @@ export const STATUS_TONE: Record<FlightStatus, string> = {
   Approach: 'bg-[rgba(92,225,255,0.14)] text-[#5ce1ff]',
   Landed: 'bg-[rgba(92,225,255,0.14)] text-[#5ce1ff]',
   Arrived: 'bg-[var(--line)] text-fg-2',
+  Emergency: 'bg-[rgba(255,93,115,0.22)] text-[#ff8a9a] ring-1 ring-[rgba(255,93,115,0.5)]',
+  'Gate hold': 'bg-[rgba(255,181,71,0.16)] text-[#ffb547]',
+  'De-icing': 'bg-[rgba(140,200,255,0.16)] text-[#9fd2ff]',
+  'On station': 'bg-[rgba(61,220,151,0.14)] text-[#7ee2a8]',
+  Soaring: 'bg-[rgba(61,220,151,0.14)] text-[#7ee2a8]',
 };
 
 /** Plain text colour per status (boards). */
@@ -110,6 +115,11 @@ export const STATUS_TEXT: Record<FlightStatus, string> = {
   Approach: 'text-[#5ce1ff]',
   Landed: 'text-[#5ce1ff]',
   Arrived: 'text-fg-2',
+  Emergency: 'text-[#ff8a9a]',
+  'Gate hold': 'text-[#ffb547]',
+  'De-icing': 'text-[#9fd2ff]',
+  'On station': 'text-[#7ee2a8]',
+  Soaring: 'text-[#7ee2a8]',
 };
 
 export function StatusChip({ status }: { status: FlightStatus }) {

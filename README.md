@@ -4,7 +4,7 @@
 
 <p align="center">
   <b>A premium flight radar for a living, simulated world of air traffic.</b><br>
-  230+ real airlines · real airports, runways, stands and taxiways · real weather · every flight simulated.
+  230+ real airlines · ~100 aircraft types · real airports, terminals, taxiways and navaids · real weather · every flight simulated.
 </p>
 
 ---
@@ -12,8 +12,8 @@
 Arnav Flight Radar is a full-stack flight tracker that runs its own **world simulation**:
 
 - **Fleet:** about 15,000 aircraft from more than 230 real airlines (core and extended lists), flying real aircraft types between real airports.
-- **Ground:** at the busiest hubs, aircraft park on real stands and taxi along real OpenStreetMap taxiways.
-- **Weather:** real METAR weather chooses the runway in use and sets how much traffic each airport can take.
+- **Ground:** at about 220 airports, aircraft park on real stands at the right terminal and taxi along real, named OpenStreetMap taxiways.
+- **Weather:** real METAR and TAF weather choose the runway in use and set how much traffic each airport can take, now and in the hours ahead.
 
 The interface is modelled on the best commercial trackers, with flight cards, airport boards,
 airline pages, widgets and a 3D view, on an original Apple-style glass design.
@@ -25,20 +25,45 @@ airline pages, widgets and a 3D view, on an original Apple-style glass design.
 ## What's simulated
 
 **Gate to gate**
-- **Push-back** off the stand with the nose still pointing in.
-- **Taxi out** along the airport's real taxiway network to the holding point, where flights **queue for their runway slot**, then line up and take off.
-- **Climb** at an odd flight level eastbound and an even one westbound (the semicircular rule).
-- **Cruise** through jet-stream winds aloft, with headwinds and tailwinds that move the **estimated arrival time** in flight.
-- **Arrival:** descent, then radar vectors onto a 12 NM final over downwind and base legs.
-- **Holding** in racetrack patterns when the destination is saturated, with **ground delays** at the origin for long waits.
-- **Bad weather** (fog, strong gusts) brings **go-arounds**, **diversions** to an alternate and **cancellations**.
-- **Landing:** turn off at a **real runway exit**, taxi in to a free **stand**, then turnaround (deboarding, cleaning, catering, fuelling, boarding) before the next flight.
+- **Clearance and push-back:** the flight is cleared via a departure procedure, then pushes back off a
+  real stand at the terminal its airline really uses (Terminal 5 for British Airways at Heathrow).
+- **Taxi** on real, named OpenStreetMap taxiways ("via A, B3 to holding point A1"). Aircraft hold
+  short of and cross other runways, and de-ice when the real METAR reports freezing precipitation.
+- **Departure queue:** take-offs keep ICAO wake-turbulence spacing (a medium behind a heavy waits two
+  minutes). Long queues become gate holds.
+- **Departure route:** out over a real VOR or NDB on a procedure-style departure.
+- **Climb and cruise:** 250 kt below FL100, then a semicircular flight level, with step climbs on long
+  flights and winds aloft that move the arrival estimate.
+- **North Atlantic:** transatlantic flights use the day's simulated track system (westbound by day,
+  eastbound along the jet stream at night).
+- **Arrival:** a procedure-style arrival over a real navaid, holding there when the airport is
+  saturated, then radar vectors to an ILS, a CAT III ILS in low visibility, an RNP or a visual approach.
+- **Landing and turnaround:** the aircraft leaves the runway at a real, named exit and taxis to its
+  stand for the turnaround.
+
+**Weather, disruption and rare events**
+- **Live weather:** real METARs set the runway in use and the capacity, and real TAFs set the capacity
+  for the hours ahead.
+- **Bad weather** (fog, storms, gusts, snow) brings go-arounds, holding, diversions and cancellations.
+- **Rare emergencies:** medical diversions (PAN PAN), engine failures and depressurisations (squawk
+  7700) divert to the nearest suitable airport. A repaired aircraft positions empty back to base.
 
 **Timetable and fleet**
-- **Flight numbers** repeat daily and stay stable per route, odd outbound from the hub and even inbound.
-- **Codeshares** come only from the operating airline's real alliance.
-- **Cargo airlines** fly night banks; most passenger flying pauses overnight and restarts in a morning wave.
-- **Wide-bodies** serve large airports only. Helicopters and light aircraft fly local hops.
+- **Routes:** flight numbers stay stable per route. Thin and leisure routes run on fixed weekdays,
+  shown on the card as e.g. "Mon Wed Fri".
+- **Seasons:** IATA seasons apply, with Mediterranean summers, ski winters and winter sun.
+- **Weekly and daily patterns:** traffic peaks on Friday and Sunday and dips on Saturday; there is a
+  night lull with a morning wave, and cargo flies night banks.
+- **Fleet:** about 100 aircraft types with real dimensions, weights and fuel burn. Each card shows a
+  typical cabin, an estimated load sheet and the airframe's history.
+
+**Beyond the airlines**
+- **General aviation:** daylight flying, busier at weekends, with circuits and touch-and-goes.
+- **Military:** transports, tankers, AWACS, maritime patrol and fighter training from real bases.
+- **Helicopters and air ambulances:** HEMS helicopters fly from hospital pads to incident scenes, plus
+  fixed-wing air ambulances, offshore helicopters to oil and gas platforms, and city shuttles.
+- **Gliders:** they thermal up in circles in summer, with tow planes, as a FLARM receiver would show
+  them.
 
 ## Features
 
@@ -51,7 +76,8 @@ airline pages, widgets and a 3D view, on an original Apple-style glass design.
   - precipitation radar (RainViewer) and METAR stations;
   - controlled and special-use airspace (FAA, openAIP), in 3D when tilted, with click-for-details;
   - lightning climatology (NASA);
-  - an airport disruption map.
+  - an airport disruption map;
+  - the simulated North Atlantic tracks.
 - At large airports you see stands (free or occupied), ground-service vehicles and the departure queue on the map.
 
 **Flights**
@@ -59,15 +85,22 @@ airline pages, widgets and a 3D view, on an original Apple-style glass design.
   - a representative photo (the airline's livery on that type when available, always labelled);
   - logo, flight number, alliance and codeshares;
   - the route with a progress bar;
-  - scheduled, actual and estimated times in local time and UTC, with stands;
-  - flight data, a graph and a turnaround timeline.
-- Follow, a 3D chase view behind the aircraft, a route line (flown and planned), a 3D flight path with an altitude profile, sharing and comparing.
+  - scheduled, actual and estimated times in local time and UTC, with terminals and stands;
+  - the flight plan: departure and arrival procedures, en-route navaids, the oceanic track, taxi
+    clearances, approach type, wake category and days of operation;
+  - a **simulated radio** transcript (real airport frequencies) you can listen to;
+  - an estimated **load sheet** with a seat map, fuel plan and weights;
+  - the airframe's recent **history**, flight data, a graph and a turnaround timeline.
+- Follow, a 3D chase view behind the aircraft with a **true-scale 3D model**, a route line (flown and planned), a 3D flight path with an altitude profile, sharing and comparing.
+- **Aircraft type pages:** specs, a typical cabin and every simulated example flying now.
 
 **Airports**
 - Arrivals and departures boards (delays, holding, diversions, cancellations, codeshares, stands).
 - An "On the ground" list and the departure queue.
 - The runway in use and an hourly movement chart.
 - Sunrise, sunset, moonrise and moonset; METAR and TAF; runway diagrams and an approach explorer.
+- **Delays:** seven days of punctuality and a 24-hour disruption forecast built from the real TAF.
+- Terminal outlines, numbered stands and 3D buildings when you zoom in; links to public airport webcams.
 - Pin up to four airports to the map as mini-boards. Installed apps get home-screen shortcuts for them.
 
 **Discover**
@@ -79,7 +112,7 @@ airline pages, widgets and a 3D view, on an original Apple-style glass design.
 
 **Platform**
 - Apple-style glass UI with light and dark styles, high-contrast and reduced-motion modes.
-- A purpose-built mobile layout and an installable PWA.
+- A purpose-built mobile layout and an installable PWA, with touch gestures tuned for phones and tablets.
 - Keyboard shortcuts (`?`) and screen-reader announcements.
 
 ## Quick start
@@ -104,7 +137,8 @@ Open <http://localhost:5173>. No API keys or secrets are needed.
 | `npm run test:visual` | Screenshot regression tests with a frozen clock (`-- --update-snapshots` to refresh) |
 | `npm run budget` | Fails if the first-visit download exceeds the performance budget |
 | `npm run data:media` | Rebuild airline logos and representative photos (Wikidata / Commons) |
-| `npm run data:ground` | Fetch more stands and taxiways from OpenStreetMap (polite, resumable) |
+| `npm run data:ground` | Fetch stands, named taxiways, holding points and terminals from OpenStreetMap (polite, resumable) |
+| `npm run data:sim` | Rebuild navaids, real airport frequencies, heliports and gliding sites (OurAirports) |
 | `npm run data:airspace` | Rebuild Canada & Europe airspace from openAIP |
 | `npm run deploy` | Build and `wrangler deploy` |
 

@@ -3,12 +3,16 @@ import { AnimatePresence, motion } from 'motion/react';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { searchAirports, type SearchableAirport } from '@shared/airports';
-import { classifyAircraft } from '@shared/classify';
+import { classifyAircraft, type AircraftClass } from '@shared/classify';
 import { formatLatLon, parseCoordinates } from '@shared/geo';
 import type { Aircraft, AirportIndexEntry, Country } from '@shared/types';
 import { AircraftGlyph, AirportIcon, GlobeIcon, PlaneIcon } from '@/components/icons';
 import { Kbd } from '@/components/ui/Feedback';
 import { HUBS, airportByCode, loadAllAirports, loadCountries, loadMajorAirports } from '@/data/airports';
+import type { TypeSpec } from '@/data/sim/typeSpecs';
+
+// Aircraft-type data is fetched the first time someone types a query.
+let typesMod: typeof import('@/data/sim/typeSpecs') | null = null;
 import { simAirlineSearch, simSearch } from '@/data/world';
 import { AirlineLogo } from '@/features/aircraft/FlightParts';
 import { cn } from '@/lib/cn';
@@ -42,15 +46,25 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
   const [active, setActive] = useState(0);
   const [airports, setAirports] = useState<SearchableAirport[] | null>(null);
   const [countries, setCountries] = useState<Country[] | null>(null);
+  const [typesReady, setTypesReady] = useState(!!typesMod);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const select = useUI((s) => s.select);
   const selectAirport = useUI((s) => s.selectAirport);
   const selectAirline = useUI((s) => s.selectAirline);
+  const selectType = useUI((s) => s.selectType);
   const recents = useBookmarks((s) => s.recents);
   const addRecent = useBookmarks((s) => s.addRecent);
   const clearRecents = useBookmarks((s) => s.clearRecents);
   const altUnit = useSettings((s) => s.units.altitude);
+
+  useEffect(() => {
+    if (q.trim().length < 2 || typesMod) return;
+    void import('@/data/sim/typeSpecs').then((m) => {
+      typesMod = m;
+      setTypesReady(true);
+    });
+  }, [q]);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -139,6 +153,18 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
     }));
     if (exactAirport) out.push(...airportResults);
 
+    // Aircraft types (opens the type page). An exact ICAO designator ("A388", "B77W")
+    // ranks right after an exact airport code; anything else goes after the airports.
+    const typeHits = query.length >= 2 && typesReady && typesMod ? typesMod.searchTypes(query, 5) : [];
+    const exactType = typeHits.length > 0 && typeHits[0]!.code === up;
+    const typeResults: Result[] = typeHits.map((s) =>
+      typeResult(s, () => {
+        selectType(s.code);
+        onClose();
+      }),
+    );
+    if (exactType) out.push(...typeResults);
+
     // Aircraft by callsign, registration, address or type (instant, local)
     const local = [...traffic.tracks.values()]
       .map((t) => t.ac)
@@ -177,8 +203,9 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
       });
     }
 
-    // Airports
+    // Airports, then aircraft types
     if (!exactAirport) out.push(...airportResults);
+    if (!exactType) out.push(...typeResults);
 
     // Cities (derived from airport municipalities) and countries
     if (airports && query.length >= 3) {
@@ -226,7 +253,7 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
     }
 
     return out;
-  }, [q, recents, airports, countries, altUnit, addRecent, goAirport, goAircraft, onClose, select, selectAirport, selectAirline]);
+  }, [q, recents, airports, countries, altUnit, addRecent, goAirport, goAircraft, onClose, select, selectAirport, selectAirline, selectType, typesReady]);
 
   useEffect(() => setActive(0), [q]);
   useEffect(() => {
@@ -278,7 +305,7 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
             value={q}
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={onKey}
-            placeholder="Flight, airline, airport, city, country or lat, lon"
+            placeholder="Flight, airline, airport, aircraft type, city or lat, lon"
             maxLength={60}
             spellCheck={false}
             autoComplete="off"
@@ -340,7 +367,7 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
             <div className="px-6 py-10 text-center">
               <p className="text-[14px] font-semibold text-fg">No matches</p>
               <p className="mt-1 text-[12.5px] text-fg-3">
-                Try a flight (BA117), an airline (Emirates), an airport code (LHR), a city or coordinates (51.47, -0.45).
+                Try a flight (BA117), an airline (Emirates), an airport code (LHR), an aircraft type (A350), a city or coordinates (51.47, -0.45).
               </p>
             </div>
           )}
@@ -368,6 +395,51 @@ function aircraftResult(a: Aircraft, group: string, altUnit: Parameters<typeof f
     title: a.callsign ?? a.registration ?? a.icao24.toUpperCase(),
     sub: [a.typeDescription ?? a.aircraftType, a.registration, a.icao24.toUpperCase()].filter(Boolean).join(' · '),
     meta: fmtAltitude(a.altitudeBarometric ?? a.altitudeGeometric, altUnit, a.onGround),
+    run,
+  };
+}
+
+/** Map-symbol class for a reference type, for its glyph. */
+function typeGlyph(s: TypeSpec): AircraftClass {
+  if (s.role === 'helicopter') return 'helicopter';
+  if (s.role === 'glider') return 'glider';
+  if (s.role === 'bizjet') return 'bizjet';
+  if (s.role === 'fighter' || s.shape === 'high-jet-quad' || s.shape === 'high-quad-turboprop') return 'military';
+  if (['wide-twin', 'tri-jet', 'quad', 'b747', 'a380', 'awacs'].includes(s.shape)) return 'widebody';
+  if (s.shape === 'narrow') return s.seatsTypical > 0 && s.seatsTypical < 110 ? 'regional' : 'narrowbody';
+  if (s.shape === 'rear-jet') return 'regional';
+  if (s.shape.includes('turboprop') && !s.shape.startsWith('single')) return 'turboprop';
+  return 'light';
+}
+
+const ROLE_WORD: Record<TypeSpec['role'], string> = {
+  airliner: 'Airliner',
+  freighter: 'Freighter',
+  bizjet: 'Business jet',
+  ga: 'General aviation',
+  helicopter: 'Helicopter',
+  'military-transport': 'Military transport',
+  tanker: 'Tanker',
+  fighter: 'Fighter',
+  patrol: 'Maritime patrol',
+  awacs: 'AEW&C',
+  trainer: 'Trainer',
+  glider: 'Glider',
+  utility: 'Utility',
+};
+
+function typeResult(s: TypeSpec, run: () => void): Result {
+  return {
+    key: `type-${s.code}`,
+    group: 'Aircraft types',
+    icon: <AircraftGlyph cls={typeGlyph(s)} size={20} />,
+    title: (
+      <span>
+        <span className="mr-2 font-semibold text-[var(--accent)]">{s.code}</span>
+        {s.maker} {s.model}
+      </span>
+    ),
+    sub: [ROLE_WORD[s.role], s.family, s.seatsTypical > 0 ? `${s.seatsTypical} seats` : undefined, `${s.rangeNm.toLocaleString('en-US')} NM range`].filter(Boolean).join(' · '),
     run,
   };
 }

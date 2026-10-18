@@ -19,6 +19,7 @@ const LayersPanel = named(() => import('./layers/LayersPanel'), 'LayersPanel');
 const CreditsPanel = named(() => import('./data/CreditsPanel'), 'CreditsPanel');
 const AirlinePanel = named(() => import('./airlines/AirlinePanel'), 'AirlinePanel');
 const WidgetsPanel = named(() => import('./widgets/WidgetsPanel'), 'WidgetsPanel');
+const TypePanel = named(() => import('./types/TypePanel'), 'TypePanel');
 
 function OnDemand({ id, children }: { id: PanelId; children: ReactNode }) {
   const active = useUI((s) => s.panel === id);
@@ -71,6 +72,9 @@ export function LazyPanels() {
       </OnDemand>
       <OnDemand id="widgets">
         <WidgetsPanel />
+      </OnDemand>
+      <OnDemand id="type">
+        <TypePanel />
       </OnDemand>
     </>
   );

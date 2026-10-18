@@ -174,16 +174,7 @@ export function installAircraftLayers(map: MlMap) {
       'icon-halo-color': ['case', ['boolean', ['feature-state', 'hover'], false], '#5ce1ff', iconHalo],
       'icon-halo-width': ['case', ['boolean', ['feature-state', 'hover'], false], 2.4, s.highContrast ? 2.2 : 1.3],
       'icon-halo-blur': 0.4,
-      'icon-opacity': [
-        'case',
-        ['==', ['get', 'dim'], 1],
-        0.16,
-        ['==', ['get', 'st'], 'lost'],
-        0.3,
-        ['==', ['get', 'st'], 'stale'],
-        0.55,
-        1,
-      ],
+      'icon-opacity': iconOpacity(s.show3dModels) as never,
       'icon-opacity-transition': { duration: 300 },
     },
   });
@@ -283,9 +274,17 @@ export function installAircraftLayers(map: MlMap) {
 }
 
 /** Re-applies settings-driven paint/layout without rebuilding layers. */
+const BASE_OPACITY = ['case', ['==', ['get', 'dim'], 1], 0.16, ['==', ['get', 'st'], 'lost'], 0.3, ['==', ['get', 'st'], 'stale'], 0.55, 1];
+
+/** Icons fade out as the true-scale 3D models take over close in (a faint marker stays clickable). */
+function iconOpacity(models: boolean) {
+  return models ? ['interpolate', ['linear'], ['zoom'], 13.2, BASE_OPACITY, 14.6, ['*', 0.08, BASE_OPACITY]] : BASE_OPACITY;
+}
+
 export function applyAircraftSettings(map: MlMap) {
   if (!map.getLayer('ac-icons')) return;
   const s = getSettings();
+  map.setPaintProperty('ac-icons', 'icon-opacity', iconOpacity(s.show3dModels) as never);
   const color = aircraftColorExpression(s.colorMode, s.altitudePalette);
   map.setPaintProperty('ac-icons', 'icon-color', color as never);
   map.setLayoutProperty('ac-icons', 'icon-size', sizeExpr(s.symbolScale) as never);
@@ -440,6 +439,7 @@ export function startAircraftEngine(map: MlMap): AircraftEngine {
         s.path3dOpacity !== prev.path3dOpacity ||
         s.path3dColor !== prev.path3dColor ||
         s.labelContent !== prev.labelContent ||
+        s.show3dModels !== prev.show3dModels ||
         s.highContrast !== prev.highContrast
       ) {
         applyAircraftSettings(map);
@@ -450,6 +450,28 @@ export function startAircraftEngine(map: MlMap): AircraftEngine {
   unsubs.push(useUI.subscribe((s, prev) => {
     if (s.selectedId !== prev.selectedId || s.replay !== prev.replay) dirty = true;
   }));
+
+  // True-scale 3D models: the renderer is fetched the first time the user zooms in close.
+  let models: { setEnabled(on: boolean): void; dispose(): void } | null = null;
+  let modelsLoading = false;
+  const maybeModels = () => {
+    const want = getSettings().show3dModels && (map.getZoom() >= 12.3 || ui().chase);
+    if (models) models.setEnabled(getSettings().show3dModels);
+    if (!want || models || modelsLoading) return;
+    modelsLoading = true;
+    void import('./modelsBridge')
+      .then((m) => {
+        models = m.startModels(map);
+      })
+      .catch(() => undefined)
+      .finally(() => (modelsLoading = false));
+  };
+  map.on('zoomend', maybeModels);
+  unsubs.push(() => map.off('zoomend', maybeModels));
+  unsubs.push(useSettings.subscribe((s, p) => s.show3dModels !== p.show3dModels && maybeModels()));
+  unsubs.push(useUI.subscribe((s, p) => s.chase !== p.chase && maybeModels()));
+  unsubs.push(() => models?.dispose());
+  maybeModels();
 
   let lastDrawn = 0;
   function interval(): number {

@@ -3,7 +3,7 @@
 // which is always labelled as simulated. Flights, registrations, addresses and
 // schedules generated from this data are invented.
 
-export type TypeClass = 'wide' | 'narrow' | 'regional' | 'turboprop' | 'bizjet' | 'light' | 'heli';
+export type TypeClass = 'wide' | 'narrow' | 'regional' | 'turboprop' | 'bizjet' | 'light' | 'heli' | 'fighter' | 'glider';
 
 export interface TypeInfo {
   code: string;
@@ -86,6 +86,40 @@ export const TYPES: Record<string, TypeInfo> = Object.fromEntries(
     T('EC35', 'AIRBUS HELICOPTERS H135', 'A7', 125, 1500, 300, 'heli'),
     T('EC45', 'AIRBUS HELICOPTERS H145', 'A7', 130, 1500, 350, 'heli'),
     T('AS50', 'AIRBUS HELICOPTERS H125', 'A7', 120, 1200, 300, 'heli'),
+    // Military (simulated missions from real bases)
+    T('C17', 'BOEING C-17A GLOBEMASTER III', 'A5', 450, 32000, 2400, 'wide'),
+    T('K35R', 'BOEING KC-135R STRATOTANKER', 'A5', 460, 31000, 1500, 'wide'),
+    T('C30J', 'LOCKHEED MARTIN C-130J HERCULES', 'A4', 320, 26000, 1800, 'turboprop'),
+    T('A400', 'AIRBUS A400M ATLAS', 'A5', 400, 31000, 1800, 'turboprop'),
+    T('E3TF', 'BOEING E-3 SENTRY (AWACS)', 'A5', 400, 30000, 4000, 'wide'),
+    T('P8', 'BOEING P-8 POSEIDON', 'A4', 440, 25000, 1200, 'narrow'),
+    T('EUFI', 'EUROFIGHTER TYPHOON', 'A6', 480, 25000, 1000, 'fighter'),
+    T('F16', 'LOCKHEED MARTIN F-16 FIGHTING FALCON', 'A6', 480, 25000, 900, 'fighter'),
+    T('F35', 'LOCKHEED MARTIN F-35 LIGHTNING II', 'A6', 470, 27000, 1200, 'fighter'),
+    T('RFAL', 'DASSAULT RAFALE', 'A6', 480, 25000, 1000, 'fighter'),
+    T('HAWK', 'BAE SYSTEMS HAWK', 'A6', 400, 20000, 600, 'fighter'),
+    T('H60', 'SIKORSKY UH-60 BLACK HAWK', 'A7', 140, 2000, 300, 'heli'),
+    // Air ambulance, offshore and city helicopters
+    T('A109', 'LEONARDO AW109', 'A7', 150, 1500, 400, 'heli'),
+    T('A169', 'LEONARDO AW169', 'A7', 140, 1500, 400, 'heli'),
+    T('A139', 'LEONARDO AW139', 'A7', 150, 3000, 500, 'heli'),
+    T('S92', 'SIKORSKY S-92', 'A7', 145, 3000, 500, 'heli'),
+    T('EC75', 'AIRBUS HELICOPTERS H175', 'A7', 150, 3000, 600, 'heli'),
+    T('S76', 'SIKORSKY S-76', 'A7', 145, 2000, 400, 'heli'),
+    T('EC30', 'AIRBUS HELICOPTERS H130', 'A7', 125, 1200, 330, 'heli'),
+    T('B350', 'BEECHCRAFT KING AIR 350', 'A2', 300, 27000, 1500, 'turboprop'),
+    T('LJ45', 'LEARJET 45', 'A2', 440, 43000, 1700, 'bizjet'),
+    // Gliders (FLARM), tugs and light aircraft
+    T('AS21', 'SCHLEICHER ASK 21', 'B1', 55, 4000, 150, 'glider'),
+    T('DUOD', 'SCHEMPP-HIRTH DUO DISCUS', 'B1', 60, 5000, 400, 'glider'),
+    T('DISC', 'SCHEMPP-HIRTH DISCUS', 'B1', 60, 5000, 400, 'glider'),
+    T('LS8', 'DG FLUGZEUGBAU LS8', 'B1', 60, 5000, 400, 'glider'),
+    T('GLID', 'GLIDER', 'B1', 55, 4000, 300, 'glider'),
+    T('DR40', 'ROBIN DR400', 'A1', 110, 3000, 450, 'light'),
+    T('PA25', 'PIPER PA-25 PAWNEE', 'A1', 90, 2500, 250, 'light'),
+    T('DA40', 'DIAMOND DA40', 'A1', 125, 5500, 600, 'light'),
+    T('C152', 'CESSNA 152', 'A1', 95, 3500, 350, 'light'),
+    T('C182', 'CESSNA 182 SKYLANE', 'A1', 140, 7500, 800, 'light'),
   ].map((t) => [t.code, t]),
 );
 
@@ -250,6 +284,9 @@ export const AIRLINES: AirlineProfile[] = [
 export const GA_TYPES: [string, number][] = [
   ['C172', 4],
   ['PA28', 2.5],
+  ['C152', 1.2],
+  ['C182', 1.2],
+  ['DA40', 1],
   ['SR22', 2],
   ['PC12', 1],
   ['EC35', 1],

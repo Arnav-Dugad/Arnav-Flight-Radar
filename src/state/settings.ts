@@ -53,6 +53,9 @@ export interface Settings {
   showPhotos: boolean;
   show3dPath: boolean; // extruded flight path for the selected aircraft when the map is tilted
   showDisruptions: boolean; // airports coloured by disruption index
+  showNatTracks: boolean; // simulated North Atlantic organised tracks
+  show3dBuildings: boolean; // extruded buildings (OpenStreetMap) when the map is tilted
+  show3dModels: boolean; // true-scale 3D aircraft models when zoomed in close
   labelContent: LabelContent; // what aircraft labels show
   path3dColor: TrailColorMode;
   path3dOpacity: number; // 0.15 – 0.9
@@ -100,6 +103,9 @@ export const DEFAULT_SETTINGS: Settings = {
   showPhotos: true,
   show3dPath: true,
   showDisruptions: false,
+  showNatTracks: false,
+  show3dBuildings: true,
+  show3dModels: true,
   labelContent: 'flight',
   path3dColor: 'altitude',
   path3dOpacity: 0.45,

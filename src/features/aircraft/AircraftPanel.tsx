@@ -1,16 +1,16 @@
 // Aircraft panel, laid out like the flight card of a commercial flight tracker:
 // hero photo → airline & flight → route with progress and times → actions →
-// flight data / aircraft / graph tabs. Everything shown is simulated.
-import { Box, Crosshair, Map as MapIcon, Pause, Play, Share2, Star, X } from 'lucide-react';
+// flight / radio / load / aircraft / history / graph tabs. Everything shown is simulated.
+import { Box, ChevronRight, Crosshair, Map as MapIcon, Pause, Play, Share2, Star, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { CLASS_LABEL, classifyAircraft, EMITTER_CATEGORY_LABEL } from '@shared/classify';
 import { CompareIcon, FollowIcon, InspectorIcon } from '@/components/icons';
-import { CopyButton, Row, Rows, Tabs } from '@/components/ui/Data';
+import { CopyButton, Row, Rows } from '@/components/ui/Data';
 import { EmptyState, Skeleton } from '@/components/ui/Feedback';
 import { GlassButton, IconButton } from '@/components/ui/Glass';
 import { Panel } from '@/components/ui/Sheet';
-import { simFlight, simNow, useSim, type FlightInfo } from '@/data/world';
+import { simFlight, simNow, simPrepareFlight, useSim, type FlightInfo } from '@/data/world';
 import { cn } from '@/lib/cn';
 import { fmtAltitude, fmtBearing, fmtCoord, fmtHmUTC, fmtSpeed, fmtTemp, fmtTimeUTC, fmtVRate } from '@/lib/format';
 import { useNow, useSelectedTrack } from '@/lib/hooks';
@@ -23,11 +23,72 @@ import { useSettings } from '@/state/settings';
 import { traffic, type Track } from '@/state/traffic';
 import { useUI } from '@/state/ui';
 import { RepresentativePhoto } from './AircraftPhoto';
+import { EmergencyBanner, FlightPlan } from './FlightDetails';
 import { AirlineBadge, AirlineLogo, AllianceBadge, FlightRoute, StatusChip } from './FlightParts';
 import { AltitudeGauge, HeadingGauge, SpeedGauge, VerticalSpeedGauge } from './Gauges';
 import { TrailProfile } from './TrailProfile';
 
-type Tab = 'flight' | 'aircraft' | 'graph';
+// The radio, load-sheet and history tabs (and their data) load the first time they are opened.
+const RadioTab = lazy(() => import('./RadioTab').then((m) => ({ default: m.RadioTab })));
+const LoadTab = lazy(() => import('./LoadTab').then((m) => ({ default: m.LoadTab })));
+const HistoryTab = lazy(() => import('./HistoryTab').then((m) => ({ default: m.HistoryTab })));
+
+type Tab = 'flight' | 'radio' | 'load' | 'aircraft' | 'history' | 'graph';
+
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'flight', label: 'Flight' },
+  { id: 'radio', label: 'Radio' },
+  { id: 'load', label: 'Load' },
+  { id: 'aircraft', label: 'Aircraft' },
+  { id: 'history', label: 'History' },
+  { id: 'graph', label: 'Graph' },
+];
+
+/** Compact tab bar that scrolls sideways on narrow screens (arrow keys move between tabs). */
+function TabBar({ value, onChange }: { value: Tab; onChange: (t: Tab) => void }) {
+  const bar = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    bar.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+  }, [value]);
+  const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    const i = TABS.findIndex((t) => t.id === value);
+    const next = e.key === 'ArrowRight' ? i + 1 : e.key === 'ArrowLeft' ? i - 1 : e.key === 'Home' ? 0 : e.key === 'End' ? TABS.length - 1 : -2;
+    if (next === -2) return;
+    e.preventDefault();
+    const t = TABS[(next + TABS.length) % TABS.length]!;
+    onChange(t.id);
+    bar.current?.querySelector<HTMLElement>(`[data-tab="${t.id}"]`)?.focus();
+  };
+  return (
+    <div ref={bar} className="-mx-5 overflow-x-auto px-5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <div role="tablist" aria-label="Aircraft information" onKeyDown={onKey} className="flex w-max min-w-full gap-0.5 border-b border-[var(--line)]">
+        {TABS.map((t) => {
+          const active = t.id === value;
+          return (
+            <button
+              key={t.id}
+              role="tab"
+              type="button"
+              data-tab={t.id}
+              aria-selected={active}
+              tabIndex={active ? 0 : -1}
+              onClick={() => onChange(t.id)}
+              className={cn(
+                'relative shrink-0 whitespace-nowrap rounded-t-[8px] px-2.5 pb-2.5 pt-1.5 text-[12.5px] font-medium transition-colors focus-visible:shadow-[var(--focus)]',
+                active ? 'text-fg' : 'text-fg-3 hover:text-fg-2',
+              )}
+            >
+              {t.label}
+              {active && (
+                <motion.span layoutId="aircraft-tab" className="absolute inset-x-2 -bottom-px h-[2px] rounded-full bg-[var(--accent)]" transition={{ type: 'spring', stiffness: 500, damping: 36 }} />
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 export function AircraftPanel() {
   const selectedId = useUI((s) => s.selectedId);
@@ -108,6 +169,7 @@ function AircraftDetails({ t }: { t: Track }) {
   const chase = useUI((s) => s.chase);
   const select = useUI((s) => s.select);
   const selectAirline = useUI((s) => s.selectAirline);
+  const selectType = useUI((s) => s.selectType);
   const setCompare = useUI((s) => s.setCompare);
   const compare = useUI((s) => s.compare);
   const openPanel = useUI((s) => s.openPanel);
@@ -127,6 +189,8 @@ function AircraftDetails({ t }: { t: Track }) {
 
   useEffect(() => {
     addRecent({ kind: 'aircraft', id: a.id, label: ident, sub: a.typeDescription ?? a.aircraftType, lat: a.lat, lon: a.lon });
+    // Real (OpenStreetMap) taxiway names for the taxi clearances.
+    simPrepareFlight(a.id);
     // Only when a different aircraft is opened.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [a.id]);
@@ -178,6 +242,12 @@ function AircraftDetails({ t }: { t: Track }) {
           <X size={17} />
         </IconButton>
       </div>
+
+      {info?.emergency && (
+        <div className="pt-3">
+          <EmergencyBanner e={info.emergency} />
+        </div>
+      )}
 
       {/* ------------------------------------------------ airline & flight */}
       <div className="px-5 pb-3 pt-4">
@@ -269,16 +339,7 @@ function AircraftDetails({ t }: { t: Track }) {
 
       {/* ------------------------------------------------ tabs */}
       <div className="mt-3 px-5">
-        <Tabs
-          label="Aircraft information"
-          value={tab}
-          onChange={setTab}
-          tabs={[
-            { id: 'flight', label: 'Flight data' },
-            { id: 'aircraft', label: 'Aircraft' },
-            { id: 'graph', label: 'Graph' },
-          ]}
-        />
+        <TabBar value={tab} onChange={setTab} />
       </div>
       <div className="flex-1 px-5 pb-5 pt-3.5">
         <AnimatePresence mode="wait">
@@ -291,6 +352,7 @@ function AircraftDetails({ t }: { t: Track }) {
                   <HeadingGauge track={a.track} heading={a.ext?.trueHeading} />
                   <VerticalSpeedGauge fpm={a.onGround ? undefined : a.verticalRate} />
                 </div>
+                {info && <FlightPlan info={info} />}
                 <Rows>
                   <Row label="Barometric altitude" value={a.onGround ? 'On ground' : alt !== undefined ? fmtAltitude(alt, units.altitude) : undefined} mono />
                   <Row label="GPS altitude" value={a.altitudeGeometric !== undefined ? fmtAltitude(a.altitudeGeometric, units.altitude) : undefined} mono />
@@ -310,7 +372,24 @@ function AircraftDetails({ t }: { t: Track }) {
             )}
             {tab === 'aircraft' && (
               <Rows>
-                <Row label="Aircraft type" value={a.typeDescription} />
+                <Row
+                  label="Aircraft type"
+                  value={
+                    a.aircraftType ? (
+                      <button
+                        type="button"
+                        onClick={() => a.aircraftType && selectType(a.aircraftType)}
+                        title="Open aircraft type"
+                        className="inline-flex max-w-full items-center gap-0.5 text-[var(--accent)] hover:underline"
+                      >
+                        <span className="truncate">{a.typeDescription ?? a.aircraftType}</span>
+                        <ChevronRight size={13} className="shrink-0" />
+                      </button>
+                    ) : (
+                      a.typeDescription
+                    )
+                  }
+                />
                 <Row label="Type code" value={a.aircraftType} mono />
                 <Row label="Registration" value={a.registration} mono hint="Invented for the simulation" />
                 <Row label="Mode-S code" value={a.icao24.replace('~', '').toUpperCase()} mono hint="Invented, inside the country's real address block" />
@@ -325,6 +404,11 @@ function AircraftDetails({ t }: { t: Track }) {
                 <Row label="Arrival (UTC)" value={info ? `${fmtHmUTC(info.sta)} sched · ${fmtHmUTC(info.ata ?? info.eta)} ${info.ata ? 'actual' : 'est.'}` : undefined} mono />
               </Rows>
             )}
+            <Suspense fallback={<Skeleton className="h-40 w-full rounded-[16px]" />}>
+              {tab === 'radio' && <RadioTab key={a.id} id={a.id} />}
+              {tab === 'load' && <LoadTab id={a.id} info={info} />}
+              {tab === 'history' && <HistoryTab id={a.id} />}
+            </Suspense>
             {tab === 'graph' && <GraphTab t={t} />}
           </motion.div>
         </AnimatePresence>

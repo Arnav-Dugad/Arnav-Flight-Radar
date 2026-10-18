@@ -205,6 +205,54 @@ test.describe('desktop', () => {
     await page.keyboard.press('r');
   });
 
+  test('a flight card has a simulated radio transcript, a load sheet and the airframe history', async ({ page }) => {
+    await ready(page);
+    await worldReady(page);
+    await page.keyboard.press('j');
+    const panel = page.getByRole('complementary', { name: 'Aircraft details' });
+    await expect(panel).toBeVisible();
+    await panel.getByRole('tab', { name: 'Radio' }).click();
+    await expect(panel).toContainText(/Simulated radio/i);
+    await panel.getByRole('tab', { name: 'Load' }).click();
+    await expect(panel).toContainText(/fuel/i);
+    await panel.getByRole('tab', { name: 'History' }).click();
+    await expect(panel).toContainText(/Registration|No earlier flights|flights/i);
+  });
+
+  test('aircraft type pages open from search', async ({ page }) => {
+    await ready(page);
+    await worldReady(page);
+    await page.keyboard.press('Control+k');
+    await page.getByRole('combobox').fill('A388');
+    await page.getByRole('option').filter({ hasText: /A380/ }).first().click();
+    const panel = page.getByRole('complementary', { name: 'Aircraft type details' });
+    await expect(panel).toContainText(/Airbus/);
+    await expect(panel).toContainText(/A380/);
+  });
+
+  test('airport delays show seven days and the forecast', async ({ page }) => {
+    await ready(page);
+    await worldReady(page);
+    await page.keyboard.press('Control+k');
+    await page.getByRole('combobox').fill('LHR');
+    await expect(page.getByRole('option').first()).toContainText('Heathrow');
+    await page.keyboard.press('Enter');
+    const panel = page.getByRole('complementary', { name: 'Airport details' });
+    await panel.getByRole('tab', { name: 'Delays' }).click();
+    await expect(panel).toContainText(/on.time/i);
+    await expect(panel).toContainText(/Modelled/i);
+  });
+
+  test('simulator reference data is served', async ({ request }) => {
+    for (const f of ['navaids', 'frequencies', 'heliports', 'gliding']) {
+      const r = await request.get(`/data/sim/${f}.json`);
+      expect(r.ok()).toBe(true);
+    }
+    const s = await request.get('/data/ground/stands.json');
+    const j = await s.json();
+    expect(Object.keys(j.airports ?? j.stands).length).toBeGreaterThan(50);
+  });
+
   test('analytics labels its sample as simulated', async ({ page }) => {
     await ready(page);
     await worldReady(page);

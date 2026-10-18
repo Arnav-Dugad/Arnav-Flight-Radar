@@ -19,6 +19,7 @@
     "data:media": "node scripts/build-media.mjs",
     "data:ground": "node scripts/build-ground.mjs",
     "data:airspace": "node scripts/build-airspace.mjs",
+    "data:sim": "node scripts/build-simdata.mjs",
     "brand": "node brand/scripts/build-logo.mjs",
     "budget": "node scripts/check-budget.mjs",
     "deploy": "npm run build && wrangler deploy",

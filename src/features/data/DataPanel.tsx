@@ -25,17 +25,18 @@ export function DataPanel() {
         <Section title="A simulated world">
           <div className="glass-2 space-y-2 rounded-[16px] px-3.5 py-3 text-[12.5px] leading-relaxed text-fg-2">
             <p>
-              Every aircraft on this map is <strong className="text-fg">simulated</strong>. Real airlines fly real aircraft types between real airports on great-circle routes,
-              gate to gate. That includes stands, taxiing, departure queues, winds aloft, holding, diversions, approaches and landings.
+              Every aircraft on this map is <strong className="text-fg">simulated</strong>. Real airlines fly real aircraft types between real airports, gate to gate: stands at the
+              right terminal, named taxiways and runway crossings, wake-separated departure queues, departure and arrival procedures over real navaids, North Atlantic tracks,
+              winds aloft, holding, emergencies, diversions, approaches and landings. Military, air-ambulance, offshore, general-aviation and glider traffic fly too.
             </p>
             <p>
-              Flights, flight numbers, registrations, schedules and positions are <strong className="text-fg">invented</strong>. Use this site to explore how air traffic works,
-              not to track a real flight.
+              Flights, flight numbers, registrations, schedules, procedure names, track messages, load sheets, radio transcripts and positions are{' '}
+              <strong className="text-fg">invented</strong>. Use this site to explore how air traffic works, not to track a real flight.
             </p>
             <p>
-              <strong className="text-fg">Real inputs:</strong> airports and runways (OurAirports), airline names (OpenFlights), live weather (NOAA METAR/TAF) that sets the
-              runway in use and capacity, precipitation radar (RainViewer), airspace (FAA, openAIP), stands and taxiways (OpenStreetMap), and logos and photos from Wikimedia
-              Commons.
+              <strong className="text-fg">Real inputs:</strong> airports, runways, navaids, radio frequencies, heliports and gliding sites (OurAirports), airline names
+              (OpenFlights), live weather (NOAA METAR and TAF) that sets the runway in use and capacity, precipitation radar (RainViewer), airspace (FAA, openAIP), stands,
+              named taxiways, holding points and terminals (OpenStreetMap), and logos and photos from Wikimedia Commons.
             </p>
           </div>
         </Section>

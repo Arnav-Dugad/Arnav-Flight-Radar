@@ -15,6 +15,7 @@ import { applyAircraftSettings, installAircraftLayers, startAircraftEngine, AIRC
 import { bindAirportInteraction, installAirportLayers, AIRPORT_LAYERS } from './airportsLayer';
 import { bindExtraOverlays, installExtraOverlays } from './extraOverlays';
 import { bindOpsOverlays, installOpsOverlays } from './opsOverlays';
+import { bindWorldOverlays, installWorldOverlays, resetWorldOverlays } from './worldOverlays';
 import { bindMeasure, bindRadar, bindRings, bindWeather, installMeasure, installRadar, installRings, installWeather, refreshWeather } from './overlays';
 import { cameraFlags, viewOffset, viewPadding } from './camera';
 import { buildStyle, TERRAIN_SOURCE } from './styles';
@@ -46,6 +47,8 @@ function installAll(m: MlMap) {
   void installRadar(m);
   installExtraOverlays(m);
   installOpsOverlays(m);
+  installWorldOverlays(m);
+  resetWorldOverlays();
   installUserLocation(m);
   applyTerrain(m);
   engine?.markDirty();
@@ -59,6 +62,32 @@ function applyTerrain(m: MlMap) {
   } catch (e) {
     console.warn('terrain unavailable', e);
   }
+}
+
+/**
+ * Touch gestures tuned for phones and tablets: smooth flick momentum (heavier on the
+ * globe so it spins like a real one), two-finger rotate and pitch, and no accidental
+ * rotation while pinch-zooming.
+ */
+function bindTouch(m: MlMap): () => void {
+  const coarse = window.matchMedia?.('(pointer: coarse)').matches ?? false;
+  const apply = () => {
+    const globe = ui().projection === 'globe' && m.getZoom() < 4;
+    m.dragPan.enable({ linearity: globe ? 0.15 : 0.3, maxSpeed: globe ? 2600 : 1600, deceleration: globe ? 1100 : 2400 });
+  };
+  apply();
+  m.touchZoomRotate.enable();
+  m.touchZoomRotate.enableRotation();
+  m.touchPitch.enable();
+  if (coarse) m.getCanvas().style.touchAction = 'none';
+  const unsub = useUI.subscribe((s, p) => {
+    if (s.projection !== p.projection) apply();
+  });
+  m.on('zoomend', apply);
+  return () => {
+    unsub();
+    m.off('zoomend', apply);
+  };
 }
 
 export function createMap(container: HTMLElement): MlMap {
@@ -78,7 +107,7 @@ export function createMap(container: HTMLElement): MlMap {
     pitch: url.pitch ?? 0,
     maxPitch: 78,
     minZoom: 1,
-    maxZoom: 17.5,
+    maxZoom: 19,
     attributionControl: false,
     fadeDuration: 180,
     renderWorldCopies: true,
@@ -108,6 +137,8 @@ export function createMap(container: HTMLElement): MlMap {
     cleanups.push(bindRadar(m));
     cleanups.push(bindExtraOverlays(m));
     cleanups.push(bindOpsOverlays(m));
+    cleanups.push(bindWorldOverlays(m));
+    cleanups.push(bindTouch(m));
     cleanups.push(bindUrlSync(m));
     cleanups.push(bindAutoRotate(m));
     cleanups.push(bindCursor(m));

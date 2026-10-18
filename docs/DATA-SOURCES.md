@@ -51,3 +51,20 @@ The ICAO 24-bit address block identifies the state that assigns addresses (`shar
 The simulator draws each invented address from the airline's country block, so the registry flag
 matches the registration prefix. Only well-established blocks are listed; unknown blocks return
 nothing instead of a guess.
+
+## Simulator reference files
+
+`npm run data:sim` (`scripts/build-simdata.mjs`) derives four compact files in `public/data/sim`
+from the cached OurAirports CSVs (public domain; `navaids.csv` is downloaded once with an
+identifying User-Agent and cached like the others). They are generated at build time, so nothing
+is requested from OurAirports at runtime.
+
+| File | Contents | Used for |
+| --- | --- | --- |
+| `navaids.json` | Every VOR, VOR-DME and VORTAC worldwide, plus NDBs within 60 NM of a large airport: ident, name, kind, position, frequency, country. | Procedure-style routes: departure exit fixes, arrival entry and holding fixes, en-route waypoints. These are real beacons, but the routes built on them are invented, not published SIDs/STARs. |
+| `frequencies.json` | Published tower, ground, approach, departure, ATIS, delivery and centre frequencies (at most 3 per kind, VHF only) for large and medium airports. | Real frequencies in the simulated radio transcript. The transmissions are invented. |
+| `heliports.json` | City heliports (within 40 NM of a large airport, at most 15 per airport), hospital helipads (within 60 NM, at most 30 per airport) and offshore platforms, classified by name and location. | Simulated helicopter, HEMS and offshore-shuttle traffic. |
+| `gliding.json` | Gliding sites, found by name ("Segelfluggelände", "Gliding Club", "vol à voile"…) or by OurAirports keywords. | Simulated glider traffic. |
+
+The classification is heuristic and some sites may be in the wrong group. The files are reference
+data for the simulation only and must not be used for navigation.

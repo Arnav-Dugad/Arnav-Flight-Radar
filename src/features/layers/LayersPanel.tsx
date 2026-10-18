@@ -158,6 +158,24 @@ export function LayersPanel() {
             onChange={(v) => s.set('showDisruptions', v)}
           />
           <Toggle
+            label="North Atlantic tracks"
+            description="The day's simulated organised track system: westbound tracks by day, eastbound along the jet stream by night, with how many flights are on each."
+            checked={s.showNatTracks}
+            onChange={(v) => s.set('showNatTracks', v)}
+          />
+          <Toggle
+            label="3D buildings"
+            description="OpenStreetMap buildings and terminals extruded to their mapped heights when the map is tilted (zoom 14+)."
+            checked={s.show3dBuildings}
+            onChange={(v) => s.set('show3dBuildings', v)}
+          />
+          <Toggle
+            label="3D aircraft"
+            description="True-scale 3D models of each aircraft when you zoom in close or fly the 3D chase view."
+            checked={s.show3dModels}
+            onChange={(v) => s.set('show3dModels', v)}
+          />
+          <Toggle
             label="Day & night"
             description="Sunlit and dark sides of the Earth with civil, nautical and astronomical twilight. Computed from the simulation clock, with the Moon and its phase."
             checked={s.showDayNight}

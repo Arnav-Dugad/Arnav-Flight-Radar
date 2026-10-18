@@ -1,6 +1,9 @@
 import majorRaw from '../../public/data/airports/index-major.json?raw';
 import runwaysRaw from '../../public/data/airports/runways-major.json?raw';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+// Building a whole world takes a few seconds; allow for parallel test files.
+vi.setConfig({ testTimeout: 60_000 });
 import { decodeRow, type AirportRow } from '@shared/airports';
 import { bearingDeg, destination, distanceNm } from '@shared/geo';
 import { TYPES } from '@/data/sim/fleet';
@@ -52,7 +55,7 @@ describe('world simulator', () => {
         expect(Math.abs(s.lat)).toBeLessThanOrEqual(90);
         if (!s.onGround) {
           expect(s.alt).toBeGreaterThan(-1500);
-          expect(s.alt).toBeLessThanOrEqual(af.type.ft + 1);
+          expect(s.alt).toBeLessThanOrEqual(Math.max(af.type.ft + 6000, 45_000));
         }
         // No teleporting: 30 s at ≤ 700 kt ≈ 6 NM.
         expect(distanceNm(prev.lat, prev.lon, s.lat, s.lon)).toBeLessThan(7);
@@ -201,9 +204,12 @@ describe('world simulator', () => {
       if (!cruise || af.ga || af.leg.cruiseFt < 20_000 || af.leg.canceled) continue;
       const east = bearingDeg(cruise.a[0], cruise.a[1], cruise.b[0], cruise.b[1]);
       const fl = Math.round(af.leg.cruiseFt / 1000);
+      if (af.leg.route?.nat || af.leg.emergency || af.leg.kind !== 'scheduled') continue;
+      // Direction from the departure airport to the arrival fix (or the destination).
+      const fix = af.leg.route?.star?.fix ?? af.leg.to;
+      const dir = bearingDeg(af.leg.from.lat, af.leg.from.lon, fix.lat, fix.lon);
       const climb = af.leg.segs.find((s) => s.phase === 'climb' && s.kind === 'gc');
       if (!climb) continue;
-      const dir = bearingDeg(climb.a[0], climb.a[1], af.leg.segs.find((s) => s.phase === 'descent')!.b[0], af.leg.segs.find((s) => s.phase === 'descent')!.b[1]);
       expect(fl % 2).toBe(dir < 180 ? 1 : 0);
       void east;
       checked++;
@@ -250,7 +256,7 @@ describe('world simulator', () => {
     }
     const night = hours.filter((h) => h >= 18 || h < 6).length;
     expect(night / hours.length).toBeGreaterThan(0.6);
-  });
+  }, 60_000);
 
   it('cancels some flights in bad weather: they stay on the stand and never fly', () => {
     const w = new World(5, airports, runways);

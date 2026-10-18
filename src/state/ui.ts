@@ -17,7 +17,8 @@ export type PanelId =
   | 'spotter'
   | 'credits'
   | 'airline'
-  | 'widgets';
+  | 'widgets'
+  | 'type';
 
 export type Projection = 'mercator' | 'globe';
 
@@ -42,6 +43,8 @@ interface UIState {
   selectedAirport: string | null;
   /** ICAO code of the airline shown in the airline panel. */
   selectedAirline: string | null;
+  /** ICAO type designator shown in the aircraft-type panel. */
+  selectedType: string | null;
   following: boolean;
   /** 3D chase view: low, tilted, heading-up camera behind the followed aircraft. */
   chase: boolean;
@@ -66,6 +69,7 @@ interface UIState {
   announce: (msg: string) => void;
   selectAirport: (ident: string | null) => void;
   selectAirline: (icao: string | null) => void;
+  selectType: (code: string | null) => void;
   setFollowing: (on: boolean) => void;
   setFollowPaused: (on: boolean) => void;
   setSearchOpen: (on: boolean) => void;
@@ -93,6 +97,7 @@ export const useUI = create<UIState>()((set, get) => ({
   announcement: '',
   selectedAirport: null,
   selectedAirline: null,
+  selectedType: null,
   following: false,
   chase: false,
   followPaused: false,
@@ -153,6 +158,12 @@ export const useUI = create<UIState>()((set, get) => ({
       get().openPanel('airline');
       set({ selectedAirline: icao, sheet: 'half' });
     } else set({ selectedAirline: null });
+  },
+  selectType: (code) => {
+    if (code) {
+      get().openPanel('type');
+      set({ selectedType: code, sheet: 'half' });
+    } else set({ selectedType: null });
   },
   setFollowing: (on) => set({ following: on, followPaused: false, ...(on ? {} : { chase: false }) }),
   setFollowPaused: (on) => set({ followPaused: on }),
