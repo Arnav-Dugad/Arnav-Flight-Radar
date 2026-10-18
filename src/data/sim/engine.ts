@@ -1,4 +1,4 @@
-// Demo-world flight simulator. Generates an entire planet of simulated traffic:
+// World flight simulator. Generates an entire planet of simulated traffic:
 // airframes cycle through stand → taxi → take-off → climb → cruise → descent →
 // arrival (vectors / holding) → final → landing → taxi → turnaround, on great-circle
 // routes between real airports, using the runway each airport has "in use".
@@ -12,12 +12,13 @@
 //    stands and taxi along real taxiways.
 //  • Winds aloft change ground speed, so estimated arrival times move in flight.
 //
-// EVERYTHING produced here is simulated and is only ever shown in demo mode.
+// EVERYTHING produced here is simulated, and the site labels it as such.
 
 import { bearingDeg, destination, distanceNm, intermediatePoint } from '@shared/geo';
 import { icaoBlock } from '@shared/icaoCountry';
 import type { AirportIndexEntry } from '@shared/types';
-import { AIRLINES, ALLIANCES, GA_COUNTRIES, GA_TYPES, TYPES, type AirlineProfile, type TypeInfo } from './fleet';
+import { ALL_AIRLINES as AIRLINES, ALL_ALLIANCES as ALLIANCES, CARGO } from './airlines';
+import { GA_COUNTRIES, GA_TYPES, TYPES, type AirlineProfile, type TypeInfo } from './fleet';
 
 // ---------------------------------------------------------------- random
 
@@ -80,6 +81,8 @@ export interface Stand {
 
 export interface SimWeather {
   category?: 'VFR' | 'MVFR' | 'IFR' | 'LIFR';
+  /** Prevailing visibility in statute miles (low-visibility procedures below 0.75). */
+  visSm?: number;
   windDir?: number;
   windKt?: number;
   gustKt?: number;
@@ -140,7 +143,7 @@ class WeightedPool {
 
 // ---------------------------------------------------------------- flights
 
-export type Phase = 'parked' | 'taxi' | 'takeoff' | 'climb' | 'cruise' | 'descent' | 'holding' | 'approach' | 'landing';
+export type Phase = 'parked' | 'pushback' | 'taxi' | 'takeoff' | 'climb' | 'cruise' | 'descent' | 'holding' | 'approach' | 'goaround' | 'landing';
 
 export interface Seg {
   t0: number;
@@ -156,6 +159,8 @@ export interface Seg {
   spd0: number; // ground speed, kt
   spd1: number;
   ease?: 'accel' | 'decel';
+  /** Fixed nose direction (push-back, holding short, lined up). */
+  nose?: number;
   /** Wind on this segment (direction it blows FROM, speed) and its along-track component. */
   wind?: { dir: number; kt: number; comp: number };
 }
@@ -173,6 +178,9 @@ export interface Leg {
   from: SimAirport;
   to: SimAirport; // where it actually lands
   divertedFrom?: SimAirport; // original destination when diverted
+  /** Canceled flight: the aircraft stays on its stand; this was the planned destination. */
+  canceledTo?: SimAirport;
+  canceled?: boolean;
   std: number; // scheduled off-block (sim ms)
   sta: number; // scheduled on-block
   tOff: number; // actual off-block
@@ -303,7 +311,7 @@ const tailwind = (w: { dir: number; kt: number }, trk: number) => w.kt * Math.co
 
 // ---------------------------------------------------------------- world
 
-export class DemoWorld {
+export class World {
   readonly rng: Rng;
   airports = new Map<string, SimAirport>();
   private scheduledPool!: WeightedPool;
@@ -510,8 +518,13 @@ export class DemoWorld {
    * (solar time) slip to the morning wave. Long-haul and cargo keep flying at night.
    */
   private curfew(af: Airframe, from: SimAirport, tOff: number): number {
-    const night = af.type.cls === 'wide' || af.airline?.fleet.every(([t]) => TYPES[t]?.cls === 'wide') ? 0.3 : 0.9;
     const localH = (((tOff / H + from.lon / 15) % 24) + 24) % 24;
+    // All-cargo operators run night banks (hub sorts around midnight).
+    if (af.airline && CARGO.has(af.airline.icao)) {
+      if (localH >= 6 && localH < 18 && this.rng.next() < 0.75) return tOff + (19 - localH + this.rng.range(0, 7)) * H;
+      return tOff;
+    }
+    const night = af.type.cls === 'wide' || af.airline?.fleet.every(([t]) => TYPES[t]?.cls === 'wide') ? 0.3 : 0.9;
     if (localH >= 5 || this.rng.next() > night) return tOff;
     // Released into the morning bank, spread over about three hours.
     return tOff + (5 - localH) * H + this.rng.range(0, 1) ** 1.6 * 180 * MIN;
@@ -573,14 +586,14 @@ export class DemoWorld {
         if ((this.standBusy.get(key) ?? 0) <= from) {
           this.standBusy.set(key, until);
           const s = a.stands[k]!;
-          const r: StandRef = { pt: [s.lat, s.lon] };
+          const r: StandRef = { pt: [s.lat, s.lon], hdg: s.hdg ?? bearingDeg(s.lat, s.lon, a.lat, a.lon) };
           if (s.ref) r.ref = s.ref;
-          if (s.hdg !== undefined) r.hdg = s.hdg;
           return r;
         }
       }
     }
-    return { pt: destination(a.lat, a.lon, a.inUse.hdg + 90 + this.rng.range(-50, 50), this.rng.range(0.15, 0.55)) };
+    const pt = destination(a.lat, a.lon, a.inUse.hdg + 90 + this.rng.range(-50, 50), this.rng.range(0.15, 0.55));
+    return { pt, hdg: bearingDeg(pt[0], pt[1], a.lat, a.lon) };
   }
 
   private holdStand(a: SimAirport, s: StandRef, until: number) {
@@ -597,7 +610,8 @@ export class DemoWorld {
     const runways = Math.max(1, Math.round(a.runways.length / 2));
     let cap = a.large ? (runways >= 3 ? 60 : runways === 2 ? 44 : 32) : 22;
     const w = a.weather;
-    if (w?.category === 'IFR') cap *= 0.85;
+    if (w?.visSm !== undefined && w.visSm < 0.75) cap *= 0.55; // low-visibility procedures: wider spacing
+    else if (w?.category === 'IFR') cap *= 0.85;
     else if (w?.category === 'LIFR') cap *= 0.62;
     if ((w?.gustKt ?? 0) >= 30) cap *= 0.8;
     if (kind === 'dep') cap *= 1.15;
@@ -653,6 +667,28 @@ export class DemoWorld {
   }
 
   // -------------------------------------------------------------- taxi routing
+
+  /**
+   * First real taxiway (OpenStreetMap) leaving the runway beyond the minimum roll-out:
+   * returns the point on the centreline where the aircraft turns off, or null.
+   */
+  private runwayExit(ident: string, thr: Pt, hdg: number, lengthNm: number, minRoll: number): Pt | null {
+    const g = this.ground.get(ident);
+    if (!g) return null;
+    const k = Math.cos((thr[0] * Math.PI) / 180);
+    const h = (hdg * Math.PI) / 180;
+    const ux = Math.sin(h);
+    const uy = Math.cos(h);
+    let best = Infinity;
+    for (const n of g.nodes) {
+      const x = (n[1] - thr[1]) * 60 * k;
+      const y = (n[0] - thr[0]) * 60;
+      const along = x * ux + y * uy;
+      const cross = Math.abs(x * uy - y * ux);
+      if (cross < 0.07 && along >= minRoll && along <= lengthNm * 0.95 && along < best) best = along;
+    }
+    return Number.isFinite(best) ? destination(thr[0], thr[1], hdg, best) : null;
+  }
 
   private taxiRoute(ident: string, from: Pt, to: Pt): Pt[] | null {
     const g = this.ground.get(ident);
@@ -824,11 +860,26 @@ export class DemoWorld {
         const wait = this.peekSlot(to, 'arr', est) - est;
         if (wait > 8 * MIN) groundDelay = wait - 4 * MIN;
       }
-      push({ phase: 'parked', kind: 'line', a: start.pt, b: start.pt, alt0: ground, alt1: ground, spd0: 0, spd1: 0 }, MIN + groundDelay);
-      taxi(from.ident, start.pt, thr);
+      push({ phase: 'parked', kind: 'line', a: start.pt, b: start.pt, alt0: ground, alt1: ground, spd0: 0, spd1: 0, nose: start.hdg ?? 0 }, MIN + groundDelay);
+      // Push-back: roll backwards off the stand with the nose still pointing in.
+      const nose = start.hdg ?? bearingDeg(start.pt[0], start.pt[1], from.lat, from.lon);
+      const pushed = light ? start.pt : destination(start.pt[0], start.pt[1], nose + 180, 0.035);
+      if (!light) push({ phase: 'pushback', kind: 'line', a: start.pt, b: pushed, alt0: ground, alt1: ground, spd0: 3, spd1: 3, nose }, 55_000);
+      // Taxi to the holding point beside the runway, wait for the slot, line up.
+      const route = this.taxiRoute(from.ident, pushed, thr);
+      let holdPt: Pt;
+      if (route && route.length > 3) {
+        holdPt = route[route.length - 2]!;
+        pathSeg('taxi', route.slice(0, -1), ground, ground, 16, 16);
+      } else {
+        holdPt = destination(thr[0], thr[1], dep.hdg + 90, 0.07);
+        push({ phase: 'taxi', kind: 'line', a: pushed, b: holdPt, alt0: ground, alt1: ground, spd0: 16, spd1: 16 }, segDuration(Math.max(0.3, distanceNm(pushed[0], pushed[1], holdPt[0], holdPt[1])), 16));
+      }
       const ready = time + 30_000;
       const slot = airline ? this.reserveSlot(from, 'dep', ready) : ready;
-      push({ phase: 'taxi', kind: 'line', a: thr, b: thr, alt0: ground, alt1: ground, spd0: 0, spd1: 0 }, Math.max(20_000, slot - time));
+      push({ phase: 'taxi', kind: 'line', a: holdPt, b: holdPt, alt0: ground, alt1: ground, spd0: 0, spd1: 0, nose: bearingDeg(holdPt[0], holdPt[1], thr[0], thr[1]) }, Math.max(20_000, slot - time - 35_000));
+      push({ phase: 'taxi', kind: 'line', a: holdPt, b: thr, alt0: ground, alt1: ground, spd0: 8, spd1: 4 }, 25_000);
+      push({ phase: 'taxi', kind: 'line', a: thr, b: thr, alt0: ground, alt1: ground, spd0: 0, spd1: 0, nose: dep.hdg }, 10_000);
       const rollNm = light ? 0.25 : Math.min(dep.lengthNm * 0.6, 1.3);
       const lift = destination(thr[0], thr[1], dep.hdg, rollNm);
       const vr = light ? 65 : t.cls === 'wide' ? 160 : 145;
@@ -858,6 +909,14 @@ export class DemoWorld {
       const need = (cruiseFt - climbOutAlt) * climbNmPerFt + (cruiseFt - first.entryAlt) * descNmPerFt;
       if (need > budget) cruiseFt = Math.max(climbOutAlt + 1000, climbOutAlt + (budget * (cruiseFt - climbOutAlt)) / Math.max(need, 1));
       cruiseFt = light ? Math.round(cruiseFt / 500) * 500 : Math.max(climbOutAlt + 1000, Math.round(cruiseFt / 1000) * 1000);
+      if (!light && cruiseFt >= 10_000) {
+        // Semicircular rule: eastbound odd flight levels, westbound even (RVSM above FL290).
+        const east = bearingDeg(dFix[0], dFix[1], first.entry[0], first.entry[1]) < 180;
+        let k = Math.round(cruiseFt / 1000);
+        if (east && k % 2 === 0) k -= 1;
+        if (!east && k % 2 === 1) k -= 1;
+        cruiseFt = Math.max(climbOutAlt + 1000, k * 1000);
+      }
       let entry = first.entry;
       let entryAlt = first.entryAlt;
       if (short) {
@@ -951,9 +1010,23 @@ export class DemoWorld {
       } else pathSeg('approach', vectors, entryAlt, fafAlt, light ? 90 : 230, light ? 80 : 180, vecDur);
 
       const vapp = light ? 70 : t.cls === 'wide' ? 150 : 140;
+      const dw = dest.weather;
+      const goAround = airline && !light && this.rng.next() < 0.004 + ((dw?.gustKt ?? 0) >= 30 ? 0.03 : 0) + (dw?.category === 'LIFR' ? 0.02 : 0);
+      if (goAround) {
+        // Unstable or blocked: go around from short final, fly a circuit, try again.
+        const short = P(0.6, 0);
+        push({ phase: 'approach', kind: 'line', a: faf, b: short, alt0: fafAlt, alt1: dest.elev + 200, spd0: vapp + 15, spd1: vapp }, segDuration(finalNm - 0.6, vapp + 7));
+        const upwind = P(-4, 0);
+        push({ phase: 'goaround', kind: 'line', a: short, b: upwind, alt0: dest.elev + 200, alt1: dest.elev + 3000, spd0: vapp + 10, spd1: 190 }, segDuration(4.6, 170));
+        const side = this.rng.next() < 0.5 ? 1 : -1;
+        const circuit = smooth([upwind, P(-6, 4 * side), P(4, 5 * side), P(turnOn + 3, 5 * side), P(turnOn, 0), faf], 3);
+        pathSeg('goaround', circuit, dest.elev + 3000, fafAlt, 200, 180);
+      }
       push({ phase: 'approach', kind: 'line', a: faf, b: athr, alt0: fafAlt, alt1: dest.elev + 50, spd0: vapp + 15, spd1: vapp }, segDuration(finalNm, vapp + 7));
-      const rollOutNm = light ? 0.2 : Math.min(arr.lengthNm * 0.5, 1);
-      const stop = destination(athr[0], athr[1], arr.hdg, rollOutNm);
+      const minRoll = light ? 0.2 : t.cls === 'wide' ? 0.85 : 0.6;
+      const exit = light ? null : this.runwayExit(dest.ident, athr, arr.hdg, arr.lengthNm, minRoll);
+      const rollOutNm = exit ? distanceNm(athr[0], athr[1], exit[0], exit[1]) : light ? 0.2 : Math.min(arr.lengthNm * 0.5, 1);
+      const stop = exit ?? destination(athr[0], athr[1], arr.hdg, rollOutNm);
       push({ phase: 'landing', kind: 'line', a: athr, b: stop, alt0: ground, alt1: ground, spd0: vapp, spd1: 20, ease: 'decel' }, segDuration(rollOutNm, (vapp + 20) / 2));
       const tOnGuess = time + 6 * MIN;
       standTo = this.takeStand(dest, tOnGuess - 5 * MIN, tOnGuess + af.turnMs + 30 * MIN, !airline);
@@ -975,6 +1048,9 @@ export class DemoWorld {
       flightIata = fn.iata;
       codeshares = this.codeshares(af, from, to, fn.num);
     }
+    // Cancellations: rare, more likely when either end has bad weather.
+    const wxBad = (a: SimAirport) => (a.weather?.category === 'LIFR' ? 0.05 : a.weather?.category === 'IFR' ? 0.012 : 0) + ((a.weather?.gustKt ?? 0) >= 40 ? 0.04 : 0);
+    const cancel = !!af.airline && !heli && this.rng.next() < 0.004 + wxBad(from) + wxBad(to);
     const leg: Leg = {
       flight,
       codeshares,
@@ -994,6 +1070,17 @@ export class DemoWorld {
     };
     if (flightIata) leg.flightIata = flightIata;
     if (divertedFrom) leg.divertedFrom = divertedFrom;
+    if (cancel) {
+      // Keep the schedule for the boards, but the aircraft never leaves its stand.
+      leg.canceled = true;
+      leg.canceledTo = dest;
+      leg.to = from;
+      leg.standTo = start;
+      leg.segs = [{ t0: tOff, t1: leg.tOn, phase: 'parked', kind: 'line', a: start.pt, b: start.pt, alt0: ground, alt1: ground, spd0: 0, spd1: 0 }];
+      leg.tTakeoff = leg.tLand = leg.tOn;
+      leg.holdMs = 0;
+      delete leg.divertedFrom;
+    }
     return leg;
   }
 
@@ -1006,7 +1093,7 @@ export class DemoWorld {
         const tOff = this.curfew(af, prev.to, prev.tOn + af.turnMs);
         af.prev = prev;
         // A diverted aircraft returns to where it was meant to go.
-        const next = prev.divertedFrom ?? this.chooseDestination(af, prev.to);
+        const next = prev.canceledTo ?? prev.divertedFrom ?? this.chooseDestination(af, prev.to);
         af.leg = this.buildLeg(af, prev.to, next === prev.to ? this.chooseDestination(af, prev.to) : next, tOff, prev.standTo);
         af.squawk = af.ga ? af.ga.squawk : this.squawkFor();
       }
@@ -1037,6 +1124,10 @@ export class DemoWorld {
       const s = leg.standTo;
       return { lat: s.pt[0], lon: s.pt[1], gs: 0, trk: s.hdg ?? (leg.to.inUse.hdg + 90) % 360, vr: 0, onGround: true, phase: 'parked', emit: now - leg.tOn < 15 * MIN };
     }
+    if (leg.canceled) {
+      const p = leg.stand;
+      return { lat: p.pt[0], lon: p.pt[1], gs: 0, trk: p.hdg ?? (leg.from.inUse.hdg + 90) % 360, vr: 0, onGround: true, phase: 'parked', emit: false };
+    }
     const i = this.segAt(leg, now);
     const s = leg.segs[i]!;
     const f = s.t1 > s.t0 ? Math.min(1, Math.max(0, (now - s.t0) / (s.t1 - s.t0))) : 1;
@@ -1054,6 +1145,7 @@ export class DemoWorld {
       // Holding short / lined up: face the runway direction.
       trk = leg.from.inUse.hdg;
     } else trk = leg.stand.hdg ?? (leg.from.inUse.hdg + 90) % 360;
+    if (s.nose !== undefined) trk = s.nose;
     const onGround = Number.isNaN(s.alt0);
     let gs = s.spd0 + (s.spd1 - s.spd0) * f;
     if (s.kind === 'path' && s.phase === 'holding') gs = (s.cum!.at(-1)! / Math.max(1e-6, (s.t1 - s.t0) / H)) * (0.97 + 0.03 * Math.sin(f * 40));

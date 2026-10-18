@@ -5,12 +5,6 @@ import type { Attribution, ProviderInfo } from '../shared/types';
 
 export const USER_AGENT = 'ArnavFlightRadar/1.0 (+https://github.com/Arnav-Dugad/Arnav-Flight-Radar; personal non-commercial)';
 
-export const ADSBFI_ATTRIBUTION: Attribution = {
-  name: 'adsb.fi',
-  url: 'https://adsb.fi',
-  license: 'adsb.fi open data — personal, non-commercial use',
-};
-
 export const AWC_ATTRIBUTION: Attribution = {
   name: 'NOAA Aviation Weather Center',
   url: 'https://aviationweather.gov',
@@ -19,14 +13,18 @@ export const AWC_ATTRIBUTION: Attribution = {
 
 export const PROVIDERS: ProviderInfo[] = [
   {
-    id: 'adsbfi',
-    name: 'adsb.fi open data',
+    id: 'simulation',
+    name: 'Simulated air traffic',
     kind: 'aircraft',
     enabled: true,
-    scope: 'Regional queries up to 250 NM radius around a point, plus single-aircraft lookups. Coverage depends on the volunteer feeder network.',
-    limits: 'Public API: 1 request per second. This site enforces one global request every ≥ 1.1 s through a single coordinator and shares each regional snapshot between all visitors.',
-    attribution: ADSBFI_ATTRIBUTION,
-    terms: 'Personal, non-commercial use only. No resale or licensing. Data provided as-is. Global snapshots are not used.',
+    scope: 'Every aircraft is simulated in your browser: real airlines, aircraft types and airports; invented flights.',
+    limits: 'No external aircraft data is used.',
+    attribution: {
+      name: 'Arnav Flight Radar simulation',
+      url: 'https://github.com/Arnav-Dugad/Arnav-Flight-Radar',
+      license: 'Simulated data',
+    },
+    terms: 'Flights, registrations, schedules and positions are invented; not for tracking real flights.',
   },
   {
     id: 'aviationweather',
@@ -87,16 +85,6 @@ export const PROVIDERS: ProviderInfo[] = [
     terms: 'Attribution required. Not for operational use.',
   },
   {
-    id: 'planespotters',
-    name: 'Planespotters.net Photo API',
-    kind: 'aircraft',
-    enabled: true,
-    scope: 'Airframe photos looked up by ICAO hex and by registration, when available. Never for LADD/PIA aircraft.',
-    limits: 'Free, keyless, reasonable use. Requested by the viewer’s browser when an aircraft is opened.',
-    attribution: { name: 'Planespotters.net', url: 'https://www.planespotters.net/photo/api', license: 'Photos © their photographers' },
-    terms: 'Photographer credited next to each photo; thumbnail links to the photo page; images never stored, proxied or re-hosted.',
-  },
-  {
     id: 'openflights',
     name: 'OpenFlights airline database',
     kind: 'airports',
@@ -131,7 +119,7 @@ export const PROVIDERS: ProviderInfo[] = [
     name: 'OpenStreetMap stands & taxiways',
     kind: 'map',
     enabled: true,
-    scope: 'Parking positions and taxiway networks at the busiest demo hubs (demo mode only).',
+    scope: 'Parking positions and taxiway networks at the 58 busiest simulated hubs.',
     limits: 'Fetched occasionally via Overpass with a 10-minute budget; static files at runtime.',
     attribution: { name: 'OpenStreetMap contributors', url: 'https://www.openstreetmap.org/copyright', license: 'ODbL 1.0' },
     terms: 'Derived files are offered under the ODbL.',
@@ -155,25 +143,5 @@ export const PROVIDERS: ProviderInfo[] = [
     limits: 'Raster tiles to zoom 6, requested by the browser while the layer is on.',
     attribution: { name: 'NASA GIBS', url: 'https://earthdata.nasa.gov/gibs', license: 'NASA open data' },
     terms: 'A climatology (where lightning is common), never shown as live lightning.',
-  },
-  {
-    id: 'adsblol',
-    name: 'adsb.lol',
-    kind: 'aircraft',
-    enabled: false,
-    scope: 'Not integrated.',
-    limits: 'Operator asks to be contacted before production use.',
-    attribution: { name: 'adsb.lol', url: 'https://adsb.lol', license: 'ODbL' },
-    terms: 'Disabled until the operator approves production use. Would not be mixed with adsb.fi data.',
-  },
-  {
-    id: 'opensky',
-    name: 'OpenSky Network',
-    kind: 'aircraft',
-    enabled: false,
-    scope: 'Not integrated.',
-    limits: 'Operational use requires a prior written agreement.',
-    attribution: { name: 'OpenSky Network', url: 'https://opensky-network.org', license: 'Custom terms' },
-    terms: 'Disabled: no written agreement in place.',
   },
 ];

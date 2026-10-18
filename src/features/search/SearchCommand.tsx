@@ -5,13 +5,12 @@ import { createPortal } from 'react-dom';
 import { searchAirports, type SearchableAirport } from '@shared/airports';
 import { classifyAircraft } from '@shared/classify';
 import { formatLatLon, parseCoordinates } from '@shared/geo';
-import { classifyAircraftQuery, type AircraftQueryKind } from '@shared/query';
 import type { Aircraft, AirportIndexEntry, Country } from '@shared/types';
 import { AircraftGlyph, AirportIcon, GlobeIcon, PlaneIcon } from '@/components/icons';
-import { Kbd, Spinner } from '@/components/ui/Feedback';
+import { Kbd } from '@/components/ui/Feedback';
 import { HUBS, airportByCode, loadAllAirports, loadCountries, loadMajorAirports } from '@/data/airports';
-import { demoSearch, useDemo } from '@/data/demo';
-import { api } from '@/lib/api';
+import { simAirlineSearch, simSearch } from '@/data/world';
+import { AirlineLogo } from '@/features/aircraft/FlightParts';
 import { cn } from '@/lib/cn';
 import { fmtAltitude } from '@/lib/format';
 import { fitBounds, flyTo, focusAircraft } from '@/map/controller';
@@ -43,15 +42,11 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
   const [active, setActive] = useState(0);
   const [airports, setAirports] = useState<SearchableAirport[] | null>(null);
   const [countries, setCountries] = useState<Country[] | null>(null);
-  const [remote, setRemote] = useState<{ state: 'idle' | 'loading' | 'done' | 'error'; list: Aircraft[]; kind?: AircraftQueryKind; error?: string; q?: string }>({
-    state: 'idle',
-    list: [],
-  });
-  const [force, setForce] = useState<AircraftQueryKind | undefined>(undefined);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const select = useUI((s) => s.select);
   const selectAirport = useUI((s) => s.selectAirport);
+  const selectAirline = useUI((s) => s.selectAirline);
   const recents = useBookmarks((s) => s.recents);
   const addRecent = useBookmarks((s) => s.addRecent);
   const clearRecents = useBookmarks((s) => s.clearRecents);
@@ -68,35 +63,6 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
     if (q.trim().length >= 2) void loadAllAirports().then(setAirports).catch(() => undefined);
   }, [q]);
 
-  // Debounced, bounded global aircraft lookup (one request per settled query).
-  const parsed = useMemo(() => classifyAircraftQuery(q, force), [q, force]);
-  // Only identifier-like input triggers the worldwide lookup automatically: plain
-  // words ("mumbai") would waste the shared upstream budget. Chips can force it.
-  const demo = useDemo((s) => s.active);
-  const identifierLike = !demo && (!!force || /[\d-]/.test(q) || parsed?.kind === 'hex');
-  useEffect(() => {
-    if (!parsed || q.trim().length < 3 || !identifierLike) {
-      setRemote({ state: 'idle', list: [] });
-      return;
-    }
-    const ctrl = new AbortController();
-    const t = setTimeout(() => {
-      setRemote({ state: 'loading', list: [], kind: parsed.kind, q });
-      api
-        .searchAircraft(parsed.value, force, ctrl.signal)
-        .then((r) => {
-          traffic.ingestLookup(r.aircraft, r.providerNow, r.fetchedAt, r.servedAt);
-          setRemote({ state: 'done', list: r.aircraft, kind: r.interpretedAs?.kind ?? parsed.kind, q });
-        })
-        .catch((e: Error) => {
-          if (e.name !== 'AbortError') setRemote({ state: 'error', list: [], error: e.message, q });
-        });
-    }, 550);
-    return () => {
-      clearTimeout(t);
-      ctrl.abort();
-    };
-  }, [parsed, q, force, identifierLike]);
 
   const goAirport = useCallback(
     (a: AirportIndexEntry) => {
@@ -173,29 +139,42 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
     }));
     if (exactAirport) out.push(...airportResults);
 
-    // Live aircraft in the current area (instant, local)
+    // Aircraft by callsign, registration, address or type (instant, local)
     const local = [...traffic.tracks.values()]
       .map((t) => t.ac)
       .filter((a) => a.callsign?.includes(up) || a.registration?.replace(/-/g, '').includes(up.replace(/-/g, '')) || a.icao24.toUpperCase().startsWith(up) || a.aircraftType === up)
       .sort((a, b) => Number(b.callsign?.startsWith(up) ?? false) - Number(a.callsign?.startsWith(up) ?? false))
       .slice(0, 6);
     const localIds = new Set(local.map((a) => a.id));
-    local.forEach((a) => out.push(aircraftResult(a, demo ? 'Simulated aircraft' : 'Aircraft in view', altUnit, () => goAircraft(a))));
+    local.forEach((a) => out.push(aircraftResult(a, 'Flights', altUnit, () => goAircraft(a))));
 
-    // Demo: simulated flights by IATA/ICAO flight number (e.g. "BA117", "UAE5").
-    if (demo) {
-      for (const r of demoSearch(query, 6)) {
-        const t = traffic.get(r.id);
-        if (!t || localIds.has(r.id)) continue;
-        out.push({
-          key: `demo-${r.id}`,
-          group: 'Simulated flights',
-          icon: <PlaneIcon size={17} />,
-          title: r.label,
-          sub: r.sub,
-          run: () => goAircraft(t.ac),
-        });
-      }
+    // Flights by IATA/ICAO flight number (e.g. "BA117", "UAE5").
+    for (const r of simSearch(query, 6)) {
+      const t = traffic.get(r.id);
+      if (!t || localIds.has(r.id)) continue;
+      out.push({
+        key: `flight-${r.id}`,
+        group: 'Flights',
+        icon: <PlaneIcon size={17} />,
+        title: r.label,
+        sub: r.sub,
+        run: () => goAircraft(t.ac),
+      });
+    }
+
+    // Airlines (opens the airline page with its fleet and flights).
+    for (const al of simAirlineSearch(query, 4)) {
+      out.push({
+        key: `airline-${al.icao}`,
+        group: 'Airlines',
+        icon: <AirlineLogo icao={al.icao} code={al.iata || al.icao} size={22} name={al.name} />,
+        title: al.name,
+        sub: `${al.iata ? `${al.iata} · ` : ''}${al.icao} · ${al.airframes.toLocaleString()} aircraft`,
+        run: () => {
+          selectAirline(al.icao);
+          onClose();
+        },
+      });
     }
 
     // Airports
@@ -246,12 +225,8 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
         );
     }
 
-    // Global lookup results
-    if (remote.state === 'done' && remote.q === q) {
-      remote.list.filter((a) => !localIds.has(a.id)).forEach((a) => out.push(aircraftResult(a, 'Worldwide (adsb.fi)', altUnit, () => goAircraft(a))));
-    }
     return out;
-  }, [q, demo, recents, airports, countries, remote, altUnit, addRecent, goAirport, goAircraft, onClose, select, selectAirport]);
+  }, [q, recents, airports, countries, altUnit, addRecent, goAirport, goAircraft, onClose, select, selectAirport, selectAirline]);
 
   useEffect(() => setActive(0), [q]);
   useEffect(() => {
@@ -301,12 +276,9 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
           <input
             ref={inputRef}
             value={q}
-            onChange={(e) => {
-              setQ(e.target.value);
-              setForce(undefined);
-            }}
+            onChange={(e) => setQ(e.target.value)}
             onKeyDown={onKey}
-            placeholder="Callsign, registration, ICAO hex, airport, city, country or lat, lon"
+            placeholder="Flight, airline, airport, city, country or lat, lon"
             maxLength={60}
             spellCheck={false}
             autoComplete="off"
@@ -317,7 +289,6 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
             aria-autocomplete="list"
             className="h-[60px] min-w-0 flex-1 bg-transparent text-[16px] text-fg outline-none placeholder:text-fg-3 focus-visible:shadow-none"
           />
-          {remote.state === 'loading' && <Spinner className="text-fg-3" />}
           {q && (
             <button type="button" aria-label="Clear search" onClick={() => setQ('')} className="grid size-7 place-items-center rounded-lg text-fg-3 hover:bg-[var(--line)] hover:text-fg">
               <X size={15} />
@@ -326,29 +297,6 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
           <Kbd className="max-md:hidden">Esc</Kbd>
         </div>
 
-        {parsed && q.trim().length >= 3 && !demo && (
-          <div className="flex items-center gap-1.5 border-b border-[var(--line)] px-5 py-2 text-[11.5px] text-fg-3">
-            <span>Look up worldwide as</span>
-            {(['callsign', 'registration', 'hex', 'sqk'] as const).map((k) => {
-              const valid = !!classifyAircraftQuery(q, k);
-              const isActive = (force ?? remote.kind ?? parsed.kind) === k;
-              return (
-                <button
-                  key={k}
-                  type="button"
-                  disabled={!valid}
-                  onClick={() => setForce(k)}
-                  className={cn(
-                    'h-6 rounded-full border px-2 font-medium disabled:opacity-30',
-                    isActive ? 'border-[color-mix(in_srgb,var(--accent)_45%,transparent)] text-[var(--accent)]' : 'border-[var(--line)] hover:text-fg-2',
-                  )}
-                >
-                  {k === 'sqk' ? 'squawk' : k === 'hex' ? 'ICAO hex' : k}
-                </button>
-              );
-            })}
-          </div>
-        )}
 
         <div ref={listRef} id="search-results" role="listbox" aria-label="Search results" className="scroll-thin min-h-0 flex-1 overflow-y-auto p-2">
           {groups.map((g) => (
@@ -388,21 +336,12 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
             </div>
           ))}
 
-          {q.trim() && results.length === 0 && remote.state !== 'loading' && (
+          {q.trim() && results.length === 0 && (
             <div className="px-6 py-10 text-center">
               <p className="text-[14px] font-semibold text-fg">No matches</p>
               <p className="mt-1 text-[12.5px] text-fg-3">
-                {remote.state === 'error'
-                  ? `Worldwide lookup failed: ${remote.error}`
-                  : remote.state === 'done'
-                    ? 'No aircraft with that identifier is currently reported, and no airport or place matched.'
-                    : 'Try an airport code (LHR, VABB), a city, a callsign (BAW123) or coordinates (51.47, -0.45).'}
+                Try a flight (BA117), an airline (Emirates), an airport code (LHR), a city or coordinates (51.47, -0.45).
               </p>
-            </div>
-          )}
-          {remote.state === 'loading' && (
-            <div className="flex items-center gap-2 px-4 py-3 text-[12px] text-fg-3">
-              <Spinner size={14} /> Looking up {remote.kind === 'sqk' ? 'squawk' : remote.kind} worldwide on adsb.fi…
             </div>
           )}
         </div>
@@ -414,7 +353,7 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
           <span className="flex items-center gap-1.5">
             <Kbd>↵</Kbd> open
           </span>
-          <span className="ml-auto">Airports: OurAirports · Aircraft: adsb.fi</span>
+          <span className="ml-auto">Airports: OurAirports · Flights: simulated</span>
         </div>
       </motion.div>
     </motion.div>

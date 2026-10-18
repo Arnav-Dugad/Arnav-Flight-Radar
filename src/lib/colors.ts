@@ -84,6 +84,8 @@ export function aircraftColor(
       return a.stale ? '#7d8ea5' : '#5ce1ff';
     case 'mono':
       return '#e8f1ff';
+    case 'classic':
+      return a.onGround ? '#c9a74d' : '#ffcc33';
     default:
       if (a.onGround) return GROUND_COLOR;
       return a.alt === undefined ? UNKNOWN_COLOR : scaleColor(ALTITUDE_STOPS[palette], a.alt);
@@ -107,6 +109,9 @@ export function aircraftColorExpression(mode: ColorMode, palette: AltitudePalett
       return ['case', ['==', ['get', 'st'], 'live'], '#5ce1ff', '#7d8ea5'];
     case 'mono':
       return '#e8f1ff';
+    case 'classic':
+      // The classic flight-tracker look: every aircraft yellow, ground traffic muted.
+      return ['case', ['==', ['get', 'gnd'], 1], '#c9a74d', '#ffcc33'];
     default:
       return ['case', ['==', ['get', 'gnd'], 1], GROUND_COLOR, interp('alt', ALTITUDE_STOPS[palette])];
   }

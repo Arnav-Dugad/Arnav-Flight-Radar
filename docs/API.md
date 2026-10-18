@@ -1,88 +1,36 @@
 # API
 
-All endpoints are `GET`, return JSON, and are same-origin only (no CORS headers). Errors always use
-this shape:
+Every aircraft on the map is **simulated in the browser** (real airlines, aircraft types and
+airports; invented flights). The API serves no aircraft data and never contacts a live aircraft
+source. It covers airports, weather, the web-app manifest and service metadata.
+
+All endpoints are `GET` and same-origin only (no CORS headers). They return JSON, except the
+manifest (`application/manifest+json`). Errors always use this shape:
 
 ```json
-{ "error": { "code": "invalid_region", "message": "…", "retryAfterSec": 3 } }
+{ "error": { "code": "invalid_query", "message": "…", "retryAfterSec": 3 } }
 ```
 
 `retryAfterSec` and the `Retry-After` header appear when waiting will help. Status codes: 400
-(validation), 404, 405 (not GET), 429 (per-client limit), 502 (malformed upstream), 503 (busy,
+(validation), 404 (including any unknown route, such as the retired `/api/aircraft/*` and
+`/api/analytics/*`), 405 (not GET), 429 (per-client limit), 502 (malformed upstream), 503 (busy,
 rate-limited upstream or circuit open).
 
 ## Units
 
 | Field | Unit |
 | --- | --- |
-| `altitudeBarometric`, `altitudeGeometric`, `navAltitude*` | feet |
-| `groundSpeed`, `ias`, `tas`, `windSpeed` | knots |
-| `verticalRate` | feet per minute |
-| `track`, `trueHeading`, `navHeading`, `windDirection` | degrees true (0–360) |
-| `magHeading` | degrees magnetic |
+| `windSpeedKt`, `windGustKt` | knots |
+| `windDirDeg` | degrees true (0–360) |
+| `tempC`, `dewpointC` | degrees Celsius |
+| `altimeterHpa` | hectopascals |
+| `baseFt` (cloud layers) | feet |
 | `lat`, `lon` | WGS-84 decimal degrees |
-| `*At`, `providerNow` | Unix epoch **milliseconds**, UTC |
-| `distanceNm`, `radiusNm` | nautical miles |
+| `*At` | Unix epoch **milliseconds**, UTC |
 
 A field the provider did not report is **omitted**. It is never zero-filled.
 
 ## Endpoints
-
-### `GET /api/aircraft/nearby?lat=&lon=&radius=`
-Live aircraft in a region. `radius` is in NM (default 100). The server snaps the region to a shared
-grid and returns the region it actually queried in `query`.
-
-```jsonc
-{
-  "provider": "adsbfi",
-  "attribution": { "name": "adsb.fi", "url": "https://adsb.fi", "license": "…" },
-  "query": { "lat": 51.3333, "lon": -0.5335, "radiusNm": 100 },
-  "providerNow": 1792269256001,   // provider clock
-  "fetchedAt": 1792269256815,     // our server fetched upstream
-  "servedAt": 1792269256815,      // this response
-  "stale": false,                 // snapshot older than its TTL
-  "degraded": "…",                // present only when serving an older snapshot
-  "cache": { "hit": true, "ageMs": 3200, "ttlMs": 10000 },
-  "count": 121,
-  "aircraft": [Aircraft]
-}
-```
-
-**Aircraft**
-
-```jsonc
-{
-  "id": "4066b9", "icao24": "4066b9",          // '~' prefix = non-ICAO (TIS-B) address
-  "callsign": "EXS92BY", "registration": "G-GDFF",
-  "aircraftType": "B738", "typeDescription": "BOEING 737-800", "category": "A3",
-  "lat": 51.29, "lon": -0.44,
-  "altitudeBarometric": 19000, "altitudeGeometric": 19650,
-  "groundSpeed": 361, "track": 22.1, "verticalRate": 0,
-  "squawk": "4512", "emergency": "general",     // emergency only when not "none"
-  "onGround": false, "military": true,          // military only when flagged in the provider DB
-  "positionSource": "adsb",                     // adsb | mlat | tisb | adsr | adsc | modes | other
-  "observedAt": 0, "seenAt": 0, "receivedAt": 0,
-  "provider": "adsbfi", "freshness": "live",    // live: position ≤ 30 s old at fetch
-  "distanceNm": 12.4,
-  "ext": { "ias": 278, "tas": 300, "mach": 0.72, "roll": -1.2, "magHeading": 20, "trueHeading": 21,
-           "navAltitudeMcp": 20000, "navHeading": 20, "navQnh": 1013.2, "windDirection": 250,
-           "windSpeed": 32, "outsideAirTemp": -21, "nic": 8, "nacP": 9, "sil": 3, "rssi": -9.6,
-           "messages": 103996, "adsbVersion": 2, "ownerOperator": "…", "year": "2015" }
-}
-```
-
-### `GET /api/aircraft/:icao[?raw=1]`
-Looks up one aircraft by 24-bit ICAO hex, anywhere adsb.fi has it. `raw=1` adds the provider's raw
-records (used by the Data Inspector). Same envelope, plus `providerNow`.
-
-### `GET /api/aircraft/search?q=[&type=callsign|registration|hex|sqk]`
-Worldwide lookup. The kind is inferred (`4066b9` → hex, `G-ABCD` → registration, `7700` → squawk,
-`BAW123` → callsign) unless `type` forces it. The response includes
-`"interpretedAs": { "kind", "value" }`.
-
-### `GET /api/analytics/region?lat=&lon=&radius=`
-Statistics computed from the same shared snapshot (no extra upstream call). Includes a `population`
-sentence that states exactly what was sampled.
 
 ### `GET /api/airports/search?q=[&country=GB][&limit=12]`
 Ranked search over IATA, ICAO, name and city in the bundled OurAirports index.
@@ -100,13 +48,47 @@ Normalized METARs: wind (with `windVariable`), visibility (statute miles, as rep
 ### `GET /api/weather/taf?ids=EGLL`
 Normalized TAF with change periods. Cached 15 minutes.
 
+Weather responses share one envelope:
+
+```jsonc
+{
+  "provider": "aviationweather",
+  "attribution": { "name": "NOAA Aviation Weather Center", "url": "https://aviationweather.gov", "license": "…" },
+  "fetchedAt": 1792269256815,     // our server fetched upstream
+  "servedAt": 1792269256815,      // this response
+  "degraded": "…",                // present only when serving an older report while the provider fails
+  "cache": { "hit": true, "ageMs": 3200, "ttlMs": 300000 },
+  "count": 2,
+  "data": [Metar | Taf]
+}
+```
+
+All AviationWeather.gov calls go through one global coordinator (a Durable Object) that paces
+them, coalesces identical requests, caches responses and backs off on errors. While the provider
+is failing, a report up to 5 minutes past its cache TTL may be served with `degraded` set.
+
+### `GET /api/manifest.webmanifest?pins=EGLL,KJFK`
+The web-app manifest (same fields as `/manifest.webmanifest`) plus a `shortcuts` array with one
+entry per pinned airport:
+
+```jsonc
+{ "name": "EGLL board", "short_name": "EGLL", "url": "/?apt=EGLL",
+  "icons": [{ "src": "/brand/icon-192.png", "sizes": "192x192", "type": "image/png" }] }
+```
+
+`pins` is split on commas and upper-cased; each identifier must be a valid airport ident
+(2–10 of `A–Z`, `0–9`, `-`). Invalid entries are silently dropped (never echoed), duplicates are
+removed and at most 4 shortcuts are returned. The response is built from constants only; nothing
+is fetched. `Content-Type: application/manifest+json`, `Cache-Control: public, max-age=3600`.
+
 ### `GET /api/health`
-Coordinator status and per-provider health (`ok`, `degraded`, `down` or `unknown`), upstream call
-and cache-hit counters, last error.
+Coordinator status and weather-provider health (`ok`, `degraded`, `down` or `unknown`), upstream
+call and cache-hit counters, last error. `status` is `degraded` (with `coordinator: null`) when the
+coordinator cannot be reached.
 
 ### `GET /api/providers`
-Every data source with its scope, limits, terms and required attribution, including sources that are
-deliberately disabled.
+Every data source with its scope, limits, terms and required attribution, including the
+`simulation` entry that describes the simulated air traffic.
 
 ### `GET /api/config`
-Polling bounds, freshness thresholds and unit conventions for clients.
+App version, unit conventions and source link. `aircraft.source` is always `"simulation"`.

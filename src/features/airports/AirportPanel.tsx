@@ -2,10 +2,9 @@ import { useQuery } from '@tanstack/react-query';
 import { ExternalLink, Navigation, Pin, Share2, Star } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { AIRPORT_TYPE_LABEL } from '@shared/airports';
-import { classifyAircraft } from '@shared/classify';
-import { bearingDeg, distanceNm } from '@shared/geo';
+import { distanceNm } from '@shared/geo';
 import type { AirportDetail, AirportType } from '@shared/types';
-import { AircraftGlyph, AirportIcon, RunwayIcon, SpotterIcon, TowerIcon, WeatherIcon } from '@/components/icons';
+import { AirportIcon, RunwayIcon, SpotterIcon, TowerIcon, WeatherIcon } from '@/components/icons';
 import { Badge, EmptyState, ErrorState, Skeleton } from '@/components/ui/Feedback';
 import { CopyButton, Row, Rows, Tabs } from '@/components/ui/Data';
 import { GlassButton, IconButton, Section } from '@/components/ui/Glass';
@@ -13,21 +12,20 @@ import { Panel } from '@/components/ui/Sheet';
 import { loadCountries, loadMajorAirports } from '@/data/airports';
 import { api } from '@/lib/api';
 import { fmtAltitude, fmtBearing, fmtDistance, fmtLocalTime, fmtMhz, fmtTimeUTC } from '@/lib/format';
-import { useNow, useTrafficVersion } from '@/lib/hooks';
+import { useNow } from '@/lib/hooks';
 import { shareUrl } from '@/lib/urlState';
-import { verticalState } from '@/lib/filters';
 import { showAirportDetail } from '@/map/airportsLayer';
-import { flyTo, focusAircraft, getMap } from '@/map/controller';
+import { flyTo, getMap } from '@/map/controller';
 import { useBookmarks } from '@/state/bookmarks';
 import { useSettings } from '@/state/settings';
-import { traffic } from '@/state/traffic';
 import { useUI } from '@/state/ui';
 import { MetarCard, TafCard, WeatherAttribution } from '@/features/weather/WeatherCards';
-import { useDemo } from '@/data/demo';
-import { ApproachExplorer, ObservedMovements } from './Approach';
-import { DemoAirportOps, RunwayInUseCard } from './AirportOps';
+import { simNow } from '@/data/world';
+import { ApproachExplorer } from './Approach';
+import { BoardTab, GroundTab, HourlyMovements, RunwayInUseCard } from './AirportOps';
+import { SkyTimesCard } from './SkyTimes';
 
-type Tab = 'overview' | 'weather' | 'runways' | 'activity';
+type Tab = 'overview' | 'arrivals' | 'departures' | 'ground' | 'weather' | 'runways';
 
 export function AirportPanel() {
   const ident = useUI((s) => s.selectedAirport);
@@ -86,8 +84,8 @@ function AirportBody({ a }: { a: AirportDetail }) {
   const openPanel = useUI((s) => s.openPanel);
   const toast = useUI((s) => s.toast);
   const isFav = favs.includes(a.ident);
-  const pinned = useBookmarks((s) => s.pinnedAirport);
-  const setPinned = useBookmarks((s) => s.setPinnedAirport);
+  const pinned = useBookmarks((s) => s.pinnedAirports.includes(a.ident));
+  const togglePin = useBookmarks((s) => s.togglePin);
   const station = a.icao && /^[A-Z]{4}$/.test(a.icao) ? a.icao : /^[A-Z]{4}$/.test(a.ident) ? a.ident : null;
 
   useEffect(() => {
@@ -160,11 +158,11 @@ function AirportBody({ a }: { a: AirportDetail }) {
           <Share2 size={15} />
         </IconButton>
         <IconButton
-          label={pinned === a.ident ? 'Unpin from map' : 'Pin to map'}
+          label={pinned ? 'Unpin from map' : 'Pin to map'}
           variant="glass"
           size={32}
-          active={pinned === a.ident}
-          onClick={() => setPinned(pinned === a.ident ? null : a.ident)}
+          active={pinned}
+          onClick={() => togglePin(a.ident)}
         >
           <Pin size={15} />
         </IconButton>
@@ -176,14 +174,19 @@ function AirportBody({ a }: { a: AirportDetail }) {
         onChange={setTab}
         tabs={[
           { id: 'overview', label: 'Overview' },
+          { id: 'arrivals', label: 'Arrivals' },
+          { id: 'departures', label: 'Departures' },
+          { id: 'ground', label: 'Ground' },
           { id: 'weather', label: 'Weather' },
-          { id: 'runways', label: `Runways ${a.runways.length ? `(${a.runways.length})` : ''}` },
-          { id: 'activity', label: 'Activity' },
+          { id: 'runways', label: 'Runways' },
         ]}
       />
 
       {tab === 'overview' && (
         <div className="space-y-4">
+          <RunwayInUseCard a={a} />
+          <HourlyMovements a={a} />
+          <SkyTimesCard lat={a.lat} lon={a.lon} tz={tz} now={simNow()} />
           <Rows>
             <Row label="ICAO / GPS code" value={a.icao ?? a.ident} mono />
             <Row label="IATA code" value={a.iata} mono />
@@ -249,7 +252,9 @@ function AirportBody({ a }: { a: AirportDetail }) {
       )}
 
       {tab === 'runways' && <Runways a={a} />}
-      {tab === 'activity' && <Activity a={a} />}
+      {tab === 'arrivals' && <BoardTab a={a} kind="arrivals" />}
+      {tab === 'departures' && <BoardTab a={a} kind="departures" />}
+      {tab === 'ground' && <GroundTab a={a} />}
     </div>
   );
 }
@@ -258,11 +263,10 @@ function Runways({ a }: { a: AirportDetail }) {
   const unit = useSettings((s) => s.units.altitude);
   const toM = unit === 'm';
   const len = (ft?: number) => (ft === undefined ? undefined : toM ? `${Math.round(ft * 0.3048).toLocaleString()} m` : `${ft.toLocaleString()} ft`);
-  const demo = useDemo((s) => s.active);
   if (!a.runways.length) return <EmptyState icon={<RunwayIcon />} title="No runway data" body="OurAirports has no runway records for this airfield." />;
   return (
     <div className="space-y-3">
-      <RunwayInUseCard a={a} demo={demo} />
+      <RunwayInUseCard a={a} />
       <RunwayDiagram a={a} />
       <ApproachExplorer a={a} />
       {a.runways.map((r, i) => (
@@ -329,92 +333,6 @@ function RunwayDiagram({ a }: { a: AirportDetail }) {
         );
       })}
     </svg>
-  );
-}
-
-function Activity({ a }: { a: AirportDetail }) {
-  const demo = useDemo((s) => s.active);
-  return demo ? <DemoAirportOps a={a} /> : <LiveActivity a={a} />;
-}
-
-function LiveActivity({ a }: { a: AirportDetail }) {
-  useTrafficVersion();
-  const units = useSettings((s) => s.units);
-  const select = useUI((s) => s.select);
-  const RADIUS = 30;
-  const near = useMemo(
-    () =>
-      traffic
-        .current()
-        .map((ac) => ({ ac, d: distanceNm(a.lat, a.lon, ac.lat, ac.lon), b: bearingDeg(a.lat, a.lon, ac.lat, ac.lon) }))
-        .filter((x) => x.d <= RADIUS)
-        .sort((x, y) => x.d - y.d),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [a.lat, a.lon, traffic.version],
-  );
-  const covered = traffic.meta && distanceNm(traffic.meta.region.lat, traffic.meta.region.lon, a.lat, a.lon) + RADIUS <= traffic.meta.region.radiusNm;
-  const ground = near.filter((x) => x.ac.onGround).length;
-  const low = near.filter((x) => !x.ac.onGround && (x.ac.altitudeBarometric ?? x.ac.altitudeGeometric ?? 99999) < 10000);
-  const desc = low.filter((x) => verticalState(x.ac.verticalRate) === 'descending').length;
-  const climb = low.filter((x) => verticalState(x.ac.verticalRate) === 'climbing').length;
-
-  return (
-    <div className="space-y-3">
-      {!covered && (
-        <p className="rounded-[12px] border border-[rgba(255,181,71,0.3)] bg-[rgba(255,181,71,0.08)] px-3 py-2 text-[12px] text-[#ffd59a]">
-          This airport is not fully inside the current live area. Fly to it to load nearby traffic.
-        </p>
-      )}
-      <div className="grid grid-cols-4 gap-2 text-center">
-        {[
-          ['Within 30 NM', near.length],
-          ['On ground', ground],
-          ['Descending < 10k', desc],
-          ['Climbing < 10k', climb],
-        ].map(([l, v]) => (
-          <div key={l} className="glass-2 rounded-[14px] px-1.5 py-2.5">
-            <div className="tnum text-[18px] font-semibold text-fg">{v}</div>
-            <div className="mt-0.5 text-[10px] leading-tight text-fg-3">{l}</div>
-          </div>
-        ))}
-      </div>
-      <RunwayInUseCard a={a} demo={false} />
-      <ObservedMovements a={a} />
-      <p className="text-[11px] text-fg-3">
-        Observed aircraft near the airport right now. These are live observations, not an arrivals/departures schedule — origins and destinations are not
-        provided by the data source and are never guessed.
-      </p>
-      {near.length === 0 ? (
-        <EmptyState title="No aircraft observed nearby" body="Nothing is currently reported within 30 NM." />
-      ) : (
-        <ul className="glass-2 divide-y divide-[var(--line)] rounded-[16px]">
-          {near.slice(0, 40).map(({ ac, d, b }) => (
-            <li key={ac.id}>
-              <button
-                type="button"
-                onClick={() => {
-                  select(ac.id);
-                  focusAircraft(ac.id, 11);
-                }}
-                className="flex w-full items-center gap-3 px-3.5 py-2 text-left hover:bg-[var(--line)]"
-              >
-                <AircraftGlyph cls={classifyAircraft(ac)} size={20} rotate={ac.track ?? 0} className="shrink-0 text-fg-2" />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-[12.5px] font-semibold text-fg">{ac.callsign ?? ac.registration ?? ac.icao24.toUpperCase()}</div>
-                  <div className="truncate text-[11px] text-fg-3">{ac.typeDescription ?? ac.aircraftType ?? 'Type not reported'}</div>
-                </div>
-                <div className="tnum text-right text-[11.5px]">
-                  <div className="text-fg">{fmtAltitude(ac.altitudeBarometric ?? ac.altitudeGeometric, units.altitude, ac.onGround)}</div>
-                  <div className="text-fg-3">
-                    {fmtDistance(d, units.distance)} · {fmtBearing(b)}
-                  </div>
-                </div>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
   );
 }
 

@@ -4,7 +4,7 @@
 //   public/data/airports/index.json        compact search/map index
 //   public/data/airports/detail/XX.json    runways + frequencies, sharded by ident prefix
 //   public/data/countries.json             names, airport centroids and bounding boxes
-//   public/data/airports/runways-major.json runway ends for major airports (demo simulator, approach geometry)
+//   public/data/airports/runways-major.json runway ends for major airports (world simulator, approach geometry)
 //   public/data/airlines.json              airline names by ICAO code (OpenFlights, ODbL)
 import { existsSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';

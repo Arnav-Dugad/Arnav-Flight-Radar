@@ -31,7 +31,7 @@ function exportSession() {
       JSON.stringify(
         {
           format: 'arnav-session-v1',
-          note: 'Positions observed by this browser from adsb.fi open data (personal, non-commercial use). Rows: [icao24, lat, lon, altitudeFt|null, trackDeg|null, groundSpeedKt|null].',
+          note: 'Simulated aircraft positions recorded in this browser (aircraft in view only). Rows: [id, lat, lon, altitudeFt|null, trackDeg|null, groundSpeedKt|null].',
           exportedAt: new Date().toISOString(),
           snapshots: traffic.snapshots,
         },

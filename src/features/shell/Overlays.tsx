@@ -15,8 +15,7 @@ import { useTour } from '@/map/tour';
 import { useSettings } from '@/state/settings';
 import { traffic } from '@/state/traffic';
 import { useUI } from '@/state/ui';
-import { DEMO_SPEEDS, demoNow, setDemoSpeed, startDemo, stopDemo, useDemo } from '@/data/demo';
-import { useFeed } from '@/data/feed';
+import { simNow } from '@/data/world';
 import { LiveStatus } from './LiveStatus';
 
 /** Following indicator + "Return to aircraft" after a manual camera move. */
@@ -185,7 +184,7 @@ export function PresentationOverlay() {
               </motion.div>
             )}
           </AnimatePresence>
-          <p className="absolute bottom-3 right-5 text-[10.5px] text-fg-3">Live data: adsb.fi · Map: OpenFreeMap, © OpenMapTiles, © OpenStreetMap contributors · Esc to exit</p>
+          <p className="absolute bottom-3 right-5 text-[10.5px] text-fg-3">Simulated traffic · Map: OpenFreeMap, © OpenMapTiles, © OpenStreetMap contributors · Esc to exit</p>
         </motion.div>
       )}
     </AnimatePresence>
@@ -207,10 +206,9 @@ export function RadarSweep() {
   const motionLevel = useSettings((s) => s.motion);
   const lat = useView((v) => Math.round(v.lat));
   const lon = useView((v) => Math.round(v.lon));
-  const demoActive = useDemo((s) => s.active);
   useNow(30_000);
   if (!on || motionLevel === 'off') return null;
-  const t = demoActive ? demoNow() : Date.now();
+  const t = simNow();
   const color = sweepColor(solarElevation(lat, lon, subsolarPoint(t)));
   return (
     <div className="pointer-events-none absolute inset-0 z-[5] overflow-hidden" aria-hidden="true">
@@ -240,118 +238,6 @@ export function TourBadge() {
   );
 }
 
-/** Honest notices: provider outage/refusal, or nothing reported in the live area. */
-export function CoverageNotice() {
-  useTrafficVersion();
-  const openPanel = useUI((s) => s.openPanel);
-  const following = useUI((s) => s.following);
-  const status = useFeed((s) => s.status);
-  const message = useFeed((s) => s.message);
-  const code = useFeed((s) => s.errorCode);
-  const demo = useDemo((s) => s.active);
-  const meta = traffic.meta;
-  const outage = !demo && (status === 'error' || (status === 'degraded' && !!code));
-  const empty = !demo && !outage && !!meta && meta.count === 0 && !following;
-  const show = outage || empty;
-  return (
-    <AnimatePresence>
-      {show && (
-        <motion.div
-          key={outage ? 'outage' : 'empty'}
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -10 }}
-          role={outage ? 'alert' : 'status'}
-          className="glass pointer-events-auto w-[min(460px,calc(100vw-24px))] rounded-[18px] px-4 py-3"
-        >
-          {outage ? (
-            <>
-              <p className="text-[13px] font-semibold text-fg">
-                {code === 'upstream_forbidden' ? 'Live aircraft data is unavailable' : status === 'degraded' ? 'Live data is delayed' : 'Live data is temporarily unavailable'}
-              </p>
-              <p className="mt-1 text-[12px] leading-relaxed text-fg-2">
-                {message ?? 'The aircraft data provider could not be reached.'} Nothing is simulated in its place.{' '}
-                <button type="button" className="font-medium text-[var(--accent)] hover:underline" onClick={() => openPanel('data')}>
-                  Provider status
-                </button>
-              </p>
-              <div className="mt-2.5 flex flex-wrap items-center gap-2">
-                <GlassButton size="sm" onClick={() => void startDemo()}>
-                  Explore with simulated demo traffic
-                </GlassButton>
-                <span className="text-[11px] text-fg-3">Clearly labelled; never mixed with live data.</span>
-              </div>
-            </>
-          ) : (
-            <>
-              <p className="text-[13px] font-semibold text-fg">No aircraft reported in this area right now</p>
-              <p className="mt-1 text-[12px] leading-relaxed text-fg-2">
-                adsb.fi relies on volunteer receivers, and coverage here is currently thin or absent. Nothing is simulated to fill the gap.{' '}
-                <button type="button" className="font-medium text-[var(--accent)] hover:underline" onClick={() => openPanel('data')}>
-                  Coverage details
-                </button>
-              </p>
-            </>
-          )}
-        </motion.div>
-      )}
-    </AnimatePresence>
-  );
-}
-
-/** Persistent, unmissable label while demo mode is on. */
-export function DemoBanner() {
-  const demo = useDemo((s) => s.active);
-  const loading = useDemo((s) => s.loading);
-  const speed = useDemo((s) => s.speed);
-  const airborne = useDemo((s) => s.airborne);
-  const [, force] = useState(0);
-  useEffect(() => {
-    if (!demo) return;
-    const id = setInterval(() => force((n) => n + 1), 1000);
-    return () => clearInterval(id);
-  }, [demo]);
-  const simTime = new Date(demoNow()).toISOString().slice(11, 16);
-  return (
-    <AnimatePresence>
-      {demo && (
-        <motion.div
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -10 }}
-          role="status"
-          className="pointer-events-auto flex max-w-[calc(100vw-24px)] items-center gap-2 rounded-full border border-[rgba(167,139,250,0.45)] bg-[rgba(76,52,160,0.84)] py-1.5 pl-3 pr-1.5 text-[12.5px] text-white shadow-xl backdrop-blur-md"
-        >
-          <span className="rounded-full bg-white/15 px-2 py-0.5 text-[10.5px] font-bold uppercase tracking-[0.14em]">Demo</span>
-          <span className="truncate font-medium max-[520px]:hidden">
-            {loading ? 'Building simulated world…' : `Simulated world · ${airborne.toLocaleString()} airborne`}
-          </span>
-          <span className="tnum rounded-full bg-black/20 px-2 py-0.5 text-[11px] text-white/85 max-[520px]:hidden" title="Simulated clock (UTC)">
-            {simTime}Z
-          </span>
-          <div role="radiogroup" aria-label="Time-lapse speed" className="flex rounded-full bg-black/20 p-0.5">
-            {DEMO_SPEEDS.map((v) => (
-              <button
-                key={v}
-                type="button"
-                role="radio"
-                aria-checked={speed === v}
-                onClick={() => setDemoSpeed(v)}
-                className={`tnum min-w-[30px] rounded-full px-1.5 py-0.5 text-[11px] font-semibold transition-colors ${speed === v ? 'bg-white text-[#2c1d6b]' : 'text-white/80 hover:text-white'}`}
-              >
-                {v}×
-              </button>
-            ))}
-          </div>
-          <button type="button" onClick={stopDemo} className="shrink-0 rounded-full bg-white px-3 py-1 text-[12px] font-semibold text-[#2c1d6b] hover:bg-white/90">
-            Exit
-          </button>
-        </motion.div>
-      )}
-    </AnimatePresence>
-  );
-}
-
 /** Top-centre stack so banners never overlap each other. */
 export function TopNotices() {
   const mobile = useIsMobile();
@@ -362,9 +248,7 @@ export function TopNotices() {
         mobile ? 'left-3 right-[64px] top-[68px] items-start [&>*]:max-w-full' : 'left-1/2 top-[84px] -translate-x-1/2 items-center'
       }`}
     >
-      <DemoBanner />
       <FollowBanner />
-      <CoverageNotice />
     </div>
   );
 }

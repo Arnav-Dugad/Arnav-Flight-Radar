@@ -43,10 +43,10 @@ async function commons(params) {
 
 const fileTitle = (url) => decodeURIComponent(url.split('/Special:FilePath/')[1] ?? '').replace(/_/g, ' ');
 
-// ------------------------------------------------------------- fleet (demo airlines)
+// ------------------------------------------------------------- fleet (simulated airlines)
 
-const fleetSrc = readFileSync(join(ROOT, 'src/data/demo/fleet.ts'), 'utf8');
-const fleetAirlines = [...fleetSrc.matchAll(/A\('([A-Z]{3})', '([A-Z0-9]{2})', '([^']+)', '[A-Z]{2}', '[^']+', '[^']+', '([^']+)'/g)].map((m) => ({
+const fleetSrc = readFileSync(join(ROOT, 'src/data/sim/fleet.ts'), 'utf8') + readFileSync(join(ROOT, 'src/data/sim/fleet-more.ts'), 'utf8');
+const fleetAirlines = [...fleetSrc.matchAll(/airline\('([A-Z]{3})', '([A-Z0-9]{0,2})', '([^']+)', '[A-Z]{2}', '[^']+', '[^']+', '([^']+)'/g)].map((m) => ({
   icao: m[1],
   name: m[3],
   types: m[4].split(' ').map((p) => p.split(':')[0]),
@@ -70,7 +70,7 @@ const bestLogo = new Map();
 for (const b of logoRows.results.bindings) {
   const icao = b.icao.value.toUpperCase();
   if (!/^[A-Z]{3}$/.test(icao)) continue;
-  // Current airlines only: not dissolved on Wikidata (or simulated in demo mode).
+  // Current airlines only: not dissolved on Wikidata (or flown in the simulation).
   if (b.dissolved && !fleetCodes.has(icao)) continue;
   void airlinesJson;
   const cand = { file: fileTitle(b.logo.value), sl: Number(b.sl?.value ?? 0), svg: /\.svg$/i.test(b.logo.value) };
@@ -146,6 +146,9 @@ for (const [code, q] of Object.entries(TYPE_ITEMS)) {
   const b = exact.results.bindings.find((x) => x.item.value.endsWith(`/${q}`));
   if (b) typeImage.set(code, fileTitle(b.img.value));
 }
+// Guard against model items whose image shows a sibling variant.
+const WRONG_VARIANT = { CRJ7: /CRJ-?900|CRJ-?1000/i, CRJ9: /CRJ-?700|CRJ-?200/i, E190: /E-?175|E-?195/i, A359: /A350-1/i };
+for (const [code, re] of Object.entries(WRONG_VARIANT)) if (re.test(typeImage.get(code) ?? '')) typeImage.delete(code);
 const missingTypes = Object.keys({ ...TYPE_LABELS, ...TYPE_ITEMS }).filter((c) => !typeImage.has(c));
 console.log(`media: ${typeImage.size} type photos; no image for ${missingTypes.join(' ')}`);
 
@@ -159,10 +162,14 @@ const CAT_TYPES = {
   B788: ['Boeing 787-8'], B789: ['Boeing 787-9'], B78X: ['Boeing 787-10'], B744: ['Boeing 747-400', 'Boeing 747-400F'], B748: ['Boeing 747-8', 'Boeing 747-8F'],
   A332: ['Airbus A330-200'], A333: ['Airbus A330-300'], A339: ['Airbus A330-900'], A359: ['Airbus A350-900'], A35K: ['Airbus A350-1000'], A388: ['Airbus A380'],
   E75L: ['Embraer 175'], E190: ['Embraer 190'], E195: ['Embraer 195'], E295: ['Embraer E195-E2'], CRJ7: ['Bombardier CRJ700'], CRJ9: ['Bombardier CRJ900'], SU95: ['Sukhoi Superjet 100'],
+  A318: ['Airbus A318'], BCS1: ['Airbus A220-100'], B37M: ['Boeing 737 MAX 7'], B712: ['Boeing 717-200', 'Boeing 717'], B753: ['Boeing 757-300'], B762: ['Boeing 767-200'],
+  B764: ['Boeing 767-400ER'], A306: ['Airbus A300-600', 'Airbus A300'], A343: ['Airbus A340-300'], MD11: ['McDonnell Douglas MD-11'], E170: ['Embraer 170'], E145: ['Embraer ERJ 145'],
+  CRJ2: ['Bombardier CRJ200', 'Canadair CRJ200'], AT45: ['ATR 42-500'], SF34: ['Saab 340'], C208: ['Cessna 208 Caravan'], B190: ['Beechcraft 1900'], GLEX: ['Bombardier Global 6000', 'Bombardier Global Express'],
+  E55P: ['Embraer Phenom 300'], PC24: ['Pilatus PC-24'], F2TH: ['Dassault Falcon 2000'],
   AT76: ['ATR 72-600'], DH8D: ['De Havilland Canada Dash 8-400', 'Bombardier Dash 8 Q400'], C68A: ['Cessna Citation Latitude'], CL35: ['Bombardier Challenger 350'], GLF6: ['Gulfstream G650'], PC12: ['Pilatus PC-12'],
 };
 const FAMILY = (cat) => {
-  const m = cat.match(/(A\d{3}|7\d7|E\d{3}|E19\d|CRJ\d+|Superjet|ATR|Dash 8|Q400|Latitude|Challenger|G650|PC-12)/);
+  const m = cat.match(/(A\d{3}|7\d7|MD-11|E\d{3}|ERJ|E19\d|CRJ\d*|Superjet|ATR|Dash 8|Q400|Saab|Caravan|1900|Global|Phenom|PC-\d+|Falcon|Latitude|Challenger|G650)/);
   return m ? m[1] : cat.split(' ').at(-1);
 };
 const EXCLUDE =
@@ -170,9 +177,30 @@ const EXCLUDE =
     ' ',
   );
 
-console.log('media: Commons categories for demo airlines…');
+console.log('media: Commons categories for simulated airlines…');
 const catRows = await sparql(`SELECT ?icao ?cat WHERE { VALUES ?icao { ${fleetAirlines.map((a) => `"${a.icao}"`).join(' ')} } ?a wdt:P230 ?icao ; wdt:P373 ?cat . FILTER NOT EXISTS { ?a wdt:P576 ?d } }`);
 const airlineCat = new Map(catRows.results.bindings.map((b) => [b.icao.value, b.cat.value]));
+
+// Logos missing from Wikidata (no P154): look in the airline's own Commons category for a
+// file titled "…logo…" (vector preferred). Only for airlines flown in the simulation.
+let foundLogos = 0;
+for (const al of fleetAirlines) {
+  if (bestLogo.has(al.icao)) continue;
+  const cat = airlineCat.get(al.icao);
+  if (!cat) continue;
+  try {
+    const r = await commons({ action: 'query', list: 'search', srsearch: `deepcat:"${cat}" intitle:logo -intitle:livery -intitle:aircraft -intitle:tail`, srnamespace: '6', srlimit: '8', srprop: '' });
+    const titles = (r.query?.search ?? []).map((x) => x.title.replace(/^File:/, ''));
+    const pick = titles.find((t) => /\.svg$/i.test(t)) ?? titles.find((t) => /\.png$/i.test(t));
+    if (pick) {
+      bestLogo.set(al.icao, { file: pick, sl: 0, svg: /\.svg$/i.test(pick) });
+      foundLogos++;
+    }
+  } catch (e) {
+    console.warn('  logo search failed', al.icao, e.message);
+  }
+}
+console.log(`media: ${foundLogos} more logos from airline categories on Commons`);
 const livery = new Map(); // "ICAO|TYPE" → file title
 let tried = 0;
 for (const al of fleetAirlines) {

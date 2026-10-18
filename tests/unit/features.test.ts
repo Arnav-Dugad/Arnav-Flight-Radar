@@ -31,7 +31,7 @@ const ac = (o: Partial<Aircraft>): Aircraft => ({
   observedAt: 0,
   seenAt: 0,
   receivedAt: 0,
-  provider: 'adsbfi',
+  provider: 'sim',
   freshness: 'live',
   ...o,
 });
@@ -95,7 +95,7 @@ describe('great-circle interpolation', () => {
 
 function resp(aircraft: Aircraft[], t: number): AircraftResponse {
   return {
-    provider: 'adsbfi',
+    provider: 'sim',
     attribution: { name: 'test', url: 'https://example.test', license: 'test' },
     query: { lat: 51, lon: 0, radiusNm: 100 },
     providerNow: t,

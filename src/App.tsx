@@ -21,7 +21,9 @@ import { Announcer, HoverCard } from '@/features/shell/HoverCard';
 import { useSelectionAnnouncer } from '@/features/shell/cycle';
 import { StatusBar } from '@/features/shell/StatusBar';
 import { PathProfileHud } from '@/features/aircraft/PathProfileHud';
-import { PinnedAirport } from '@/features/airports/PinnedAirport';
+import { PinnedAirports } from '@/features/airports/PinnedAirport';
+import { AirspaceLegend } from '@/features/shell/AirspaceLegend';
+import { Welcome } from '@/features/shell/Welcome';
 import { VerticalProfile } from '@/features/shell/VerticalProfile';
 import { TopBar } from '@/features/shell/TopBar';
 import { ReplayBar, TimelinePanel } from '@/features/timeline/Timeline';
@@ -87,7 +89,7 @@ export function App() {
   return (
     <MotionConfig reducedMotion={motionLevel === 'full' ? 'user' : 'always'}>
       <div className="relative h-dvh w-full overflow-hidden bg-[var(--canvas)] text-fg">
-        <h1 className="sr-only">Arnav Flight Radar — live aircraft map</h1>
+        <h1 className="sr-only">Arnav Flight Radar — a simulated world of air traffic</h1>
         <MapView />
         <RadarSweep />
         <TourBadge />
@@ -99,7 +101,8 @@ export function App() {
             {!mobile && <StatusBar />}
             <AnimatePresence>{!mobile && showProfile && <VerticalProfile key="profile" />}</AnimatePresence>
             {!mobile && !showProfile && <PathProfileHud />}
-            {!mobile && <PinnedAirport />}
+            {!mobile && <PinnedAirports />}
+            {!mobile && <AirspaceLegend />}
             {mobile && <MobileNav />}
             <TopNotices />
             <MeasureHUD />
@@ -118,6 +121,7 @@ export function App() {
         <PresentationOverlay />
         <SearchCommand />
         <ShortcutsModal />
+        <Welcome />
         <HoverCard />
         <Announcer />
         <Toasts />

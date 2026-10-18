@@ -15,6 +15,7 @@ import { aircraftColorExpression, ALTITUDE_STOPS, GROUND_COLOR, scaleColor, SPEE
 import { compileFilter } from '@/lib/filters';
 import { useFilters } from '@/state/filters';
 import { getSettings, useSettings } from '@/state/settings';
+import { simRouteCodes } from '@/data/world';
 import { traffic, type Track, type TrailPoint } from '@/state/traffic';
 import { ui, useUI } from '@/state/ui';
 import { viewPadding } from './camera';
@@ -438,6 +439,7 @@ export function startAircraftEngine(map: MlMap): AircraftEngine {
         s.show3dPath !== prev.show3dPath ||
         s.path3dOpacity !== prev.path3dOpacity ||
         s.path3dColor !== prev.path3dColor ||
+        s.labelContent !== prev.labelContent ||
         s.highContrast !== prev.highContrast
       ) {
         applyAircraftSettings(map);
@@ -475,6 +477,24 @@ export function startAircraftEngine(map: MlMap): AircraftEngine {
     return [w - padX, b.getSouth() - padY, e + padX, b.getNorth() + padY];
   }
 
+  function labelFor(a: Track['ac'], id: string): string {
+    const r = simRouteCodes(id);
+    switch (getSettings().labelContent) {
+      case 'callsign':
+        return a.callsign ?? '';
+      case 'registration':
+        return a.registration ?? '';
+      case 'type':
+        return a.aircraftType ?? '';
+      case 'route':
+        return r ? `${r[1]}–${r[2]}` : (a.callsign ?? '');
+      case 'altitude':
+        return a.onGround ? 'GND' : a.altitudeBarometric !== undefined ? (a.altitudeBarometric >= 18000 ? `FL${Math.round(a.altitudeBarometric / 100)}` : `${Math.round(a.altitudeBarometric / 100) * 100}`) : '';
+      default:
+        return r?.[0] ?? a.callsign ?? '';
+    }
+  }
+
   function featureFor(t: Track, now: number): GeoJSON.Feature {
     const pos = traffic.displayPosition(t, now);
     const a = t.ac;
@@ -489,7 +509,7 @@ export function startAircraftEngine(map: MlMap): AircraftEngine {
       rot: pos.trk ?? 0,
       gnd: a.onGround ? 1 : 0,
       st: traffic.stateOf(t, now),
-      lbl: a.callsign ?? a.registration ?? '',
+      lbl: labelFor(a, t.id),
     };
     const alt = a.onGround ? 0 : (a.altitudeBarometric ?? a.altitudeGeometric);
     if (alt !== undefined) props.alt = alt;
@@ -542,7 +562,7 @@ export function startAircraftEngine(map: MlMap): AircraftEngine {
       visible = features.length;
     } else {
       const bounds = cullBounds();
-      // Very large fleets (the demo world): ground traffic only appears once zoomed in.
+      // Very large fleets (the simulated world): ground traffic only appears once zoomed in.
       const hideGround = traffic.tracks.size > 3000 && map.getZoom() < 5;
       for (const t of traffic.tracks.values()) {
         const ageSec = traffic.ageMs(t, now) / 1000;
@@ -632,7 +652,9 @@ export function startAircraftEngine(map: MlMap): AircraftEngine {
     const u = ui();
     if (u.following && !u.followPaused && now - lastFollow > 16) {
       lastFollow = now;
-      const bearing = getSettings().cameraMode === 'heading-up' && pos.trk !== undefined ? pos.trk : map.getBearing();
+      const headingUp = u.chase || getSettings().cameraMode === 'heading-up';
+      // Chase view eases the bearing so turns feel like sitting behind the aircraft.
+      const bearing = headingUp && pos.trk !== undefined ? (u.chase ? map.getBearing() + (((pos.trk - map.getBearing() + 540) % 360) - 180) * 0.08 : pos.trk) : map.getBearing();
       map.jumpTo({ center: [pos.lon, pos.lat], bearing, padding: viewPadding() });
     }
   }

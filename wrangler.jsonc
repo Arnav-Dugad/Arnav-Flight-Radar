@@ -16,10 +16,7 @@
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["UpstreamGate"] }],
   "vars": {
     "APP_VERSION": "1.0.0",
-    // Conservative global upstream budget for adsb.fi (their public limit is 1 req/s).
-    "ADSBFI_MIN_INTERVAL_MS": "1100",
-    // How long one regional snapshot is shared between all visitors.
-    "AIRCRAFT_CACHE_TTL_MS": "10000",
+    // Global pacing for AviationWeather.gov (aircraft are simulated in the browser).
     "WEATHER_MIN_INTERVAL_MS": "1500",
     "CONTACT_URL": "https://github.com/Arnav-Dugad/Arnav-Flight-Radar"
   },

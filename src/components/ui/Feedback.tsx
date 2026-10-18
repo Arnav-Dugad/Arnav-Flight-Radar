@@ -79,12 +79,12 @@ export function Badge({ tone = 'neutral', children, className, title }: { tone?:
   );
 }
 
-const STATE_INFO: Record<TrackState | 'unavailable' | 'demo' | 'replay', { tone: keyof typeof BADGE_TONE; label: string; desc: string }> = {
+const STATE_INFO: Record<TrackState | 'unavailable' | 'sim' | 'replay', { tone: keyof typeof BADGE_TONE; label: string; desc: string }> = {
   live: { tone: 'ok', label: 'Live', desc: 'Recently reported position' },
   stale: { tone: 'warn', label: 'Stale', desc: 'Last report is older than the freshness threshold' },
   lost: { tone: 'danger', label: 'Lost', desc: 'No longer present in recent provider results' },
   unavailable: { tone: 'neutral', label: 'Unavailable', desc: 'No usable data right now' },
-  demo: { tone: 'violet', label: 'Demo', desc: 'Simulated — never mixed with live data' },
+  sim: { tone: 'accent', label: 'Simulated', desc: 'Every aircraft on this map is simulated' },
   replay: { tone: 'violet', label: 'Replay', desc: 'Recorded positions from this session' },
 };
 

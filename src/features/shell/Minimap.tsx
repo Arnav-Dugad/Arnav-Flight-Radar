@@ -2,12 +2,9 @@ import type * as GeoJSON from 'geojson';
 import { Map as MlMap, type GeoJSONSource, type StyleSpecification } from 'maplibre-gl';
 import { motion } from 'motion/react';
 import { useEffect, useRef } from 'react';
-import { circlePolygon } from '@shared/geo';
-import { useTrafficVersion } from '@/lib/hooks';
 import { flyTo, getMap } from '@/map/controller';
 import { STYLE_META } from '@/map/styles';
 import { useSettings } from '@/state/settings';
-import { traffic } from '@/state/traffic';
 import { useView } from '@/state/view';
 
 function miniStyle(dark: boolean): StyleSpecification {
@@ -31,14 +28,13 @@ function miniStyle(dark: boolean): StyleSpecification {
 
 const EMPTY: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
 
-/** Overview inset: current viewport (cyan) and the live data area (amber). */
+/** Overview inset showing the current viewport (cyan) on a world map. */
 export function Minimap() {
   const ref = useRef<HTMLDivElement>(null);
   const mini = useRef<MlMap | null>(null);
   const style = useSettings((s) => s.mapStyle);
   const dark = STYLE_META[style].dark;
   const view = useView();
-  const version = useTrafficVersion();
 
   useEffect(() => {
     if (!ref.current) return;
@@ -55,9 +51,6 @@ export function Minimap() {
     });
     m.on('load', () => {
       m.addSource('view', { type: 'geojson', data: EMPTY });
-      m.addSource('live', { type: 'geojson', data: EMPTY });
-      m.addLayer({ id: 'live-fill', type: 'fill', source: 'live', paint: { 'fill-color': '#ffb547', 'fill-opacity': 0.06 } });
-      m.addLayer({ id: 'live-line', type: 'line', source: 'live', paint: { 'line-color': '#ffb547', 'line-width': 1.2, 'line-dasharray': [2, 1.5] } });
       m.addLayer({ id: 'view-fill', type: 'fill', source: 'view', paint: { 'fill-color': '#5ce1ff', 'fill-opacity': 0.1 } });
       m.addLayer({ id: 'view-line', type: 'line', source: 'view', paint: { 'line-color': '#5ce1ff', 'line-width': 1.4 } });
     });
@@ -92,12 +85,6 @@ export function Minimap() {
     });
   }, [view]);
 
-  useEffect(() => {
-    const r = traffic.meta?.provider === 'demo' ? undefined : traffic.meta?.region;
-    (mini.current?.getSource('live') as GeoJSONSource | undefined)?.setData(
-      r ? { type: 'Feature', geometry: { type: 'Polygon', coordinates: [circlePolygon(r.lat, r.lon, r.radiusNm, 64)] }, properties: {} } : EMPTY,
-    );
-  }, [version]);
 
   return (
     <motion.div
@@ -105,18 +92,13 @@ export function Minimap() {
       animate={{ opacity: 1, scale: 1 }}
       className="glass pointer-events-auto relative h-[132px] w-[212px] overflow-hidden rounded-[18px] p-1"
       role="img"
-      aria-label="Overview map: the cyan box is your current view; the amber circle is the area with live data"
+      aria-label="Overview map: the cyan box is your current view"
     >
       <div ref={ref} className="h-full w-full cursor-pointer overflow-hidden rounded-[14px]" style={{ position: 'relative' }} />
       <div className="pointer-events-none absolute bottom-2 left-2.5 flex gap-2 text-[9.5px] font-semibold uppercase tracking-wider text-fg-2">
         <span className="flex items-center gap-1">
           <span className="h-1.5 w-2.5 rounded-sm bg-[#5ce1ff]" /> View
         </span>
-        {traffic.meta?.provider !== 'demo' && (
-          <span className="flex items-center gap-1">
-            <span className="h-1.5 w-2.5 rounded-sm bg-[#ffb547]" /> Live area
-          </span>
-        )}
       </div>
     </motion.div>
   );

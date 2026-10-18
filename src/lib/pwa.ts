@@ -31,7 +31,7 @@ export function initPwa() {
   });
   window.addEventListener('appinstalled', () => useInstall.setState({ prompt: null }));
   window.addEventListener('offline', () =>
-    ui().toast({ kind: 'warning', title: 'You are offline', body: 'Live data, map tiles and weather need a connection. Cached airports still work.' }),
+    ui().toast({ kind: 'warning', title: 'You are offline', body: 'The simulation keeps running; map tiles and weather need a connection.' }),
   );
-  window.addEventListener('online', () => ui().toast({ kind: 'success', title: 'Back online', body: 'Live data will refresh shortly.' }));
+  window.addEventListener('online', () => ui().toast({ kind: 'success', title: 'Back online', body: 'Weather and map tiles will refresh shortly.' }));
 }

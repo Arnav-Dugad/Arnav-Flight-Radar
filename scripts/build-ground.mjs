@@ -1,4 +1,4 @@
-// Builds airport ground data for demo mode from OpenStreetMap (ODbL) via Overpass:
+// Builds airport ground data for the simulation from OpenStreetMap (ODbL) via Overpass:
 //   public/data/ground/<IDENT>.json  — taxiway network { nodes: [[lat,lon]], edges: [[a,b]] }
 //   public/data/ground/stands.json   — parking positions { stands: { IDENT: [[lat,lon,ref,hdg|null]] } }
 //
@@ -17,14 +17,14 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = join(ROOT, 'public/data/ground');
 const UA = 'ArnavFlightRadar-build/1.0 (https://github.com/Arnav-Dugad/Arnav-Flight-Radar)';
 const MAX_AIRPORTS = Number(process.env.GROUND_AIRPORTS ?? 25);
-const BUDGET_MS = 10 * 60_000;
+const BUDGET_MS = Number(process.env.GROUND_BUDGET_MIN ?? 10) * 60_000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 mkdirSync(OUT, { recursive: true });
 
 // Busiest simulated hubs: airline size shared across its hubs.
-const fleet = readFileSync(join(ROOT, 'src/data/demo/fleet.ts'), 'utf8');
+const fleet = readFileSync(join(ROOT, 'src/data/sim/fleet.ts'), 'utf8') + readFileSync(join(ROOT, 'src/data/sim/fleet-more.ts'), 'utf8');
 const weight = new Map();
-for (const m of fleet.matchAll(/A\('[A-Z]{3}', '[A-Z0-9]{2}', '[^']+', '[A-Z]{2}', '[^']+', '([^']+)', '[^']+', (\d+)/g)) {
+for (const m of fleet.matchAll(/airline\('[A-Z]{3}', '[A-Z0-9]{0,2}', '[^']+', '[A-Z]{2}', '[^']+', '([^']+)', '[^']+', (\d+)/g)) {
   const hubs = m[1].split(' ');
   for (const h of hubs) weight.set(h, (weight.get(h) ?? 0) + Number(m[2]) / hubs.length);
 }
@@ -109,7 +109,7 @@ out body geom qt;`;
   await sleep(5_000);
 }
 
-// Merge every airport's stands into one small file loaded with demo mode.
+// Merge every airport's stands into one small file loaded when the simulation starts.
 const all = {};
 for (const f of readdirSync(OUT)) {
   if (!/^[A-Z0-9]{3,4}\.json$/.test(f)) continue;

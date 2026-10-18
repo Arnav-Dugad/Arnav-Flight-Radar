@@ -4,8 +4,6 @@
 interface __BaseEnv_Env {
 	ASSETS: Fetcher;
 	APP_VERSION: "1.0.0";
-	ADSBFI_MIN_INTERVAL_MS: "1100";
-	AIRCRAFT_CACHE_TTL_MS: "10000";
 	WEATHER_MIN_INTERVAL_MS: "1500";
 	CONTACT_URL: "https://github.com/Arnav-Dugad/Arnav-Flight-Radar";
 	GATE: DurableObjectNamespace /* UpstreamGate */;
@@ -18,7 +16,7 @@ type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;
 };
 declare namespace NodeJS {
-	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "APP_VERSION" | "ADSBFI_MIN_INTERVAL_MS" | "AIRCRAFT_CACHE_TTL_MS" | "WEATHER_MIN_INTERVAL_MS" | "CONTACT_URL">> {}
+	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "APP_VERSION" | "WEATHER_MIN_INTERVAL_MS" | "CONTACT_URL">> {}
 }
 declare module "*.txt" {
 	const value: string;

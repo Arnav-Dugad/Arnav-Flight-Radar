@@ -5,6 +5,9 @@ import { Modal } from '@/components/ui/Sheet';
 import { followRandomFlight, resetNorth, setProjection, startFollow, stopFollow, zoomBy } from '@/map/controller';
 import { useSettings } from '@/state/settings';
 import { useUI } from '@/state/ui';
+import { setSimSpeed } from '@/data/world';
+
+const toggle = (key: 'showDayNight' | 'showAirspace' | 'showDisruptions') => useSettings.getState().set(key, !useSettings.getState()[key]);
 import { cycleAircraft } from './cycle';
 
 export const useShortcutsModal = create<{ open: boolean; setOpen: (o: boolean) => void }>()((set) => ({
@@ -21,6 +24,12 @@ const LIST: [string[], string][] = [
   [['C'], 'Follow or stop following the selected aircraft'],
   [['[', ']'], 'Previous / next aircraft in view'],
   [['J'], 'Jump to and follow a random flight'],
+  [['X'], '3D view behind the selected aircraft'],
+  [['1', '2', '3', '4'], 'Clock speed 1× / 5× / 15× / 30×'],
+  [['W'], 'Right now: busiest airports & disruptions'],
+  [['D'], 'Day & night shading'],
+  [['U'], 'Controlled airspace'],
+  [['K'], 'Airport disruption map'],
   [['V'], 'Vertical profile'],
   [['R'], 'Range rings'],
   [['F'], 'Filters'],
@@ -104,6 +113,19 @@ export function useGlobalShortcuts() {
           else startFollow(ui.selectedId);
         },
         j: () => void followRandomFlight(),
+        x: () => {
+          if (!ui.selectedId) return;
+          if (ui.chase) stopFollow();
+          else startFollow(ui.selectedId, { chase: true });
+        },
+        '1': () => setSimSpeed(1),
+        '2': () => setSimSpeed(5),
+        '3': () => setSimSpeed(15),
+        '4': () => setSimSpeed(30),
+        w: () => ui.togglePanel('widgets'),
+        d: () => toggle('showDayNight'),
+        u: () => toggle('showAirspace'),
+        k: () => toggle('showDisruptions'),
         '[': () => cycleAircraft(-1),
         ']': () => cycleAircraft(1),
         v: () => useSettings.getState().set('showProfile', !useSettings.getState().showProfile),

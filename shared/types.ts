@@ -12,8 +12,8 @@
 // A field that the provider did not report is OMITTED (undefined) — never
 // zero-filled and never guessed. The UI renders it as "Not available".
 
-/** 'demo' is explicitly simulated traffic, generated in the browser and never mixed with live data. */
-export type ProviderId = 'adsbfi' | 'demo';
+/** 'sim': every aircraft is simulated in the browser (there is no live aircraft source). */
+export type ProviderId = 'sim';
 
 export type PositionSource = 'adsb' | 'mlat' | 'tisb' | 'adsr' | 'adsc' | 'modes' | 'other';
 

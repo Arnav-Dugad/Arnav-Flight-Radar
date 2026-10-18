@@ -7,9 +7,9 @@
 //     rate). It is not live lightning, and the UI says so.
 
 import type * as GeoJSON from 'geojson';
-import type { GeoJSONSource, Map as MlMap } from 'maplibre-gl';
+import { Popup, type GeoJSONSource, type Map as MlMap, type MapLayerMouseEvent } from 'maplibre-gl';
 import { z } from 'zod';
-import { demoNow, demoRoute, demoViewChanged, useDemo } from '@/data/demo';
+import { simNow, simRoute, simViewChanged, useSim } from '@/data/world';
 import { ui, useUI } from '@/state/ui';
 import { getSettings, useSettings } from '@/state/settings';
 
@@ -187,7 +187,7 @@ export function nightFeatures(t: number): GeoJSON.Feature[] {
 }
 
 function dayNightTime() {
-  return useDemo.getState().active ? demoNow() : Date.now();
+  return useSim.getState().active ? simNow() : Date.now();
 }
 
 export function installDayNight(map: MlMap) {
@@ -242,7 +242,7 @@ function renderDayNight(map: MlMap) {
 
 export function bindDayNight(map: MlMap): () => void {
   const timer = setInterval(() => renderDayNight(map), 60_000);
-  const unsubDemo = useDemo.subscribe((s, p) => {
+  const unsubSim = useSim.subscribe((s, p) => {
     if (s.active !== p.active || s.speed !== p.speed) renderDayNight(map);
   });
   const unsub = useSettings.subscribe((s, p) => {
@@ -252,13 +252,13 @@ export function bindDayNight(map: MlMap): () => void {
   });
   // Time-lapse moves the terminator faster.
   const fast = setInterval(() => {
-    if (useDemo.getState().active && useDemo.getState().speed > 1) renderDayNight(map);
+    if (useSim.getState().active && useSim.getState().speed > 1) renderDayNight(map);
   }, 5_000);
   return () => {
     clearInterval(timer);
     clearInterval(fast);
     unsub();
-    unsubDemo();
+    unsubSim();
   };
 }
 
@@ -278,11 +278,22 @@ const setAirspace = (status: (typeof airspaceState)['status'], count = airspaceS
   airspaceListeners.forEach((f) => f());
 };
 
-const CLASS_COLOR = ['match', ['get', 'CLASS'], 'A', '#ff6b7d', 'B', '#4f8dff', 'C', '#d65cff', 'D', '#5aa9ff', 'E', '#8fa3bd', '#9aa6b2'];
+const CLASS_COLOR = [
+  'match',
+  ['get', 'kind'],
+  'Prohibited',
+  '#ff2e4d',
+  'Restricted',
+  '#ff5d73',
+  'Danger',
+  '#ffa94d',
+  ['match', ['get', 'CLASS'], 'A', '#ff6b7d', 'B', '#4f8dff', 'C', '#d65cff', 'D', '#5aa9ff', 'E', '#8fa3bd', '#9aa6b2'],
+];
 
 // ---- openAIP (Canada & Europe, CC BY-NC 4.0): static per-country files built at deploy time.
 // Built on first use (the geometry schema is declared further down this module).
-const openAipRow = () => z.tuple([airspaceGeometry, z.string(), z.enum(['A', 'B', 'C', 'D', 'E']), z.string(), z.string(), z.string()]);
+const openAipRow = () =>
+  z.tuple([airspaceGeometry, z.string(), z.enum(['A', 'B', 'C', 'D', 'E', 'SUA']), z.string(), z.string(), z.string(), z.number().nullable(), z.number().nullable()]);
 let openAipIndex: Promise<Record<string, [number, number, number, number]>> | null = null;
 const openAipFiles = new Map<string, Promise<AirspaceFeature[]>>();
 
@@ -305,12 +316,11 @@ function loadOpenAip(cc: string): Promise<AirspaceFeature[]> {
         for (const raw of j.f) {
           const r = schema.safeParse(raw);
           if (!r.success) continue;
-          const [geometry, name, cls, kind, lower, upper] = r.data;
-          out.push({
-            type: 'Feature',
-            geometry: geometry as GeoJSON.Polygon | GeoJSON.MultiPolygon,
-            properties: { name, CLASS: cls, kind, src: 'openaip', lbl: `${cls} ${kind} ${upper}/${lower}` },
-          });
+          const [geometry, name, cls, kind, lower, upper, lowerFt, upperFt] = r.data;
+          const props: AirspaceProperties = { name, CLASS: cls, kind, src: 'openaip', lbl: `${cls === 'SUA' ? kind[0] : `${cls} ${kind}`} ${upper}/${lower}` };
+          if (lowerFt !== null) props.lowerFt = lowerFt;
+          if (upperFt !== null) props.upperFt = upperFt;
+          out.push({ type: 'Feature', geometry: geometry as GeoJSON.Polygon | GeoJSON.MultiPolygon, properties: props });
         }
         return out;
       })
@@ -381,7 +391,49 @@ export function installAirspace(map: MlMap) {
       },
       before,
     );
+  // 3-D volumes from floor to ceiling, shown when the map is tilted.
+  if (!map.getLayer('airspace-3d'))
+    map.addLayer(
+      {
+        id: 'airspace-3d',
+        type: 'fill-extrusion',
+        source: 'airspace',
+        minzoom: AIRSPACE_MIN_ZOOM - 0.5,
+        filter: ['all', ['has', 'upperFt'], ['<', ['get', 'upperFt'], 66000]],
+        layout: { visibility: vis === 'visible' && map.getPitch() > 20 ? 'visible' : 'none' },
+        paint: {
+          'fill-extrusion-color': CLASS_COLOR as never,
+          'fill-extrusion-base': ['*', ['coalesce', ['get', 'lowerFt'], 0], 0.3048],
+          'fill-extrusion-height': ['*', ['get', 'upperFt'], 0.3048],
+          'fill-extrusion-opacity': 0.14,
+        },
+      },
+      before,
+    );
   for (const id of ['airspace-fill', 'airspace-line', 'airspace-label']) map.setLayoutProperty(id, 'visibility', vis);
+  map.setLayoutProperty('airspace-3d', 'visibility', vis === 'visible' && map.getPitch() > 20 ? 'visible' : 'none');
+}
+
+const esc = (v: unknown) => String(v ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+const fmtLimitFt = (ft: unknown) => (typeof ft !== 'number' ? '?' : ft === 0 ? 'Surface' : ft >= 18000 && ft % 100 === 0 ? `FL${ft / 100}` : `${ft.toLocaleString()} ft`);
+
+/** Details for the airspace under a click, unless an aircraft or airport was hit. */
+function airspacePopup(map: MlMap, e: MapLayerMouseEvent) {
+  const blocking = ['ac-icons', 'apt-large-icon', 'apt-other-icon', 'apt-cluster'].filter((l) => map.getLayer(l));
+  if (blocking.length && map.queryRenderedFeatures(e.point, { layers: blocking }).length) return;
+  const feats = (e.features ?? []).slice(0, 4);
+  if (!feats.length) return;
+  const rows = feats
+    .map((f) => {
+      const p = f.properties as Record<string, unknown>;
+      const what = p.CLASS === 'SUA' ? `${esc(p.kind)} area` : `Class ${esc(p.CLASS)}${p.kind ? ` · ${esc(p.kind)}` : ''}`;
+      return `<div class="asp-row"><div class="asp-name">${esc(p.name) || 'Unnamed'}</div><div class="asp-meta">${what}</div><div class="asp-meta">${fmtLimitFt(p.lowerFt)} → ${fmtLimitFt(p.upperFt)} · ${p.src === 'faa' ? 'FAA' : 'openAIP'}</div></div>`;
+    })
+    .join('');
+  new Popup({ closeButton: true, className: 'asp-popup', maxWidth: '280px' })
+    .setLngLat(e.lngLat)
+    .setHTML(`${rows}<div class="asp-foot">Informational only — not for navigation.</div>`)
+    .addTo(map);
 }
 
 // FAA ADDS Class_Airspace layer: only the fields this app reads, validated per feature.
@@ -402,7 +454,7 @@ const airspaceProps = z.object({
 const airspaceFeature = z.object({ type: z.literal('Feature'), geometry: airspaceGeometry, properties: airspaceProps });
 const airspaceCollection = z.object({ type: z.literal('FeatureCollection'), features: z.array(z.unknown()) });
 
-export type AirspaceClass = 'A' | 'B' | 'C' | 'D' | 'E';
+export type AirspaceClass = 'A' | 'B' | 'C' | 'D' | 'E' | 'SUA';
 export interface AirspaceProperties {
   name: string;
   CLASS: AirspaceClass;
@@ -435,7 +487,7 @@ export function parseAirspace(json: unknown): { features: AirspaceFeature[]; dro
       src: 'faa',
       lbl: `${p.CLASS} ${fmtLimit(p.UPPER_VAL, null)}/${fmtLimit(p.LOWER_VAL, p.LOWER_CODE)}`,
     };
-    if (typeof p.LOWER_VAL === 'number') props.lowerFt = p.LOWER_VAL;
+    if (typeof p.LOWER_VAL === 'number') props.lowerFt = p.LOWER_CODE === 'SFC' ? 0 : p.LOWER_VAL;
     if (typeof p.UPPER_VAL === 'number') props.upperFt = p.UPPER_VAL;
     features.push({ type: 'Feature', geometry: f.data.geometry as GeoJSON.Polygon | GeoJSON.MultiPolygon, properties: props });
   }
@@ -517,9 +569,16 @@ export function bindAirspace(map: MlMap): () => void {
     t = setTimeout(() => void refreshAirspace(map), 450);
   };
   map.on('moveend', onMove);
+  const onPitch = () => {
+    if (map.getLayer('airspace-3d')) map.setLayoutProperty('airspace-3d', 'visibility', getSettings().showAirspace && map.getPitch() > 20 ? 'visible' : 'none');
+  };
+  map.on('pitchend', onPitch);
+  const onClick = (e: MapLayerMouseEvent) => airspacePopup(map, e);
+  map.on('click', 'airspace-fill', onClick);
   const unsub = useSettings.subscribe((s, p) => {
     if (s.showAirspace === p.showAirspace) return;
     for (const id of ['airspace-fill', 'airspace-line', 'airspace-label']) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', s.showAirspace ? 'visible' : 'none');
+    onPitch();
     if (s.showAirspace) void refreshAirspace(map);
     else setAirspace('idle', 0);
   });
@@ -527,6 +586,8 @@ export function bindAirspace(map: MlMap): () => void {
   return () => {
     clearTimeout(t);
     map.off('moveend', onMove);
+    map.off('pitchend', onPitch);
+    map.off('click', 'airspace-fill', onClick);
     unsub();
   };
 }
@@ -576,7 +637,7 @@ export function bindLightning(map: MlMap): () => void {
   });
 }
 
-// ---------------------------------------------------------------- route line (demo)
+// ---------------------------------------------------------------- route line
 
 /** Make longitudes continuous so a route across the antimeridian draws as one line. */
 function unwrap(pts: [number, number][]): [number, number][] {
@@ -639,7 +700,7 @@ export function installRoute(map: MlMap) {
 function renderRoute(map: MlMap) {
   const src = map.getSource('route') as GeoJSONSource | undefined;
   if (!src) return;
-  const r = useDemo.getState().active ? demoRoute(ui().selectedId) : undefined;
+  const r = useSim.getState().active ? simRoute(ui().selectedId) : undefined;
   if (!r) {
     src.setData(EMPTY);
     return;
@@ -660,20 +721,20 @@ export function bindRoute(map: MlMap): () => void {
     if (s.selectedId !== p.selectedId) renderRoute(map);
   });
   const onMove = () => {
-    if (!useDemo.getState().active) return;
+    if (!useSim.getState().active) return;
     const c = map.getCenter();
     const b = map.getBounds();
-    demoViewChanged({ lat: c.lat, lon: c.lng, zoom: map.getZoom(), bounds: [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()] });
+    simViewChanged({ lat: c.lat, lon: c.lng, zoom: map.getZoom(), bounds: [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()] });
   };
   map.on('moveend', onMove);
-  const unsubDemo = useDemo.subscribe((s, p) => {
+  const unsubSim = useSim.subscribe((s, p) => {
     if (s.active && !s.loading && p.loading) onMove();
     if (!s.active) renderRoute(map);
   });
   return () => {
     clearInterval(timer);
     unsub();
-    unsubDemo();
+    unsubSim();
     map.off('moveend', onMove);
   };
 }

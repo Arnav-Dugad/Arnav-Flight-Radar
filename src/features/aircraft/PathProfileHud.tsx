@@ -1,9 +1,9 @@
 // Mini side view of the selected aircraft's path (altitude against distance flown),
-// shown next to the 3D flight path when the map is tilted. Demo flights also show the
+// shown next to the 3D flight path when the map is tilted. Flights also show the
 // planned descent to landing (dashed).
 import { motion } from 'motion/react';
 import { distanceNm } from '@shared/geo';
-import { demoPlannedProfile } from '@/data/demo';
+import { simPlannedProfile } from '@/data/world';
 import { fmtAltitude, fmtDistance } from '@/lib/format';
 import { useNow, useSelectedTrack } from '@/lib/hooks';
 import { useSettings } from '@/state/settings';
@@ -30,7 +30,7 @@ export function PathProfileHud() {
     flown.push([d, trail[i]!.alt!]);
   }
   const ahead: [number, number][] = [];
-  const plan = t.ac.provider === 'demo' ? demoPlannedProfile(t.id) : undefined;
+  const plan = t.ac.provider === 'sim' ? simPlannedProfile(t.id) : undefined;
   if (plan?.length) {
     let e = d;
     ahead.push([d, flown[flown.length - 1]![1]]);

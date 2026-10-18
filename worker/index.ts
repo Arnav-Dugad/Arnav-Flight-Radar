@@ -1,17 +1,14 @@
 // Arnav Flight Radar — API Worker.
 //
 // Only /api/* reaches this code (see run_worker_first in wrangler.jsonc); the
-// React app is served directly from static assets. There is deliberately no
-// generic proxy: every upstream URL is built from a fixed template plus
-// validated parameters, inside the UpstreamGate Durable Object.
+// React app is served directly from static assets. Aircraft are simulated in
+// the browser, so no route here ever contacts an aircraft data source. There is
+// deliberately no generic proxy: every upstream URL is built from a fixed
+// template plus validated parameters, inside the UpstreamGate Durable Object.
 
 import { Hono, type Context } from 'hono';
 import { decodeRow, detailShard, IDENT_RE, makeSearchable, searchAirports, type AirportRow, type SearchableAirport } from '../shared/airports';
-import { isValidLat, isValidLon } from '../shared/geo';
-import { classifyAircraftQuery, type AircraftQueryKind } from '../shared/query';
-import { MAX_RADIUS_NM, normalizeRegion, RegionError } from '../shared/region';
-import { computeStats } from '../shared/stats';
-import type { AircraftResponse, ApiError } from '../shared/types';
+import type { ApiError } from '../shared/types';
 import { STATION_RE } from '../shared/weather';
 import type { GateResult, UpstreamGate } from './gate';
 import { PROVIDERS } from './providers';
@@ -118,12 +115,9 @@ app.get('/api/config', (c) =>
   c.json(
     {
       version: c.env.APP_VERSION,
-      aircraft: {
-        maxRadiusNm: MAX_RADIUS_NM,
-        pollIntervalSec: { min: 10, default: 15, max: 60 },
-        sharedSnapshotTtlMs: Number(c.env.AIRCRAFT_CACHE_TTL_MS),
-        freshness: { liveSec: 30, staleSec: 60, lostAfterSec: 90 },
-      },
+      // Every aircraft is generated in the visitor's browser; the API serves
+      // no aircraft data.
+      aircraft: { source: 'simulation' },
       units: {
         altitude: 'ft',
         groundSpeed: 'kt',
@@ -140,72 +134,6 @@ app.get('/api/config', (c) =>
 );
 
 app.get('/api/providers', (c) => c.json({ providers: PROVIDERS }, 200, { 'Cache-Control': 'public, max-age=3600' }));
-
-// ---------------------------------------------------------------- aircraft
-
-function readRegion(c: Context<AppEnv>) {
-  const lat = parseNumber(c.req.query('lat'));
-  const lon = parseNumber(c.req.query('lon'));
-  const radius = parseNumber(c.req.query('radius')) ?? 100;
-  if (!isValidLat(lat) || !isValidLon(lon)) throw new RegionError('lat must be −90…90 and lon −180…180.');
-  return normalizeRegion(lat, lon, radius);
-}
-
-app.get('/api/aircraft/nearby', async (c) => {
-  let q;
-  try {
-    q = readRegion(c);
-  } catch (e) {
-    return err(c, 400, 'invalid_region', (e as Error).message);
-  }
-  return fromGate(c, await gate(c.env).aircraftRegion(q));
-});
-
-app.get('/api/aircraft/search', async (c) => {
-  const q = (c.req.query('q') ?? '').slice(0, 20);
-  const forceRaw = c.req.query('type');
-  const force = (['hex', 'callsign', 'registration', 'sqk'] as const).find((k) => k === forceRaw) as
-    | AircraftQueryKind
-    | undefined;
-  const parsed = classifyAircraftQuery(q, force);
-  if (!parsed) return err(c, 400, 'invalid_query', 'Enter a callsign, registration, ICAO hex address or squawk code.');
-  const r = await gate(c.env).aircraftLookup(parsed.kind, parsed.value, false);
-  if (!r.ok) return fromGate(c, r);
-  // Tag the interpretation so the UI can offer alternatives.
-  return new Response(`{"interpretedAs":${JSON.stringify(parsed)},${r.body.slice(1)}`, {
-    headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
-  });
-});
-
-app.get('/api/aircraft/:icao', async (c) => {
-  const hex = c.req.param('icao').toLowerCase();
-  if (!/^~?[0-9a-f]{6}$/.test(hex)) return err(c, 400, 'invalid_icao', 'ICAO address must be 6 hexadecimal characters.');
-  if (hex.startsWith('~')) return err(c, 400, 'non_icao', 'Non-ICAO (TIS-B) addresses cannot be looked up individually.');
-  return fromGate(c, await gate(c.env).aircraftLookup('hex', hex, c.req.query('raw') === '1'));
-});
-
-app.get('/api/analytics/region', async (c) => {
-  let q;
-  try {
-    q = readRegion(c);
-  } catch (e) {
-    return err(c, 400, 'invalid_region', (e as Error).message);
-  }
-  const r = await gate(c.env).aircraftRegion(q);
-  if (!r.ok) return fromGate(c, r);
-  const data = JSON.parse(r.body) as AircraftResponse;
-  return c.json(
-    {
-      population: `Aircraft reported by ${data.attribution.name} within ${data.query.radiusNm} NM of ${data.query.lat}, ${data.query.lon}. Regional sample, not a worldwide total.`,
-      query: data.query,
-      fetchedAt: data.fetchedAt,
-      stale: data.stale,
-      stats: computeStats(data.aircraft),
-    },
-    200,
-    { 'Cache-Control': 'no-store' },
-  );
-});
 
 // ---------------------------------------------------------------- airports
 // Backed by the static OurAirports snapshot (public domain) in /data/airports.
@@ -249,6 +177,52 @@ app.get('/api/airports/:ident', async (c) => {
   const detail = shard[ident];
   if (!detail) return err(c, 404, 'not_found', 'Airport not found.');
   return c.json(detail, 200, { 'Cache-Control': 'public, max-age=86400' });
+});
+
+// ---------------------------------------------------------------- web-app manifest
+// The static /manifest.webmanifest plus one shortcut per pinned airport. Built
+// purely from constants and validated identifiers: nothing is fetched and no
+// caller-supplied text is echoed except idents that pass IDENT_RE.
+
+const MANIFEST_BASE = {
+  name: 'Arnav Flight Radar',
+  short_name: 'Arnav Radar',
+  description: 'A simulated world of air traffic — real airlines, airports and aircraft types on a premium radar map.',
+  start_url: '/',
+  display: 'standalone',
+  background_color: '#03060B',
+  theme_color: '#03060B',
+  icons: [
+    { src: '/brand/icon-192.png', sizes: '192x192', type: 'image/png' },
+    { src: '/brand/icon-512.png', sizes: '512x512', type: 'image/png' },
+    { src: '/brand/favicon.svg', sizes: 'any', type: 'image/svg+xml' },
+  ],
+} as const;
+
+const MAX_MANIFEST_PINS = 4;
+
+function readPins(raw: string | undefined): string[] {
+  if (!raw || raw.length > 200) return [];
+  const out: string[] = [];
+  for (const part of raw.split(',')) {
+    const ident = part.trim().toUpperCase();
+    if (!IDENT_RE.test(ident) || out.includes(ident)) continue;
+    out.push(ident);
+    if (out.length === MAX_MANIFEST_PINS) break;
+  }
+  return out;
+}
+
+app.get('/api/manifest.webmanifest', (c) => {
+  const shortcuts = readPins(c.req.query('pins')).map((ident) => ({
+    name: `${ident} board`,
+    short_name: ident,
+    url: `/?apt=${ident}`,
+    icons: [{ src: '/brand/icon-192.png', sizes: '192x192', type: 'image/png' }],
+  }));
+  return new Response(JSON.stringify({ ...MANIFEST_BASE, shortcuts }), {
+    headers: { 'Content-Type': 'application/manifest+json', 'Cache-Control': 'public, max-age=3600' },
+  });
 });
 
 // ---------------------------------------------------------------- weather

@@ -454,3 +454,43 @@ button:disabled {
   pointer-events: auto;
   cursor: grab;
 }
+
+/* Airspace details popup (MapLibre), styled as Apple-like glass. */
+.maplibregl-popup.asp-popup .maplibregl-popup-content {
+  background: var(--surface);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border: 0.5px solid var(--line-strong);
+  box-shadow: var(--glass-shadow);
+  border-radius: 14px;
+  padding: 10px 28px 10px 12px;
+  color: var(--fg);
+  font-family: var(--font-sans);
+}
+.maplibregl-popup.asp-popup .maplibregl-popup-tip {
+  display: none;
+}
+.maplibregl-popup.asp-popup .maplibregl-popup-close-button {
+  color: var(--fg-2);
+  font-size: 16px;
+  right: 6px;
+  top: 4px;
+}
+.asp-row + .asp-row {
+  border-top: 0.5px solid var(--line);
+  margin-top: 6px;
+  padding-top: 6px;
+}
+.asp-name {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.asp-meta {
+  font-size: 11px;
+  color: var(--fg-2);
+}
+.asp-foot {
+  font-size: 10px;
+  color: var(--fg-3);
+  margin-top: 6px;
+}

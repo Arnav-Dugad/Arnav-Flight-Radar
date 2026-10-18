@@ -53,7 +53,7 @@ export function useSelectionAnnouncer() {
         const u = getSettings().units;
         const parts = [
           a.callsign ?? a.registration ?? a.icao24.toUpperCase(),
-          a.provider === 'demo' ? 'simulated demo aircraft' : (a.typeDescription ?? CLASS_LABEL[classifyAircraft(a)]),
+          a.typeDescription ?? CLASS_LABEL[classifyAircraft(a)],
           a.onGround ? 'on the ground' : `altitude ${fmtAltitude(a.altitudeBarometric ?? a.altitudeGeometric, u.altitude)}`,
           `ground speed ${fmtSpeed(a.groundSpeed, u.speed)}`,
           `track ${fmtBearing(a.track)}`,

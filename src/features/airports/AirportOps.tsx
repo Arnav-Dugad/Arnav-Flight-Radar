@@ -1,84 +1,35 @@
-// Airport operations: runway in use (inferred), movement chart, and — in demo
-// mode only — a simulated arrivals/departures board.
-import { useQuery } from '@tanstack/react-query';
+// Airport operations for the simulated world: runway in use, hourly movements,
+// arrivals / departures boards, aircraft on the ground and the departure queue.
 import { useMemo, useState } from 'react';
-import { approachTargets, inferRunwayInUse, runwayEnds } from '@shared/approach';
 import type { AirportDetail } from '@shared/types';
 import { RunwayIcon } from '@/components/icons';
-import { Tabs } from '@/components/ui/Data';
-import { demoBoard, demoMovementsByHour, demoNow, demoRunwayInUse, type BoardRow } from '@/data/demo';
-import { api } from '@/lib/api';
+import { simBoard, simDepartureQueue, simMovementsByHour, simNow, simRunwayInUse, simStands, type BoardRow } from '@/data/world';
+import { cn } from '@/lib/cn';
 import { fmtHmUTC } from '@/lib/format';
 import { useNow, useTrafficVersion } from '@/lib/hooks';
+import { fmtHmIn, tzAbbrev, useTimeZone } from '@/lib/tz';
 import { focusAircraft } from '@/map/controller';
 import { traffic } from '@/state/traffic';
 import { useUI } from '@/state/ui';
-import { AirlineLogo } from '@/features/aircraft/RouteCard';
-import { fmtHmIn, tzAbbrev, useTimeZone } from '@/lib/tz';
+import { AirlineLogo, STATUS_TEXT } from '@/features/aircraft/FlightParts';
 
 // ---------------------------------------------------------------- runway in use
 
-export function RunwayInUseCard({ a, demo }: { a: AirportDetail; demo: boolean }) {
-  useTrafficVersion();
-  const station = a.icao && /^[A-Z]{4}$/.test(a.icao) ? a.icao : /^[A-Z]{4}$/.test(a.ident) ? a.ident : null;
-  const metar = useQuery({
-    queryKey: ['metar', station],
-    queryFn: ({ signal }) => api.metar([station!], signal),
-    enabled: !!station && !demo,
-    staleTime: 5 * 60_000,
-    retry: 0,
-  });
-  const ends = useMemo(() => runwayEnds(a.runways), [a.runways]);
-  if (demo) {
-    const rw = demoRunwayInUse(a.ident);
-    if (!rw) return null;
-    return (
-      <Card
-        runway={rw.runway}
-        title="Runway in use (simulated)"
-        body={
-          rw.basis === 'metar'
-            ? `Demo traffic uses the runway best aligned with the real reported wind (${rw.wind}).`
-            : 'Demo traffic lands and departs on this runway direction (simulated wind).'
-        }
-      />
-    );
-  }
-  if (!ends.length) return null;
-  const m = metar.data?.data[0];
-  const guess = inferRunwayInUse(ends, approachTargets(ends, a.elevationFt, traffic.current()), m ? { dirDeg: m.windDirDeg, speedKt: m.windSpeedKt } : undefined);
-  if (!guess) {
-    return (
-      <Card
-        runway="—"
-        title="Runway in use"
-        body={m && (m.windSpeedKt ?? 0) < 3 ? 'Calm or variable wind and no aircraft on final: no reliable guess.' : 'No aircraft on final and no usable wind report: no guess.'}
-      />
-    );
-  }
-  return (
-    <Card
-      runway={guess.runway}
-      title="Runway in use · inferred"
-      body={
-        guess.basis === 'approaches'
-          ? `${guess.count} aircraft observed lined up on final for ${guess.runway}.`
-          : `Best aligned with the reported wind (${m?.windDirDeg}° ${m?.windSpeedKt} kt, ≈${guess.headwindKt} kt headwind). Wind-based guess — noise rules and ATC choices can differ.`
-      }
-    />
-  );
-}
-
-function Card({ runway, title, body }: { runway: string; title: string; body: string }) {
+export function RunwayInUseCard({ a }: { a: AirportDetail }) {
+  useNow(10_000);
+  const rw = simRunwayInUse(a.ident);
+  if (!rw) return null;
   return (
     <div className="glass-2 flex items-center gap-3 rounded-[16px] p-3">
-      <div className="grid size-12 shrink-0 place-items-center rounded-[12px] bg-[var(--accent-soft,rgba(92,225,255,0.12))] text-[var(--accent)]">
+      <div className="grid size-12 shrink-0 place-items-center rounded-[12px] bg-[rgba(92,225,255,0.12)] text-[var(--accent)]">
         <RunwayIcon size={20} />
       </div>
       <div className="min-w-0 flex-1">
-        <div className="eyebrow">{title}</div>
-        <div className="tnum text-[20px] font-semibold leading-tight text-fg">{runway}</div>
-        <p className="text-[11px] leading-snug text-fg-3">{body}</p>
+        <div className="eyebrow">Runway in use</div>
+        <div className="tnum text-[20px] font-semibold leading-tight text-fg">{rw.runway}</div>
+        <p className="text-[11px] leading-snug text-fg-3">
+          {rw.basis === 'metar' ? `Best aligned with the real reported wind (${rw.wind}).` : 'Chosen from the simulated wind (no recent weather report).'}
+        </p>
       </div>
     </div>
   );
@@ -96,7 +47,7 @@ const CW = 340;
 const CH = 132;
 const CP = { l: 26, r: 8, t: 10, b: 20 };
 
-export function MovementChart({ buckets, binMin, title, note, nowT }: { buckets: MovementBucket[]; binMin: number; title: string; note: string; nowT?: number }) {
+export function MovementChart({ buckets, binMin, title, note, nowT, tz }: { buckets: MovementBucket[]; binMin: number; title: string; note: string; nowT?: number; tz?: string | null }) {
   const [hover, setHover] = useState<number | null>(null);
   const max = Math.max(1, ...buckets.map((b) => Math.max(b.arrivals, b.departures)));
   const nice = max <= 4 ? 4 : max <= 10 ? 10 : Math.ceil(max / 10) * 10;
@@ -104,6 +55,7 @@ export function MovementChart({ buckets, binMin, title, note, nowT }: { buckets:
   const bw = Math.max(2, Math.min(14, (slot - 4) / 2));
   const y = (v: number) => CP.t + (1 - v / nice) * (CH - CP.t - CP.b);
   const h = hover !== null ? buckets[hover] : undefined;
+  const label = (t: number) => (tz ? fmtHmIn(t, tz) : fmtHmUTC(t).slice(0, 5));
   return (
     <figure className="glass-2 relative rounded-[16px] p-2.5">
       <figcaption className="flex flex-wrap items-center justify-between gap-2 px-1 pb-1">
@@ -117,7 +69,13 @@ export function MovementChart({ buckets, binMin, title, note, nowT }: { buckets:
           </span>
         </span>
       </figcaption>
-      <svg viewBox={`0 0 ${CW} ${CH}`} className="w-full" role="img" aria-label={`${title}: ${buckets.map((b) => `${fmtHmUTC(b.t)} ${b.arrivals} arrivals ${b.departures} departures`).join('; ')}`} onMouseLeave={() => setHover(null)}>
+      <svg
+        viewBox={`0 0 ${CW} ${CH}`}
+        className="w-full"
+        role="img"
+        aria-label={`${title}: ${buckets.map((b) => `${label(b.t)} ${b.arrivals} arrivals ${b.departures} departures`).join('; ')}`}
+        onMouseLeave={() => setHover(null)}
+      >
         {[0, nice / 2, nice].map((v) => (
           <g key={v}>
             <line x1={CP.l} x2={CW - CP.r} y1={y(v)} y2={y(v)} stroke="var(--viz-grid)" />
@@ -136,7 +94,7 @@ export function MovementChart({ buckets, binMin, title, note, nowT }: { buckets:
               {b.departures > 0 && <rect x={x0 + 1} y={y(b.departures)} width={bw} height={y(0) - y(b.departures)} rx={Math.min(3, bw / 2)} fill="var(--viz-2)" opacity={future ? 0.45 : 1} />}
               {(i % Math.ceil(buckets.length / 6) === 0 || i === buckets.length - 1) && (
                 <text x={x0} y={CH - 6} textAnchor="middle" fontSize="9" fill="var(--fg-3)" className="tnum">
-                  {fmtHmUTC(b.t).slice(0, 5)}
+                  {label(b.t)}
                 </text>
               )}
             </g>
@@ -146,7 +104,7 @@ export function MovementChart({ buckets, binMin, title, note, nowT }: { buckets:
       {h && (
         <div className="tnum pointer-events-none absolute right-3 top-9 rounded-[10px] border border-[var(--line)] bg-[var(--surface-solid)] px-2.5 py-1.5 text-[11px] text-fg shadow-lg">
           <div className="font-semibold">
-            {fmtHmUTC(h.t).slice(0, 5)}–{fmtHmUTC(h.t + binMin * 60_000)}
+            {label(h.t)}–{label(h.t + binMin * 60_000)}
           </div>
           <div className="text-fg-2">
             {h.arrivals} arrivals · {h.departures} departures
@@ -158,25 +116,20 @@ export function MovementChart({ buckets, binMin, title, note, nowT }: { buckets:
   );
 }
 
-// ---------------------------------------------------------------- demo board
+export function HourlyMovements({ a }: { a: AirportDetail }) {
+  const now = useNow(60_000);
+  const tz = useTimeZone(a.lat, a.lon);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const hourly = useMemo(() => simMovementsByHour(a.ident, 6), [a.ident, Math.floor(now / 60_000)]);
+  if (!hourly) return null;
+  return <MovementChart buckets={hourly} binMin={60} title="Movements per hour" note="Local time. Faded bars are the hours ahead (simulated schedule)." nowT={Math.floor(simNow() / 3_600_000) * 3_600_000} tz={tz} />;
+}
 
-const STATUS_COLOR: Record<string, string> = {
-  Delayed: 'text-[#ffb547]',
-  Holding: 'text-[#ffb547]',
-  Diverted: 'text-[#ff8a9a]',
-  Scheduled: 'text-fg-3',
-  Boarding: 'text-[#ffd28a]',
-  Taxiing: 'text-[#ffd28a]',
-  'En route': 'text-[#7ee2a8]',
-  Approach: 'text-[#5ce1ff]',
-  Landed: 'text-[#5ce1ff]',
-  Arrived: 'text-fg-2',
-  Departed: 'text-[#7ee2a8]',
-};
+// ---------------------------------------------------------------- boards
 
 function BoardRows({ rows, dep, tz }: { rows: BoardRow[]; dep: boolean; tz: string | null }) {
   const select = useUI((s) => s.select);
-  if (!rows.length) return <p className="glass-2 rounded-[14px] px-3.5 py-3 text-[12px] text-fg-3">No simulated {dep ? 'departures' : 'arrivals'} in this window.</p>;
+  if (!rows.length) return <p className="glass-2 rounded-[14px] px-3.5 py-3 text-[12px] text-fg-3">No {dep ? 'departures' : 'arrivals'} in this window.</p>;
   return (
     <ul className="glass-2 divide-y divide-[var(--line)] overflow-hidden rounded-[16px]">
       {rows.map((r) => {
@@ -195,8 +148,7 @@ function BoardRows({ rows, dep, tz }: { rows: BoardRow[]; dep: boolean; tz: stri
             >
               <div className="tnum w-[50px] shrink-0">
                 <div className="text-[13px] font-semibold text-fg">{fmtHmIn(r.scheduled, tz)}</div>
-                <div className={`text-[10.5px] ${late ? 'text-[#ffb547]' : 'text-fg-3'}`}>{fmtHmIn(r.actual ?? r.estimated, tz)}</div>
-                <div className="text-[9.5px] text-fg-3">{fmtHmUTC(r.scheduled).slice(0, 5)}Z</div>
+                <div className={cn('text-[10.5px]', r.status === 'Canceled' ? 'text-[#ff8a9a] line-through' : late ? 'text-[#ffb547]' : 'text-fg-3')}>{fmtHmIn(r.actual ?? r.estimated, tz)}</div>
               </div>
               <AirlineLogo icao={r.airlineIcao} code={r.airlineIata ?? r.flight.slice(0, 2)} size={26} name={r.airline} wide />
               <div className="min-w-0 flex-1">
@@ -208,11 +160,15 @@ function BoardRows({ rows, dep, tz }: { rows: BoardRow[]; dep: boolean; tz: stri
                   {r.gate ? ` · Stand ${r.gate}` : ''}
                   {r.codeshares.length ? ` · also ${r.codeshares.join(', ')}` : ''}
                 </div>
-                {r.divertedTo && <div className="text-[10.5px] text-[#ff8a9a]">Diverted to {r.divertedTo.iata ?? r.divertedTo.ident} ({r.divertedTo.city ?? r.divertedTo.name})</div>}
+                {r.divertedTo && (
+                  <div className="text-[10.5px] text-[#ff8a9a]">
+                    Diverted to {r.divertedTo.iata ?? r.divertedTo.ident} ({r.divertedTo.city ?? r.divertedTo.name})
+                  </div>
+                )}
               </div>
-              <span className={`shrink-0 text-right text-[11px] font-semibold ${STATUS_COLOR[r.status] ?? 'text-fg-2'}`}>
+              <span className={cn('shrink-0 text-right text-[11px] font-semibold', STATUS_TEXT[r.status])}>
                 {r.status}
-                {late && r.status !== 'Arrived' && r.status !== 'Landed' && <span className="block text-[10px] font-normal text-[#ffb547]">+{r.delayMin} min</span>}
+                {late && r.status !== 'Arrived' && r.status !== 'Landed' && r.status !== 'Canceled' && <span className="block text-[10px] font-normal text-[#ffb547]">+{r.delayMin} min</span>}
               </span>
             </button>
           </li>
@@ -222,31 +178,93 @@ function BoardRows({ rows, dep, tz }: { rows: BoardRow[]; dep: boolean; tz: stri
   );
 }
 
-export function DemoAirportOps({ a }: { a: AirportDetail }) {
+export function BoardTab({ a, kind }: { a: AirportDetail; kind: 'arrivals' | 'departures' }) {
   const now = useNow(5000);
   const tz = useTimeZone(a.lat, a.lon);
-  const [tab, setTab] = useState<'arrivals' | 'departures'>('arrivals');
-  const board = useMemo(() => demoBoard(a.ident, { pastMin: 45, aheadMin: 150 }), [a.ident, Math.floor(now / 15_000)]); // eslint-disable-line react-hooks/exhaustive-deps
-  const hourly = useMemo(() => demoMovementsByHour(a.ident, 6), [a.ident, Math.floor(now / 60_000)]); // eslint-disable-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const board = useMemo(() => simBoard(a.ident, { pastMin: 45, aheadMin: 180 }), [a.ident, Math.floor(now / 15_000)]);
+  const [showAll, setShowAll] = useState(false);
   if (!board) return null;
-  const rows = tab === 'arrivals' ? board.arrivals : board.departures;
+  const rows = board[kind];
   return (
     <div className="space-y-3">
-      <RunwayInUseCard a={a} demo />
-      {hourly && <MovementChart buckets={hourly} binMin={60} title="Movements per hour (simulated)" note="Simulated schedule. Faded bars are the hours ahead." nowT={Math.floor(demoNow() / 3_600_000) * 3_600_000} />}
-      <Tabs
-        label="Flight board"
-        value={tab}
-        onChange={setTab}
-        tabs={[
-          { id: 'arrivals', label: `Arrivals (${board.arrivals.length})` },
-          { id: 'departures', label: `Departures (${board.departures.length})` },
-        ]}
-      />
-      <BoardRows rows={rows.slice(0, 60)} dep={tab === 'departures'} tz={tz} />
+      <BoardRows rows={showAll ? rows : rows.slice(0, 40)} dep={kind === 'departures'} tz={tz} />
+      {rows.length > 40 && !showAll && (
+        <button type="button" onClick={() => setShowAll(true)} className="w-full rounded-[12px] py-2 text-[12px] font-medium text-[var(--accent)] hover:bg-[var(--line)]">
+          Show all {rows.length} {kind}
+        </button>
+      )}
       <p className="text-[11px] leading-snug text-fg-3">
-        Simulated board (demo mode): real airlines and airports, invented flights, codeshares and times. Local time ({tzAbbrev(demoNow(), tz)}), then the estimate or actual time, then UTC. Stands from OpenStreetMap where mapped.
+        Simulated schedule: real airlines and airports, invented flights, codeshares and times. Local time ({tzAbbrev(simNow(), tz)}), then the estimated or actual time. Stands
+        from OpenStreetMap where mapped.
       </p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- on the ground
+
+export function GroundTab({ a }: { a: AirportDetail }) {
+  useTrafficVersion();
+  const now = useNow(3000);
+  const tz = useTimeZone(a.lat, a.lon);
+  const select = useUI((s) => s.select);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const queue = useMemo(() => simDepartureQueue(a.ident), [a.ident, Math.floor(now / 3000)]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const stands = useMemo(() => simStands(a.ident), [a.ident, Math.floor(now / 10_000)]);
+  const onGround = traffic
+    .current()
+    .filter((ac) => ac.onGround && Math.abs(ac.lat - a.lat) < 0.06 && Math.abs(ac.lon - a.lon) < 0.08)
+    .sort((x, y) => (x.callsign ?? '').localeCompare(y.callsign ?? ''));
+  const occupied = stands.filter((s) => s.occupied).length;
+  return (
+    <div className="space-y-4">
+      <section className="space-y-2">
+        <h3 className="eyebrow">Departure queue</h3>
+        {queue.length === 0 ? (
+          <p className="glass-2 rounded-[14px] px-3.5 py-3 text-[12px] text-fg-3">No departures taxiing right now.</p>
+        ) : (
+          <ol className="glass-2 divide-y divide-[var(--line)] overflow-hidden rounded-[16px]">
+            {queue.slice(0, 15).map((q, i) => (
+              <li key={q.id}>
+                <button type="button" onClick={() => select(q.id)} className="tnum flex w-full items-center gap-3 px-3.5 py-2 text-left hover:bg-[var(--line)]">
+                  <span className="w-4 text-[11px] text-fg-3">{i + 1}</span>
+                  <span className="min-w-0 flex-1 truncate text-[12.5px] text-fg">
+                    <span className="font-semibold">{q.flight}</span> <span className="text-fg-2">→ {q.to.iata ?? q.to.ident} · {q.type}</span>
+                  </span>
+                  <span className={cn('shrink-0 text-[11px] font-semibold', q.state === 'Lining up' ? 'text-[#7ee2a8]' : q.state === 'Holding short' ? 'text-[#ffd28a]' : 'text-fg-2')}>{q.state}</span>
+                  <span className="shrink-0 text-[11px] text-fg-3">Rwy {q.runway} · {fmtHmIn(q.takeoff, tz)}</span>
+                </button>
+              </li>
+            ))}
+          </ol>
+        )}
+      </section>
+      {stands.length > 0 && (
+        <div className="glass-2 flex items-center justify-between rounded-[14px] px-3.5 py-2.5 text-[12px]">
+          <span className="text-fg-2">Stands occupied (OpenStreetMap stands)</span>
+          <span className="tnum font-semibold text-fg">
+            {occupied} / {stands.length}
+          </span>
+        </div>
+      )}
+      <section className="space-y-2">
+        <h3 className="eyebrow">On the ground ({onGround.length})</h3>
+        <ul className="glass-2 divide-y divide-[var(--line)] overflow-hidden rounded-[16px]">
+          {onGround.slice(0, 60).map((ac) => (
+            <li key={ac.id}>
+              <button type="button" onClick={() => select(ac.id)} className="tnum flex w-full items-center justify-between gap-3 px-3.5 py-2 text-left hover:bg-[var(--line)]">
+                <span className="truncate text-[12.5px] text-fg">
+                  <span className="font-semibold">{ac.callsign}</span> <span className="text-fg-2">{ac.typeDescription}</span>
+                </span>
+                <span className="shrink-0 text-[11px] text-fg-3">{(ac.groundSpeed ?? 0) > 2 ? 'Taxiing' : 'Parked'}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+        <p className="text-[11px] text-fg-3">Transponders switch on about 40 minutes before departure and off 15 minutes after arrival.</p>
+      </section>
     </div>
   );
 }

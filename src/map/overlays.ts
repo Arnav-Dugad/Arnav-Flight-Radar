@@ -1,5 +1,4 @@
 // Secondary map overlays:
-//   • Coverage — the region actually queried for live aircraft (and recent ones).
 //   • Weather  — METAR stations in view (flight category + reported wind). These are
 //                real station observations; nothing is interpolated into a fake field.
 //   • Measure  — great-circle distance / bearing between user-placed points.
@@ -23,58 +22,6 @@ export const FLIGHT_CAT_COLOR: Record<string, string> = {
   IFR: '#ff5d73',
   LIFR: '#d36bff',
 };
-
-// ---------------------------------------------------------------- coverage
-
-export function installCoverage(map: MlMap) {
-  if (!map.getSource('coverage')) map.addSource('coverage', { type: 'geojson', data: EMPTY });
-  const dark = getSettings().mapStyle !== 'arctic';
-  const before = map.getLayer('ac-heat') ? 'ac-heat' : undefined;
-  const vis = getSettings().showCoverage ? 'visible' : 'none';
-  if (!map.getLayer('coverage-fill'))
-    map.addLayer(
-      {
-        id: 'coverage-fill',
-        type: 'fill',
-        source: 'coverage',
-        filter: ['==', ['get', 'current'], 1],
-        layout: { visibility: vis },
-        paint: { 'fill-color': dark ? '#5ce1ff' : '#0a84d6', 'fill-opacity': 0.025 },
-      },
-      before,
-    );
-  if (!map.getLayer('coverage-line'))
-    map.addLayer(
-      {
-        id: 'coverage-line',
-        type: 'line',
-        source: 'coverage',
-        layout: { visibility: vis },
-        paint: {
-          'line-color': dark ? '#5ce1ff' : '#0a84d6',
-          'line-opacity': ['case', ['==', ['get', 'current'], 1], 0.55, 0.16],
-          'line-width': ['case', ['==', ['get', 'current'], 1], 1.4, 1],
-          'line-dasharray': [3, 3],
-        },
-      },
-      before,
-    );
-  updateCoverage(map);
-}
-
-export function updateCoverage(map: MlMap) {
-  const src = map.getSource('coverage') as GeoJSONSource | undefined;
-  if (!src) return;
-  const current = traffic.meta?.provider === 'demo' ? undefined : traffic.meta?.region;
-  const features: GeoJSON.Feature[] = traffic.regionsQueried.map(({ region }) => ({
-    type: 'Feature',
-    geometry: { type: 'Polygon', coordinates: [circlePolygon(region.lat, region.lon, region.radiusNm)] },
-    properties: {
-      current: current && current.lat === region.lat && current.lon === region.lon && current.radiusNm === region.radiusNm ? 1 : 0,
-    },
-  }));
-  src.setData({ type: 'FeatureCollection', features });
-}
 
 // ---------------------------------------------------------------- weather
 

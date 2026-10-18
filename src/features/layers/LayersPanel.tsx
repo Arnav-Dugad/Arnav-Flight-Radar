@@ -10,7 +10,7 @@ import { cn } from '@/lib/cn';
 import { FLIGHT_CAT_COLOR, getRadarState, onRadarChange, onWeatherChange, weatherNotice } from '@/map/overlays';
 import { AIRSPACE_MIN_ZOOM, airspaceState, onAirspaceChange } from '@/map/extraOverlays';
 import { STYLE_META } from '@/map/styles';
-import { useSettings, type ColorMode, type TrailColorMode } from '@/state/settings';
+import { useSettings, type ColorMode, type LabelContent, type TrailColorMode } from '@/state/settings';
 import { useUI } from '@/state/ui';
 import { Legend } from './Legend';
 
@@ -152,8 +152,14 @@ export function LayersPanel() {
             </div>
           )}
           <Toggle
+            label="Airport disruptions"
+            description="Airports coloured by a 0–5 disruption index from delays, holding, diversions and cancellations over the last hour."
+            checked={s.showDisruptions}
+            onChange={(v) => s.set('showDisruptions', v)}
+          />
+          <Toggle
             label="Day & night"
-            description="Sunlit and dark sides of the Earth with civil, nautical and astronomical twilight. Computed from the clock (the simulated clock in demo mode)."
+            description="Sunlit and dark sides of the Earth with civil, nautical and astronomical twilight. Computed from the simulation clock, with the Moon and its phase."
             checked={s.showDayNight}
             onChange={(v) => s.set('showDayNight', v)}
           />
@@ -178,7 +184,7 @@ export function LayersPanel() {
                 <span>≥ 145 flashes/km²/yr</span>
               </div>
               <p className="text-fg-3">
-                Climatology, not live data. Imagery: NASA GIBS (LIS Very High Resolution Full Climatology), coarse detail, so it fades out past zoom 6.{' '}
+                A long-term average, not current lightning. Imagery: NASA GIBS (LIS Very High Resolution Full Climatology), coarse detail, so it fades out past zoom 6.{' '}
                 <a href="https://earthdata.nasa.gov/gibs" target="_blank" rel="noopener" className="text-[var(--accent)] hover:underline">
                   NASA Earthdata
                 </a>
@@ -214,9 +220,8 @@ export function LayersPanel() {
             checked={s.showRangeRings}
             onChange={(v) => s.set('showRangeRings', v)}
           />
-          <Toggle label="Live coverage area" description="Outline of the region actually queried for live aircraft." checked={s.showCoverage} onChange={(v) => s.set('showCoverage', v)} />
-          <Toggle label="Traffic density heatmap" description="Built only from aircraft positions currently retrieved." checked={s.showHeatmap} onChange={(v) => s.set('showHeatmap', v)} />
-          <Toggle label="Trails for all aircraft" description="Short trails from positions observed this session." checked={s.showAllTrails} onChange={(v) => s.set('showAllTrails', v)} />
+          <Toggle label="Traffic density heatmap" description="Where aircraft are concentrated right now." checked={s.showHeatmap} onChange={(v) => s.set('showHeatmap', v)} />
+          <Toggle label="Trails for all aircraft" description="Short trails behind every aircraft in view." checked={s.showAllTrails} onChange={(v) => s.set('showAllTrails', v)} />
           <Toggle label="3D terrain" description="Elevation from AWS Terrain Tiles; tilt the map to see relief." checked={s.terrain3d} onChange={(v) => s.set('terrain3d', v)} />
           <Toggle label="Radar sweep" description="Decorative scan overlay. Off by default." checked={s.radarSweep} onChange={(v) => s.set('radarSweep', v)} />
         </Section>
@@ -236,7 +241,7 @@ export function LayersPanel() {
               { value: 'altitude', label: 'Altitude' },
               { value: 'speed', label: 'Speed' },
               { value: 'vertical', label: 'V/S' },
-              { value: 'freshness', label: 'Age' },
+              { value: 'classic', label: 'Classic' },
               { value: 'mono', label: 'Mono' },
             ]}
           />
@@ -267,6 +272,20 @@ export function LayersPanel() {
               { value: 'low', label: 'Low' },
               { value: 'normal', label: 'Normal' },
               { value: 'high', label: 'High' },
+            ]}
+          />
+          <SegmentedControl<LabelContent>
+            size="sm"
+            label="Aircraft labels show"
+            value={s.labelContent}
+            onChange={(v) => s.set('labelContent', v)}
+            options={[
+              { value: 'flight', label: 'Flight' },
+              { value: 'callsign', label: 'Callsign' },
+              { value: 'registration', label: 'Reg.' },
+              { value: 'type', label: 'Type' },
+              { value: 'route', label: 'Route' },
+              { value: 'altitude', label: 'Alt.' },
             ]}
           />
         </Section>

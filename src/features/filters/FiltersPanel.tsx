@@ -62,7 +62,7 @@ export function FiltersPanel() {
       ariaLabel="Aircraft filters"
       subtitle={
         <span className="tnum">
-          <AnimatedNumber value={matching} /> of {all.length} observed aircraft match{n ? ` · ${n} active` : ''}
+          <AnimatedNumber value={matching} /> of {all.length} aircraft match{n ? ` · ${n} active` : ''}
         </span>
       }
       footer={

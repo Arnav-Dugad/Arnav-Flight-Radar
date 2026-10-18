@@ -84,5 +84,16 @@ export function Legend() {
         </span>
       </div>
     );
-  return <p className="text-[11.5px] text-fg-3">All aircraft drawn in one colour; stale aircraft are faded.</p>;
+  if (mode === 'classic')
+    return (
+      <div className="flex gap-4 text-[11.5px] text-fg-2">
+        <span className="flex items-center gap-1.5">
+          <span className="size-2.5 rounded-full bg-[#ffcc33]" /> Airborne
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="size-2.5 rounded-full bg-[#c9a74d]" /> On the ground
+        </span>
+      </div>
+    );
+  return <p className="text-[11.5px] text-fg-3">All aircraft drawn in one colour.</p>;
 }

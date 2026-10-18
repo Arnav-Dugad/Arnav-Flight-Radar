@@ -1,94 +1,53 @@
 # Data sources and how they are respected
 
+Arnav Flight Radar uses **no live aircraft data**. Every flight is invented by the simulator in the
+browser (see [ARCHITECTURE.md](ARCHITECTURE.md)). The sources below supply the real world that the
+simulation runs in: airports, runways, airlines, ground layouts, weather, airspace and imagery.
+
 | Source | Terms (as verified October 2026) | How this project complies |
 | --- | --- | --- |
-| **adsb.fi open data** (`opendata.adsb.fi/api`) | Personal, non-commercial use. 1 request/second on public endpoints. Max query radius 250 NM. Attribution with a link. No resale. Repeated 4xx/429 responses can trigger IP restrictions. | Non-commercial personal project with no ads or paywall. One global Durable Object spaces calls **≥ 1.1 s** apart and refuses rather than queueing beyond 4 s. Regional snapshots are shared by all visitors for 10 s, identical requests are coalesced, and inputs are validated server-side so we never send malformed (4xx) requests. A circuit breaker honours `Retry-After`. The radius is clamped to 250 NM. The feeder-only global `/v2/snapshot` endpoint is never used. Credited in the status bar and Data panel. |
-| **AviationWeather.gov** | 100 requests/minute, custom User-Agent recommended, no browser CORS, not for operational planning. | Server-side only, paced ≥ 1.5 s (≤ 40/min) globally. METAR cached 5–10 min, TAF 15 min. Bounding boxes limited and snapped to whole degrees. Disclaimer shown with weather. |
-| **OurAirports** | Public Domain. | Downloaded **at build time** into static files (no runtime load on OurAirports). Credited. |
+| **OurAirports** | Public Domain. | Downloaded **at build time** (`npm run data:airports`) into static files: airports, runways, frequencies. No runtime load on OurAirports. Credited. |
+| **OpenFlights airlines** | ODbL 1.0: attribution, share-alike for derived databases. | Downloaded at build time; the derived `public/data/airlines.json` keeps the ODbL. Credited as "OpenFlights (ODbL)". |
+| **AviationWeather.gov** (NOAA) | 100 requests/minute, custom User-Agent recommended, no browser CORS, not for operational planning. | Server-side only, through the `UpstreamGate` Durable Object: paced ≥ 1.5 s (≤ 40/min) globally, identical requests coalesced, METAR cached 5–10 min and TAF 15 min, bounding boxes limited and snapped to whole degrees, back-off on errors and a 15-minute cool-down on 401/403. The browser asks only for the busiest hubs and large airports in view, each at most every 20 minutes. Real METARs set the simulated runway in use, capacity, low-visibility procedures, diversions and cancellations. Disclaimer shown with weather. |
+| **RainViewer** | Free for personal/educational use; attribution; 100 req/IP/min; max zoom 7 from 2026. | Browser-side only when the radar layer is on; one index request per 10 minutes plus the tiles in view; latest frame only (animation would exceed the limit). Attribution shown while active. |
+| **FAA ADDS Class Airspace** | Public domain U.S. Government data; not for navigation. | Live ArcGIS viewport queries from the browser only while the layer is on, at zoom ≥ 6 and inside the US; responses reused per 1° grid cell; malformed features dropped; labelled not for navigation. |
+| **openAIP** | CC BY-NC 4.0 (non-commercial, attribution). | Country exports for Canada and 30 European countries downloaded occasionally by `npm run data:airspace` into static files (no runtime requests to openAIP). Kept: CTR/TMA/CTA in classes A–E plus restricted, danger and prohibited areas; geometry rounded to about 10 m. Credited wherever the layer is shown; labelled not for navigation. |
+| **OpenStreetMap (Overpass)** | ODbL; Overpass fair use (sequential queries, modest server time, identifying User-Agent). | `npm run data:ground` fetches the busiest simulated hubs one at a time with an identifying User-Agent, a 5 s pause between queries, a 30 s back-off on 429/504 and a 10-minute budget per run. Already-fetched airports are skipped, so the run is resumable and more airports can be added on later days. Stands and taxiway networks for 58 airports are in `public/data/ground` (as of this writing), offered under the ODbL and credited "© OpenStreetMap contributors". |
+| **Wikidata / Wikimedia Commons** | CC0 (Wikidata); free licences or public domain per file (Commons). Wikimedia recommends copying files rather than hotlinking; standard thumbnail widths only. | `npm run data:media` runs occasionally (a few hundred paced API calls with an identifying User-Agent). Airline logos are downloaded at a standard 250 px width and served from this site (`public/media/logos`). Representative photos are hotlinked at the standard 960 px width. Licence and author are shown next to every image, and the Credits panel lists every file with a link to its page. Photos are labelled "Representative — not this simulated aircraft" and the caption names the real aircraft pictured. Logos are trademarks of their owners, used only to identify the operator. |
+| **NASA GIBS (LIS lightning climatology)** | Open NASA imagery; acknowledgement requested. | Raster tiles requested by the browser only while the layer is on; labelled as a long-term climatology, never as live lightning. |
 | **OpenFreeMap** | Free public instance, no keys or limits. Attribution "OpenFreeMap © OpenMapTiles Data from OpenStreetMap". | Attribution always visible in the status bar. |
 | **AWS Terrain Tiles** | Open data, attribution to the listed elevation sources. | Used only by Terrain Explorer and 3D terrain; attribution shown while active. |
 | **EOxCloudless 2025** | CC BY-NC-SA 4.0 for non-commercial use, with attribution. | Used only by the Satellite style, labelled as an annual cloud-free mosaic (not live), with the full EOX attribution while active. |
 
-| **RainViewer** | Free for personal/educational use; attribution; 100 req/IP/min; max zoom 7 from 2026. | Browser-side only when the radar layer is enabled; one index request per 10 minutes plus the tiles in view; latest frame only (no animation, which would exceed the limit). |
-| **OpenFlights airlines** | ODbL 1.0: attribution, share-alike for derived databases. | Downloaded at build time; the derived `airlines.json` keeps ODbL. Operator names are labelled "inferred from the callsign prefix · OpenFlights (ODbL)". |
-| **FAA ADDS Class Airspace** | Public domain U.S. Government data; not for navigation. | Browser-side viewport queries only while the layer is on, at zoom ≥ 6 and inside the US; responses reused for 1° grid cells; labelled not for navigation. |
-| **NASA GIBS (LIS lightning climatology)** | Open NASA imagery; acknowledgement requested. | Raster tiles requested by the browser only while the layer is on; labelled as a long-term climatology, never as live lightning. |
-| **Wikidata / Wikimedia Commons** | CC0 (Wikidata); free licences or public domain per file (Commons). Wikimedia recommends copying files rather than hotlinking; standard thumbnail widths only. | `npm run data:media` runs occasionally (≈ 500 paced API calls with an identifying User-Agent). Logos are downloaded at 250 px (a standard width) and served from this site. Photos are hotlinked at the 960 px standard width. Licence and author are shown next to every image; representative photos are labelled "not this aircraft". |
-| **openAIP** | CC BY-NC 4.0. | Country exports downloaded by `npm run data:airspace`, filtered to controlled airspace, rounded to about 10 m, and credited wherever shown. |
-| **OpenStreetMap (Overpass)** | ODbL; Overpass fair use (sequential queries, about 10 min of server time per run). | `npm run data:ground` fetches the 25 busiest demo hubs one at a time with pauses and a 10-minute budget. Already-fetched airports are skipped, so the rest can be added on later runs. |
-| **Planespotters.net Photo API** | Free; photographer credit next to the image; plain link to the photo page; no storing/re-hosting; requests from a real webpage. | Requested by the viewer's browser when an aircraft panel opens; only the documented image and link hosts are accepted; the service worker never caches third-party responses. |
+## What is simulated
 
-## Demo mode
+The simulated world uses real reference data:
+- OurAirports airports and runways, and OpenStreetMap stands and taxiways where available;
+- airline names, hubs, alliances and representative fleets, curated in `src/data/sim/fleet.ts`,
+  `fleet-more.ts` and `airlines.ts`;
+- typical performance for each aircraft type;
+- real METAR weather for runway choice and capacity.
 
-Demo mode exists because live data may be unavailable (see below). It is opt-in from the outage notice or
-Discover, never the default and never persisted. While it runs, live polling stops and all live tracks are
-cleared, so simulated and real aircraft never appear together. The simulated world uses real reference data:
-- OurAirports airports and runways;
-- OpenFlights airline names;
-- airline hubs and representative fleets, curated in `src/data/demo/fleet.ts`;
-- typical performance for each aircraft type.
+Every flight, flight number, registration, schedule and position is invented. Simulated aircraft
+carry provider `sim` and non-ICAO `~…` ids, so no real aircraft record, registry entry or
+exact-airframe photo is ever attached to them. The interface says "Simulated" in the header, status
+bar, flight cards, boards and analytics; a first-visit welcome and the **About & data** panel
+explain what is real and what is invented.
 
-Every flight, registration, schedule and position is invented. Simulated aircraft carry non-ICAO
-`~…` addresses, so no photo, registry or worldwide lookup is ever attached to them. Live route
-databases are not used at all. The interface shows a persistent DEMO banner, a "Demo"
-status pill, "Simulated (demo)" attribution and badges in every panel. Analytics are labelled as describing
-simulated aircraft. Nothing simulated is recorded for replay, exported, alerted on or searched for worldwide.
+## Sources deliberately not used
 
-## Why the map is not "worldwide live"
-
-adsb.fi's public API allows regional queries (≤ 250 NM), not global snapshots, and asks for at most
-one request per second. Covering the planet would take hundreds of cells polled continuously, which
-is exactly the kind of abuse its terms rule out. So:
-
-- the map shows live aircraft for **one region around your view** (outlined as "Live coverage area");
-- zooming out past 250 NM shows the outline and says so ("live area clipped to 250 NM");
-- every statistic states its sample.
-
-Coverage also depends on volunteer receivers. Some regions (Mumbai, as of this writing) have little
-or none. The app then says "No aircraft reported in this area right now" instead of filling the gap.
-
-## Normalization
-
-`shared/normalize.ts` converts adsb.fi's ADSBexchange-v2-compatible JSON:
-
-| adsb.fi | Normalized | Notes |
-| --- | --- | --- |
-| `hex` | `id`, `icao24` | lower-case; `~` prefix kept for non-ICAO addresses |
-| `flight` | `callsign` | trimmed; must match `[A-Z0-9-]{1,8}` |
-| `r`, `t`, `desc` | `registration`, `aircraftType`, `typeDescription` | from the provider's aircraft database |
-| `alt_baro` | `altitudeBarometric` / `onGround` | `"ground"` → `onGround: true`, altitude omitted |
-| `alt_geom`, `gs`, `track` | `altitudeGeometric`, `groundSpeed`, `track` | range-checked |
-| `baro_rate` ‖ `geom_rate` | `verticalRate` | barometric preferred |
-| `seen_pos`, `seen` | `observedAt`, `seenAt` | `now − seconds × 1000`; no timestamp → record dropped |
-| `type` | `positionSource` | `adsb_icao` → adsb, `mlat` → mlat, … |
-| `dbFlags & 1` | `military: true` | omitted when not flagged (unknown ≠ false) |
-| `emergency` | `emergency` | omitted when `"none"` |
+| Source | Why |
+| --- | --- |
+| Live aircraft feeds (adsb.fi, OpenSky Network, adsb.lol, airplanes.live) | The site is a simulation; no live positions are fetched, relayed or mixed in. |
+| Flightradar24, FlightAware and other proprietary trackers | Never scraped. |
+| Route databases (adsbdb and similar) | Not used. Simulated routes come from the airline profiles. |
+| Scraped logo packs (e.g. repositories copied from FlightAware/Flightradar24) | Not used. Logos come only from Wikimedia Commons, with licences recorded. |
+| Blitzortung.org (live lightning) | Not used. Its data may be used only with the project's approval. |
+| Closed national airspace datasets (DFS, NAV CANADA, NATS, Eurocontrol EAD) | Not used: no open licence, or an account is required. |
 
 ## Registry country
 
-The ICAO 24-bit address block identifies the state that assigned the address (`shared/icaoCountry.ts`).
-Only well-established blocks are listed. Unknown blocks return nothing instead of a guess.
-
-## Access from Cloudflare Workers (verified 18 October 2026)
-
-A diagnostic Worker in remote preview (Cloudflare egress) fetched each candidate source with this
-project's honest User-Agent:
-
-| Endpoint | Result from Cloudflare | Browser CORS |
-| --- | --- | --- |
-| `opendata.adsb.fi/api/v3/lat/…/lon/…/dist/…` | **403**, Cloudflare "Attention Required" (provider firewall) | none (no `Access-Control-Allow-Origin`) |
-| `api.airplanes.live/v2/point/…` | **403** — "Please contact us at contact@airplanes.live…" | none |
-| `api.adsb.lol/v2/point/…` | **429** | none |
-
-The same adsb.fi request succeeds from a residential connection, which is why local development works.
-
-**Policy:** the project does not get around these controls (no relaying through other clouds, no
-browser impersonation, no provider rotation). When a request is refused, the coordinator:
-
-- marks the provider `down` with the reason (`/api/health`);
-- waits 15 minutes before asking again, so it doesn't keep tripping the firewall;
-- the UI shows "Live aircraft data is unavailable" with the explanation.
-
-**To enable live data in production:** ask adsb.fi (via its GitHub repository or contact channel) to
-allow-list the deployed hostname or Cloudflare Worker traffic for this personal, non-commercial
-project. The rate-limiting design above is what you are committing to.
+The ICAO 24-bit address block identifies the state that assigns addresses (`shared/icaoCountry.ts`).
+The simulator draws each invented address from the airline's country block, so the registry flag
+matches the registration prefix. Only well-established blocks are listed; unknown blocks return
+nothing instead of a guess.

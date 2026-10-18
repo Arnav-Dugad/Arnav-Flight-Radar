@@ -90,11 +90,13 @@ class TrafficEngine {
   lostSec = 90;
   record = true;
   pinned = new Set<string>(); // selected / compared / followed: never auto-removed
-  /** Keep received positions as trails (off in demo mode, which supplies its own). */
+  /** Keep received positions as trails (off for the simulation, which supplies its own). */
   storeTrails = true;
-  /** Optional trail source (demo mode: points sampled from the simulated path). */
+  /** Optional trail source (points sampled from the simulated path). */
   trailProvider: ((t: Track) => TrailPoint[] | undefined) | null = null;
-  /** Simulated time-lapse factor (demo mode only); scales the plausibility check. */
+  /** Which aircraft session snapshots keep (e.g. only those in view). */
+  recordFilter: ((a: Aircraft) => boolean) | null = null;
+  /** Simulated time-lapse factor; scales the plausibility check. */
   speedScale = 1;
 
   /** The trail to draw for a track. */
@@ -195,7 +197,7 @@ class TrafficEngine {
     if (resp.degraded) this.meta.degraded = resp.degraded;
 
     const last = this.regionsQueried[this.regionsQueried.length - 1];
-    if (resp.provider === 'demo') {
+    if (resp.provider === 'sim') {
       // Simulated traffic has no "coverage area".
     } else if (!last || last.region.lat !== r.lat || last.region.lon !== r.lon || last.region.radiusNm !== r.radiusNm) {
       this.regionsQueried.push({ region: r, at: clientNow });
@@ -273,7 +275,8 @@ class TrafficEngine {
   }
 
   private recordSnapshot(resp: AircraftResponse) {
-    const rows: Snapshot['rows'] = resp.aircraft.map((a) => [
+    const keep = this.recordFilter;
+    const rows: Snapshot['rows'] = (keep ? resp.aircraft.filter(keep) : resp.aircraft).map((a) => [
       a.id,
       a.lat,
       a.lon,
@@ -299,7 +302,7 @@ class TrafficEngine {
     }
   }
 
-  /** Forget everything (used when switching between live data and demo mode). */
+  /** Forget everything. */
   reset() {
     this.tracks.clear();
     this.meta = null;

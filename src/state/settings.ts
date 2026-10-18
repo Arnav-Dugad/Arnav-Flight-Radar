@@ -5,7 +5,8 @@ import { safeStorage } from '@/lib/storage';
 
 export type MapStyleId = 'obsidian' | 'arctic' | 'midnight' | 'terrain' | 'minimal' | 'satellite';
 export type Appearance = 'map' | 'system' | 'dark' | 'light';
-export type ColorMode = 'altitude' | 'speed' | 'vertical' | 'freshness' | 'mono';
+export type ColorMode = 'altitude' | 'speed' | 'vertical' | 'freshness' | 'mono' | 'classic';
+export type LabelContent = 'flight' | 'callsign' | 'registration' | 'type' | 'route' | 'altitude';
 export type AltitudePalette = 'aurora' | 'accessible';
 export type MotionLevel = 'full' | 'reduced' | 'off';
 export type LabelDensity = 'none' | 'low' | 'normal' | 'high';
@@ -51,6 +52,8 @@ export interface Settings {
   showRadar: boolean;
   showPhotos: boolean;
   show3dPath: boolean; // extruded flight path for the selected aircraft when the map is tilted
+  showDisruptions: boolean; // airports coloured by disruption index
+  labelContent: LabelContent; // what aircraft labels show
   path3dColor: TrailColorMode;
   path3dOpacity: number; // 0.15 – 0.9
   showDayNight: boolean;
@@ -96,6 +99,8 @@ export const DEFAULT_SETTINGS: Settings = {
   showRadar: false,
   showPhotos: true,
   show3dPath: true,
+  showDisruptions: false,
+  labelContent: 'flight',
   path3dColor: 'altitude',
   path3dOpacity: 0.45,
   showDayNight: false,

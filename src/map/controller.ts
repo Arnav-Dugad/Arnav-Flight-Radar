@@ -4,8 +4,7 @@
 import type * as GeoJSON from 'geojson';
 import { GeoJSONSource, Map as MlMap, setWorkerUrl, type LngLatLike } from 'maplibre-gl';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
-import { startEmergencyAlerts } from '@/data/alerts';
-import { startFeed } from '@/data/feed';
+import { startSim, stopSim } from '@/data/world';
 import { readUrlState, writeUrlState } from '@/lib/urlState';
 import { load, save } from '@/lib/storage';
 import { getSettings, useSettings, type MapStyleId } from '@/state/settings';
@@ -15,7 +14,8 @@ import { useView } from '@/state/view';
 import { applyAircraftSettings, installAircraftLayers, startAircraftEngine, AIRCRAFT_LAYERS, type AircraftEngine } from './aircraftLayer';
 import { bindAirportInteraction, installAirportLayers, AIRPORT_LAYERS } from './airportsLayer';
 import { bindExtraOverlays, installExtraOverlays } from './extraOverlays';
-import { bindMeasure, bindRadar, bindRings, bindWeather, installCoverage, installMeasure, installRadar, installRings, installWeather, refreshWeather } from './overlays';
+import { bindOpsOverlays, installOpsOverlays } from './opsOverlays';
+import { bindMeasure, bindRadar, bindRings, bindWeather, installMeasure, installRadar, installRings, installWeather, refreshWeather } from './overlays';
 import { cameraFlags, viewOffset, viewPadding } from './camera';
 import { buildStyle, TERRAIN_SOURCE } from './styles';
 
@@ -39,13 +39,13 @@ function currentStyle(id: MapStyleId = getSettings().mapStyle) {
 function installAll(m: MlMap) {
   installAircraftLayers(m);
   applyAircraftSettings(m);
-  installCoverage(m);
   installWeather(m);
   void installAirportLayers(m);
   installMeasure(m);
   installRings(m);
   void installRadar(m);
   installExtraOverlays(m);
+  installOpsOverlays(m);
   installUserLocation(m);
   applyTerrain(m);
   engine?.markDirty();
@@ -99,14 +99,15 @@ export function createMap(container: HTMLElement): MlMap {
   m.once('load', () => {
     engine = startAircraftEngine(m);
     cleanups.push(() => engine?.stop());
-    cleanups.push(startFeed(m));
+    void startSim();
+    cleanups.push(stopSim);
     cleanups.push(bindAirportInteraction(m));
     cleanups.push(bindWeather(m));
     cleanups.push(bindMeasure(m));
     cleanups.push(bindRings(m));
-    cleanups.push(startEmergencyAlerts());
     cleanups.push(bindRadar(m));
     cleanups.push(bindExtraOverlays(m));
+    cleanups.push(bindOpsOverlays(m));
     cleanups.push(bindUrlSync(m));
     cleanups.push(bindAutoRotate(m));
     cleanups.push(bindCursor(m));
@@ -140,7 +141,7 @@ export function createMap(container: HTMLElement): MlMap {
     );
 
     if (url.aircraft) {
-      ui().select(url.aircraft, { follow: url.follow ?? false });
+      ui().select(`~${url.aircraft}`, { follow: url.follow ?? false });
     }
     if (url.airport) ui().selectAirport(url.airport);
   });
@@ -249,19 +250,21 @@ export function followRandomFlight(): string | null {
   return a.id;
 }
 
-export function startFollow(id: string) {
+export function startFollow(id: string, opts: { chase?: boolean } = {}) {
   const t = traffic.get(id);
   if (!t || !map) return;
   const s = getSettings();
   const pos = traffic.displayPosition(t);
+  const chase = !!opts.chase;
   ui().setFollowing(true);
+  useUI.setState({ chase });
   ui().setFollowPaused(true); // pause until the camera lands
   map.flyTo({
     padding: viewPadding(),
     center: [pos.lon, pos.lat],
-    zoom: s.followZoom,
-    pitch: s.followPitch,
-    bearing: s.cameraMode === 'heading-up' ? (pos.trk ?? 0) : map.getBearing(),
+    zoom: chase ? (t.ac.onGround ? 16 : 12.6) : s.followZoom,
+    pitch: chase ? 74 : s.followPitch,
+    bearing: chase || s.cameraMode === 'heading-up' ? (pos.trk ?? 0) : map.getBearing(),
     duration: motionMs(1600),
     essential: false,
   });
@@ -342,7 +345,7 @@ function bindUrlSync(m: MlMap): () => void {
         pitch: m.getPitch(),
         style: getSettings().mapStyle,
         globe: u.projection === 'globe',
-        aircraft: u.selectedId && !u.selectedId.startsWith('~') ? u.selectedId : undefined,
+        aircraft: u.selectedId ? u.selectedId.replace(/^~/, '') : undefined,
         airport: u.selectedAirport ?? undefined,
         follow: u.following,
       });

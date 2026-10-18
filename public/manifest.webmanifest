@@ -1,7 +1,7 @@
 {
   "name": "Arnav Flight Radar",
   "short_name": "Arnav Radar",
-  "description": "Live aircraft tracking with premium cartography and honest data.",
+  "description": "A simulated world of air traffic — real airlines, airports and aircraft types on a premium radar map.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#03060B",

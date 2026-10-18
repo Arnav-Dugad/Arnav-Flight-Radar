@@ -2,25 +2,23 @@
 //
 // Cloudflare runs exactly one instance of a Durable Object per id, and we only
 // ever use the id "global". That makes this the one place on Earth where requests
-// to adsb.fi and AviationWeather.gov leave our infrastructure, so the request
-// budgets below are TRUE global ceilings, not per-datacenter counters.
+// to AviationWeather.gov leave our infrastructure, so the request budget below is
+// a TRUE global ceiling, not a per-datacenter counter.
 //
-//   • Pacing: calls to each host are spaced by a minimum interval
-//     (adsb.fi: 1.1 s, comfortably under its 1 request/second limit).
+// Aircraft are simulated entirely in the browser; this coordinator never
+// contacts any aircraft data source.
+//
+//   • Pacing: calls to each host are spaced by a minimum interval.
 //   • Coalescing: identical concurrent requests share one upstream call.
-//   • Caching: regional snapshots are shared by every visitor for a TTL.
+//   • Caching: reports are shared by every visitor for a TTL.
 //   • Back-off: 429/5xx/timeouts open a circuit breaker with exponential delay.
 //   • Degraded mode: while the circuit is open, or the queue is full, an older
-//     snapshot is served with `stale: true` and a reason — never fabricated data.
+//     response is served with a `degraded` reason — never fabricated data.
 
 import { DurableObject } from 'cloudflare:workers';
-import { normalizeAdsbfi, rawRecords } from '../shared/normalize';
-import { regionKey } from '../shared/region';
-import type { Aircraft, AircraftResponse, ProviderHealth, RegionQuery } from '../shared/types';
+import type { ProviderHealth } from '../shared/types';
 import { normalizeMetar, normalizeTaf } from '../shared/weather';
-import { ADSBFI_ATTRIBUTION, AWC_ATTRIBUTION, USER_AGENT } from './providers';
-
-export type LookupKind = 'hex' | 'callsign' | 'registration' | 'sqk';
+import { AWC_ATTRIBUTION, USER_AGENT } from './providers';
 
 export type GateResult =
   | { ok: true; body: string }
@@ -69,8 +67,6 @@ interface CacheEntry {
   json: string; // serialized normalized payload
   count: number;
   fetchedAt: number;
-  providerNow: number;
-  extra?: string; // serialized raw records (inspector)
 }
 
 const MAX_QUEUE_WAIT_MS = 4000;
@@ -78,22 +74,21 @@ const MAX_QUEUE_WAIT_MS = 4000;
 // keep hammering its firewall.
 const FORBIDDEN_COOLDOWN_MS = 15 * 60_000;
 const FORBIDDEN_MESSAGE: Record<HostId, string> = {
-  adsbfi:
-    'adsb.fi is currently refusing requests from this site’s hosting network (Cloudflare). Airports, weather and maps still work.',
   aviationweather: 'AviationWeather.gov is currently refusing requests from this site’s hosting network.',
 };
+// How long past its TTL a cached response may still be served (flagged) while
+// the provider is failing or the request budget is exhausted.
 const MAX_STALE_MS = 5 * 60_000;
 const MAX_CACHE_ENTRIES = 300;
 const UPSTREAM_TIMEOUT_MS = 8000;
 
-type HostId = 'adsbfi' | 'aviationweather';
+type HostId = 'aviationweather';
 
 export class UpstreamGate extends DurableObject<Env> {
   private pacers: Record<HostId, Pacer>;
   private cache = new Map<string, CacheEntry>();
   private inflight = new Map<string, Promise<CacheEntry>>();
   private health: Record<HostId, ProviderHealth> = {
-    adsbfi: { id: 'adsbfi', status: 'unknown', consecutiveFailures: 0, upstreamCalls: 0, cacheHits: 0 },
     aviationweather: { id: 'aviationweather', status: 'unknown', consecutiveFailures: 0, upstreamCalls: 0, cacheHits: 0 },
   };
   private startedAt = Date.now();
@@ -101,7 +96,6 @@ export class UpstreamGate extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.pacers = {
-      adsbfi: { intervalMs: clampInt(env.ADSBFI_MIN_INTERVAL_MS, 1100, 1000, 60_000), nextSlotAt: 0, queued: 0 },
       aviationweather: {
         intervalMs: clampInt(env.WEATHER_MIN_INTERVAL_MS, 1500, 700, 60_000),
         nextSlotAt: 0,
@@ -113,14 +107,6 @@ export class UpstreamGate extends DurableObject<Env> {
   // ---------------------------------------------------------------- RPC API
   // Errors do not keep their custom fields across the RPC boundary, so every
   // public method returns a GateResult instead of throwing.
-
-  aircraftRegion(q: RegionQuery): Promise<GateResult> {
-    return guard(() => this.region(q));
-  }
-
-  aircraftLookup(kind: LookupKind, value: string, raw: boolean): Promise<GateResult> {
-    return guard(() => this.lookup(kind, value, raw));
-  }
 
   metar(params: { ids?: string; bbox?: string }): Promise<GateResult> {
     const qs = params.ids ? `ids=${params.ids}` : `bbox=${params.bbox}`;
@@ -148,50 +134,6 @@ export class UpstreamGate extends DurableObject<Env> {
 
   // ---------------------------------------------------------------- internals
 
-  private async region(q: RegionQuery): Promise<string> {
-    const ttl = clampInt(this.env.AIRCRAFT_CACHE_TTL_MS, 10_000, 5_000, 120_000);
-    const key = `region:${regionKey(q)}`;
-    const url = `https://opendata.adsb.fi/api/v3/lat/${q.lat}/lon/${q.lon}/dist/${q.radiusNm}`;
-    const { entry, hit, degraded } = await this.cached('adsbfi', key, ttl, () => this.fetchAircraft(url));
-    const now = Date.now();
-    const stale = now - entry.fetchedAt > ttl;
-    const meta: Omit<AircraftResponse, 'aircraft'> = {
-      provider: 'adsbfi',
-      attribution: ADSBFI_ATTRIBUTION,
-      query: q,
-      providerNow: entry.providerNow,
-      fetchedAt: entry.fetchedAt,
-      servedAt: now,
-      stale,
-      cache: { hit, ageMs: now - entry.fetchedAt, ttlMs: ttl },
-      count: entry.count,
-    };
-    if (degraded) meta.degraded = degraded;
-    // Splice the cached array in without re-serializing it.
-    return `${JSON.stringify(meta).slice(0, -1)},"aircraft":${entry.json}}`;
-  }
-
-  private async lookup(kind: LookupKind, value: string, raw: boolean): Promise<string> {
-    const ttl = 10_000;
-    const key = `lookup:${kind}:${value}`;
-    const url = `https://opendata.adsb.fi/api/v2/${kind}/${encodeURIComponent(value)}`;
-    const { entry, hit, degraded } = await this.cached('adsbfi', key, ttl, () => this.fetchAircraft(url, true));
-    const now = Date.now();
-    const meta: Record<string, unknown> = {
-      provider: 'adsbfi',
-      attribution: ADSBFI_ATTRIBUTION,
-      providerNow: entry.providerNow,
-      fetchedAt: entry.fetchedAt,
-      servedAt: now,
-      stale: now - entry.fetchedAt > ttl,
-      cache: { hit, ageMs: now - entry.fetchedAt, ttlMs: ttl },
-      count: entry.count,
-    };
-    if (degraded) meta.degraded = degraded;
-    const rawPart = raw && entry.extra ? `,"raw":${entry.extra}` : '';
-    return `${JSON.stringify(meta).slice(0, -1)},"aircraft":${entry.json}${rawPart}}`;
-  }
-
   private async weather<T>(key: string, url: string, ttl: number, normalize: (r: unknown) => T | null): Promise<string> {
     const { entry, hit, degraded } = await this.cached('aviationweather', key, ttl, async () => {
       const res = await this.upstream('aviationweather', url);
@@ -205,7 +147,7 @@ export class UpstreamGate extends DurableObject<Env> {
       }
       if (!Array.isArray(body)) throw new UpstreamError('Weather provider returned an unexpected shape.', 'upstream_invalid');
       const data = body.map(normalize).filter((x): x is T => x !== null);
-      return { json: JSON.stringify(data), count: data.length, fetchedAt: Date.now(), providerNow: Date.now() };
+      return { json: JSON.stringify(data), count: data.length, fetchedAt: Date.now() };
     });
     const now = Date.now();
     const meta: Record<string, unknown> = {
@@ -218,31 +160,6 @@ export class UpstreamGate extends DurableObject<Env> {
     };
     if (degraded) meta.degraded = degraded;
     return `${JSON.stringify(meta).slice(0, -1)},"data":${entry.json}}`;
-  }
-
-  private async fetchAircraft(url: string, withRaw = false): Promise<CacheEntry> {
-    const res = await this.upstream('adsbfi', url);
-    let body: unknown;
-    try {
-      body = await res.json();
-    } catch {
-      throw new UpstreamError('Aircraft provider returned malformed JSON.', 'upstream_invalid');
-    }
-    let normalized: { now: number; aircraft: Aircraft[] };
-    try {
-      normalized = normalizeAdsbfi(body, Date.now());
-    } catch (e) {
-      throw new UpstreamError((e as Error).message, 'upstream_invalid');
-    }
-    normalized.aircraft.sort((a, b) => (a.distanceNm ?? 0) - (b.distanceNm ?? 0));
-    const entry: CacheEntry = {
-      json: JSON.stringify(normalized.aircraft),
-      count: normalized.aircraft.length,
-      fetchedAt: Date.now(),
-      providerNow: normalized.now,
-    };
-    if (withRaw) entry.extra = JSON.stringify(rawRecords(body));
-    return entry;
   }
 
   /** Cache + coalescing + stale fallback around a loader. */
@@ -279,12 +196,12 @@ export class UpstreamGate extends DurableObject<Env> {
       const entry = await promise;
       return { entry, hit: coalesced };
     } catch (err) {
-      // Serve the last good snapshot rather than nothing — clearly flagged.
-      if (existing && now - existing.fetchedAt < MAX_STALE_MS) {
+      // Serve the last good response rather than nothing — clearly flagged.
+      if (existing && now - existing.fetchedAt < ttl + MAX_STALE_MS) {
         const reason =
           err instanceof UpstreamError && err.code === 'busy'
-            ? 'High demand: showing the most recent shared snapshot.'
-            : 'Provider temporarily unavailable: showing the last good snapshot.';
+            ? 'High demand: showing the most recent shared report.'
+            : 'Provider temporarily unavailable: showing the last good report.';
         return { entry: existing, hit: true, degraded: reason };
       }
       throw err;

@@ -7,7 +7,8 @@
 // openAIP (https://www.openaip.net) data is licensed CC BY-NC 4.0: non-commercial use with
 // attribution ("openAIP"). This project is non-commercial and credits openAIP wherever the
 // layer is shown. US airspace comes from the FAA instead (public domain, loaded live).
-// Only CTR / TMA / CTA in ICAO classes A–E are kept; geometry is rounded to ~10 m.
+// Kept: CTR / TMA / CTA in ICAO classes A–E, and restricted / danger / prohibited
+// areas. Geometry is rounded to ~10 m.
 // Informational only — never for navigation.
 
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -22,6 +23,16 @@ mkdirSync(OUT, { recursive: true });
 const COUNTRIES = ['ca', 'gb', 'ie', 'fr', 'de', 'nl', 'be', 'lu', 'ch', 'at', 'it', 'es', 'pt', 'dk', 'no', 'se', 'fi', 'is', 'pl', 'cz', 'sk', 'hu', 'si', 'hr', 'gr', 'ro', 'bg', 'ee', 'lv', 'lt', 'mt', 'cy'];
 const CLASS = { 0: 'A', 1: 'B', 2: 'C', 3: 'D', 4: 'E' };
 const KIND = { 4: 'CTR', 7: 'TMA', 26: 'CTA' };
+// Special-use airspace (any class): restricted, danger, prohibited.
+const SUA = { 1: 'Restricted', 2: 'Danger', 3: 'Prohibited' };
+
+/** Altitude limit in feet (approximate MSL; FL × 100; SFC = 0). */
+function limitFt(l) {
+  if (!l) return null;
+  if (l.referenceDatum === 0 && (l.value ?? 0) === 0) return 0;
+  if (l.unit === 6) return Math.round(l.value * 100);
+  return Math.round(l.unit === 0 ? l.value * 3.28084 : l.value);
+}
 
 function limit(l) {
   if (!l) return '?';
@@ -66,10 +77,11 @@ for (const cc of COUNTRIES) {
       n = -90;
     for (const feat of j.features ?? []) {
       const p = feat.properties ?? {};
-      const cls = CLASS[p.icaoClass];
+      const sua = SUA[p.type];
+      const cls = sua ? 'SUA' : CLASS[p.icaoClass];
       // Canada files terminal airspace as "other" (type 0); keep its class C/D areas.
       // (Canadian class B is high-level en-route airspace, unlike US class B.)
-      const kind = KIND[p.type] ?? (p.type === 0 && (cls === 'C' || cls === 'D') ? 'TCA' : undefined);
+      const kind = sua ?? KIND[p.type] ?? (p.type === 0 && (cls === 'C' || cls === 'D') ? 'TCA' : undefined);
       if (!cls || !kind || !feat.geometry) continue;
       const g = roundGeom(feat.geometry);
       if (!g) continue;
@@ -80,7 +92,7 @@ for (const cc of COUNTRIES) {
         s = Math.min(s, y);
         n = Math.max(n, y);
       }
-      f.push([g, String(p.name ?? ''), cls, kind, limit(p.lowerLimit), limit(p.upperLimit)]);
+      f.push([g, String(p.name ?? ''), cls, kind, limit(p.lowerLimit), limit(p.upperLimit), limitFt(p.lowerLimit), limitFt(p.upperLimit)]);
     }
     if (!f.length) continue;
     writeFileSync(join(OUT, `${cc}.json`), JSON.stringify({ v: 1, source: 'openAIP (CC BY-NC 4.0)', f }));

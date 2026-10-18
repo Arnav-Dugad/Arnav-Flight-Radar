@@ -6,6 +6,7 @@ import { Panel } from '@/components/ui/Sheet';
 import { getMap } from '@/map/controller';
 import { useSettings } from '@/state/settings';
 import { traffic } from '@/state/traffic';
+import { SimClockControls } from '@/features/shell/LiveStatus';
 import { useUI } from '@/state/ui';
 import { useShortcutsModal } from '@/features/shell/Shortcuts';
 
@@ -94,65 +95,34 @@ export function SettingsPanel() {
               ]}
             />
             <p className="text-[11.5px] leading-snug text-fg-3">
-              Curved follows the reported track at both ends; Straight glides in a line; Jump shows only reported positions. Motion always stops at the
-              newest real report — never beyond it.
+              Curved follows the track through turns; Straight glides in a line between updates; Jump moves only when positions update.
             </p>
           </div>
           <Toggle label="Reduced glass effects" description="Solid panels instead of blur — lighter on older GPUs and batteries." checked={s.reducedEffects} onChange={(v) => s.set('reducedEffects', v)} />
           <Toggle label="Ambient globe rotation" description="Slowly turn the globe when idle and zoomed out." checked={s.globeAutoRotate} onChange={(v) => s.set('globeAutoRotate', v)} />
         </Section>
 
-        <Section title="Live data">
-          <Slider label="Refresh interval" min={10} max={60} step={5} value={s.pollIntervalSec} onChange={(v) => s.set('pollIntervalSec', v)} format={(v) => `${v} s`} />
-          <p className="text-[11.5px] leading-relaxed text-fg-3">
-            Snapshots are shared between all visitors and upstream calls are capped globally below adsb.fi’s 1 request/second limit. A longer interval
-            is kinder to the free data source.
-          </p>
-          <Slider label="Mark as stale after" min={30} max={120} step={5} value={s.staleAfterSec} onChange={(v) => s.set('staleAfterSec', v)} format={(v) => `${v} s`} />
-          <Slider label="Remove lost aircraft after" min={30} max={300} step={15} value={s.lostAfterSec} onChange={(v) => s.set('lostAfterSec', v)} format={(v) => `${v} s`} />
-          <Slider label="Trail length" min={2} max={60} step={1} value={s.trailMinutes} onChange={(v) => s.set('trailMinutes', v)} format={(v) => `${v} min`} />
+        <Section title="Simulation">
+          <SimClockControls />
           <Toggle
             label="Record this session for replay"
-            description="Keeps up to about an hour of observed snapshots in memory for the Timeline. Nothing is uploaded or stored on disk."
+            description="Keeps the last few minutes of aircraft in view in memory for the Timeline. Nothing is uploaded or stored on disk."
             checked={s.recordSession}
             onChange={(v) => {
               s.set('recordSession', v);
+              traffic.record = v;
               if (!v) traffic.clearSession();
             }}
           />
         </Section>
 
-        <Section title="Aircraft details & alerts">
+        <Section title="Aircraft details">
           <Toggle
             label="Aircraft photos"
-            description="Airframe photos from Planespotters.net with photographer credit. Loaded by your browser on demand."
+            description="Representative photos of the aircraft type (in the airline’s livery where available) from Wikimedia Commons, with credit."
             checked={s.showPhotos}
             onChange={(v) => s.set('showPhotos', v)}
           />
-          <div className="space-y-1.5">
-            <span className="text-[13px] font-medium text-fg">Emergency squawk alerts</span>
-            <SegmentedControl
-              label="Emergency squawk alerts"
-              value={s.emergencyAlerts}
-              onChange={async (v) => {
-                if (v === 'notify' && 'Notification' in window && Notification.permission !== 'granted') {
-                  const perm = await Notification.requestPermission().catch(() => 'denied' as NotificationPermission);
-                  if (perm !== 'granted') {
-                    toast({ kind: 'warning', title: 'Notifications are blocked', body: 'In-app alerts stay on. Allow notifications for this site in your browser to enable them.' });
-                    s.set('emergencyAlerts', 'in-app');
-                    return;
-                  }
-                }
-                s.set('emergencyAlerts', v);
-              }}
-              options={[
-                { value: 'off', label: 'Off' },
-                { value: 'in-app', label: 'In app' },
-                { value: 'notify', label: '+ Notifications' },
-              ]}
-            />
-            <p className="text-[11.5px] leading-snug text-fg-3">Alerts when a live aircraft in your area squawks 7500, 7600 or 7700. Never for demo traffic.</p>
-          </div>
         </Section>
 
         <Section title="Camera">

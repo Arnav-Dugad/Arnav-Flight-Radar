@@ -17,7 +17,7 @@ const ac = (o: Partial<Aircraft>): Aircraft => ({
   observedAt: 0,
   seenAt: 0,
   receivedAt: 0,
-  provider: 'adsbfi',
+  provider: 'sim',
   freshness: 'live',
   ...o,
 });
@@ -79,7 +79,7 @@ describe('formatting', () => {
 
 function response(aircraft: Aircraft[], t: number, region = { lat: 51, lon: 0, radiusNm: 100 }): AircraftResponse {
   return {
-    provider: 'adsbfi',
+    provider: 'sim',
     attribution: { name: 'adsb.fi', url: 'https://adsb.fi', license: 'test' },
     query: region,
     providerNow: t,

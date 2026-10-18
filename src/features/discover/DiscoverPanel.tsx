@@ -13,7 +13,6 @@ import {
   InspectorIcon,
   LearnIcon,
   MeasureIcon,
-  PlaneIcon,
   PresentationIcon,
   SpotterIcon,
   TimelineIcon,
@@ -21,7 +20,6 @@ import {
 import { GlassButton, Section } from '@/components/ui/Glass';
 import { Panel } from '@/components/ui/Sheet';
 import { HUBS } from '@/data/airports';
-import { startDemo, stopDemo, useDemo } from '@/data/demo';
 import { fmtAltitude, fmtSpeed } from '@/lib/format';
 import { useTrafficVersion } from '@/lib/hooks';
 import { focusAircraft, followRandomFlight, setProjection, startFollow } from '@/map/controller';
@@ -43,7 +41,6 @@ export function DiscoverPanel() {
   const open = useUI((s) => s.panel === 'discover');
   const openPanel = useUI((s) => s.openPanel);
   const ui = useUI();
-  const demo = useDemo((d) => d.active);
   const units = useSettings((s) => s.units);
   useTrafficVersion();
   const stats = computeStats(traffic.current());
@@ -90,18 +87,8 @@ export function DiscoverPanel() {
       disabled: ui.selectedId ? undefined : 'Select an aircraft first',
       run: () => openPanel('inspector'),
     },
-    { key: 'data', title: 'Data & coverage', body: 'Provider health, freshness and queried areas.', icon: <DataIcon />, run: () => openPanel('data') },
-    {
-      key: 'demo',
-      title: demo ? 'Exit demo mode' : 'Demo mode',
-      body: demo ? 'Return to live data.' : 'A simulated world: real airlines, aircraft types and airports, with invented flights. Clearly labelled.',
-      icon: <PlaneIcon />,
-      run: () => {
-        if (demo) stopDemo();
-        else void startDemo();
-        openPanel(null);
-      },
-    },
+    { key: 'widgets', title: 'Right now', body: 'Busiest airports, disruptions and notable flights across the world.', icon: <AnalyticsIcon />, run: () => openPanel('widgets') },
+    { key: 'data', title: 'About & data', body: 'What is simulated, what is real, and every source and credit.', icon: <DataIcon />, run: () => openPanel('data') },
     {
       key: 'measure',
       title: 'Measure',
@@ -148,7 +135,7 @@ export function DiscoverPanel() {
 
         <Section title="Right now in the live area">
           {stats.sample === 0 ? (
-            <p className="text-[12px] text-fg-3">Highlights appear once live data arrives.</p>
+            <p className="text-[12px] text-fg-3">Highlights appear once the world has loaded.</p>
           ) : (
             <ul className="space-y-1.5 text-[12.5px] text-fg-2">
               <li>
@@ -202,7 +189,7 @@ function HubTour() {
   return (
     <Section title="Cinematic hub tour">
       <p className="text-[12px] text-fg-3">
-        Glide between {HUBS.length} major hubs. Live data loads at each stop; aircraft shown are real. Touch the map to stop.
+        Glide between {HUBS.length} major hubs. Touch the map to stop.
       </p>
       {running ? (
         <div className="flex items-center gap-3">
@@ -221,7 +208,7 @@ function HubTour() {
 }
 
 const GLOSSARY: [string, string][] = [
-  ['ADS-B', 'Automatic Dependent Surveillance–Broadcast: aircraft broadcast their own GNSS position, altitude, velocity and identity about twice a second. Volunteer ground receivers pick these up and share them with networks like adsb.fi.'],
+  ['ADS-B', 'Automatic Dependent Surveillance–Broadcast: aircraft broadcast their own GNSS position, altitude, velocity and identity about twice a second. Ground receivers pick these up; flight trackers combine them into a map. Everything on this map is simulated, but it behaves the way ADS-B traffic does.'],
   ['MLAT', 'Multilateration: for aircraft that do not broadcast a position, several receivers time the arrival of the same signal to compute where it came from. Usually a little less precise and less frequent.'],
   ['Barometric vs geometric altitude', 'Barometric altitude comes from air pressure referenced to 1013.25 hPa — it is what pilots and controllers use (flight levels). Geometric altitude is the GNSS height above the WGS-84 ellipsoid. They can differ by hundreds of feet depending on the weather.'],
   ['Track vs heading', 'Track is the direction the aircraft moves over the ground; heading is where its nose points. Crosswind makes them differ — the gap is the drift angle.'],

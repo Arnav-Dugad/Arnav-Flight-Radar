@@ -3,11 +3,9 @@ import { decodeRow, detailShard, makeSearchable, searchAirports, type AirportRow
 import { classificationBasis, classifyAircraft } from '../../shared/classify';
 import { countryFromIcao } from '../../shared/icaoCountry';
 import { classifyAircraftQuery } from '../../shared/query';
-import { gridStep, MAX_RADIUS_NM, normalizeRegion, RegionError, regionKey, snapRadius } from '../../shared/region';
 import { computeStats } from '../../shared/stats';
 import type { Aircraft } from '../../shared/types';
 import { decodeWeather, normalizeMetar, normalizeTaf } from '../../shared/weather';
-import { distanceNm } from '../../shared/geo';
 
 const ac = (o: Partial<Aircraft>): Aircraft => ({
   id: 'abc123',
@@ -19,7 +17,7 @@ const ac = (o: Partial<Aircraft>): Aircraft => ({
   observedAt: 0,
   seenAt: 0,
   receivedAt: 0,
-  provider: 'adsbfi',
+  provider: 'sim',
   freshness: 'live',
   ...o,
 });
@@ -45,41 +43,6 @@ describe('classification', () => {
     expect(classifyAircraft({ aircraftType: 'B738', military: true })).toBe('military');
     expect(classifyAircraft({ aircraftType: 'H60', military: true })).toBe('helicopter');
     expect(classificationBasis({ military: true })).toMatch(/Military/);
-  });
-});
-
-describe('region normalization', () => {
-  it('snaps radius to buckets with padding, capped at the provider maximum', () => {
-    expect(snapRadius(10)).toBe(50); // min 25 → 29.5 needed → 50
-    expect(snapRadius(60)).toBe(100);
-    expect(snapRadius(150)).toBe(200);
-    expect(snapRadius(1000)).toBe(MAX_RADIUS_NM);
-  });
-
-  it('maps nearby viewports to the same shared region', () => {
-    const a = normalizeRegion(51.47, -0.45, 80);
-    const b = normalizeRegion(51.49, -0.43, 80);
-    expect(regionKey(a)).toBe(regionKey(b));
-  });
-
-  it('always covers the requested circle (property test)', () => {
-    let seed = 42;
-    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
-    for (let i = 0; i < 2000; i++) {
-      const lat = rnd() * 140 - 70;
-      const lon = rnd() * 360 - 180;
-      const r = 25 + rnd() * 185; // up to 210 NM, where padding still fits under the cap
-      const q = normalizeRegion(lat, lon, r);
-      const offset = distanceNm(lat, lon, q.lat, q.lon);
-      expect(offset + r).toBeLessThanOrEqual(q.radiusNm + 1e-6);
-    }
-  });
-
-  it('rejects invalid input', () => {
-    expect(() => normalizeRegion(100, 0, 50)).toThrow(RegionError);
-    expect(() => normalizeRegion(0, 0, -1)).toThrow(RegionError);
-    expect(() => normalizeRegion(0, 0, Number.NaN)).toThrow(RegionError);
-    expect(gridStep(250)).toBeCloseTo(250 / 300);
   });
 });
 

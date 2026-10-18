@@ -113,13 +113,14 @@ function MoreSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
     { label: 'Layers', icon: <LayersIcon />, run: () => go('layers') },
     { label: projection === 'globe' ? 'Flat map' : 'Globe', icon: <GlobeIcon />, run: () => (onClose(), setProjection(projection === 'globe' ? 'mercator' : 'globe')) },
     { label: 'Bookmarks', icon: <BookmarkIcon />, run: () => go('bookmarks') },
+    { label: 'Right now', icon: <AnalyticsIcon />, run: () => go('widgets') },
     { label: 'Discover', icon: <DiscoverIcon />, run: () => go('discover') },
     { label: 'Timeline', icon: <TimelineIcon />, run: () => go('timeline') },
     { label: 'Compare', icon: <CompareIcon />, run: () => go('compare') },
     { label: 'Spotter', icon: <SpotterIcon />, run: () => go('spotter') },
     { label: 'Measure', icon: <MeasureIcon />, run: () => (onClose(), setMeasure({ active: true, points: [] })) },
     { label: 'Present', icon: <PresentationIcon />, run: () => (onClose(), setPresentation(true)) },
-    { label: 'Data', icon: <DataIcon />, run: () => go('data') },
+    { label: 'About', icon: <DataIcon />, run: () => go('data') },
     { label: 'Settings', icon: <Settings size={20} strokeWidth={1.7} />, run: () => go('settings') },
   ];
   return (

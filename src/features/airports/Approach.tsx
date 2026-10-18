@@ -1,13 +1,12 @@
 import { useMemo } from 'react';
-import { approachTargets, observedMovements, runwayEnds, type ApproachTarget } from '@shared/approach';
+import { approachTargets, runwayEnds, type ApproachTarget } from '@shared/approach';
 import type { AirportDetail } from '@shared/types';
-import { fmtAgo, fmtAltitude, fmtDistance, fmtTimeUTC } from '@/lib/format';
-import { useNow, useTrafficVersion } from '@/lib/hooks';
+import { fmtAltitude, fmtDistance } from '@/lib/format';
+import { useTrafficVersion } from '@/lib/hooks';
 import { focusAircraft } from '@/map/controller';
 import { useSettings } from '@/state/settings';
 import { traffic } from '@/state/traffic';
 import { useUI } from '@/state/ui';
-import { MovementChart, type MovementBucket } from './AirportOps';
 
 const W = 340;
 const H = 132;
@@ -90,72 +89,6 @@ export function ApproachExplorer({ a }: { a: AirportDetail }) {
       )}
       <p className="text-[11px] leading-relaxed text-fg-3">
         Inferred from reported positions and runway geometry — not an ATC sequence or landing information. The map shows dashed extended centrelines.
-      </p>
-    </section>
-  );
-}
-
-export function ObservedMovements({ a }: { a: AirportDetail }) {
-  useTrafficVersion();
-  const now = useNow(10_000);
-  const select = useUI((s) => s.select);
-  const movements = observedMovements(
-    a.lat,
-    a.lon,
-    traffic.list().map((t) => ({ id: t.id, label: t.ac.callsign ?? t.ac.registration ?? t.ac.icao24.toUpperCase(), trail: traffic.trailOf(t) })),
-  );
-  // Trails are kept for the trail-length setting, so that is the counting window.
-  const first = traffic.snapshots[0]?.t;
-  const since = first !== undefined ? Math.max(first, traffic.serverNow(now) - traffic.trailMs) : undefined;
-  const minutes = since ? (traffic.serverNow(now) - since) / 60_000 : 0;
-  const BIN = 10 * 60_000;
-  const buckets: MovementBucket[] = [];
-  if (since !== undefined && minutes >= 10) {
-    const end = traffic.serverNow(now);
-    for (let t = Math.floor(since / BIN) * BIN; t <= end; t += BIN) buckets.push({ t, arrivals: 0, departures: 0 });
-    for (const m of movements) {
-      const b = buckets[Math.floor((m.t - buckets[0]!.t) / BIN)];
-      if (b) b[m.kind === 'arrival' ? 'arrivals' : 'departures']++;
-    }
-  }
-  const arr = movements.filter((m) => m.kind === 'arrival').length;
-  const dep = movements.filter((m) => m.kind === 'departure').length;
-  return (
-    <section className="space-y-2.5">
-      <h3 className="eyebrow">Observed movements this session</h3>
-      <div className="grid grid-cols-3 gap-2 text-center">
-        {[
-          ['Arrivals', arr],
-          ['Departures', dep],
-          ['Per hour', minutes >= 20 ? Math.round(((arr + dep) / minutes) * 60) : '—'],
-        ].map(([l, v]) => (
-          <div key={l} className="glass-2 rounded-[14px] px-1.5 py-2.5">
-            <div className="tnum text-[18px] font-semibold text-fg">{v}</div>
-            <div className="mt-0.5 text-[10px] text-fg-3">{l}</div>
-          </div>
-        ))}
-      </div>
-      {buckets.length > 1 && (
-        <MovementChart buckets={buckets} binMin={10} title="Observed movements per 10 minutes" note="Counted from this session's observations — lower bounds, not a schedule." />
-      )}
-      {movements.length > 0 && (
-        <ul className="glass-2 divide-y divide-[var(--line)] rounded-[14px]">
-          {movements.slice(0, 8).map((m) => (
-            <li key={`${m.id}-${m.t}`}>
-              <button type="button" onClick={() => select(m.id)} className="tnum flex w-full items-center justify-between px-3.5 py-1.5 text-left text-[12px] hover:bg-[var(--line)]">
-                <span className="font-semibold text-fg">{m.label}</span>
-                <span className="text-fg-2">
-                  {m.kind === 'arrival' ? 'Landed' : 'Took off'} · {fmtTimeUTC(m.t).slice(0, 5)}Z · {fmtAgo(traffic.serverNow(now) - m.t)}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      <p className="text-[11px] leading-relaxed text-fg-3">
-        {since ? `Watching since ${fmtTimeUTC(since).slice(0, 5)}Z (${Math.round(minutes)} min). ` : ''}
-        Counted when an aircraft is seen on the ground here and then airborne nearby, or the reverse, within the trail window (Settings → Trail length). Aircraft without ground reports are missed, so
-        these are lower bounds — not a schedule.{minutes < 20 && ' The hourly rate appears after 20 minutes of observation.'}
       </p>
     </section>
   );

@@ -1,12 +1,9 @@
 import type { z } from 'zod';
-import type { AircraftQueryKind } from '@shared/query';
-import type { AircraftResponse, AirportDetail, Metar, Taf } from '@shared/types';
+import type { AirportDetail, Metar, Taf } from '@shared/types';
 import {
-  aircraftResponseSchema,
   airportDetailSchema,
   apiErrorSchema,
   healthSchema,
-  lookupResponseSchema,
   metarResponseSchema,
   providersSchema,
   tafResponseSchema,
@@ -53,23 +50,6 @@ async function getJson<S extends z.ZodType>(url: string, schema: S, signal?: Abo
 }
 
 export const api = {
-  nearby: (lat: number, lon: number, radiusNm: number, signal?: AbortSignal) =>
-    getJson(
-      `/api/aircraft/nearby?lat=${lat.toFixed(4)}&lon=${lon.toFixed(4)}&radius=${Math.round(radiusNm)}`,
-      aircraftResponseSchema,
-      signal,
-    ) as Promise<AircraftResponse>,
-
-  aircraft: (hex: string, raw = false, signal?: AbortSignal) =>
-    getJson(`/api/aircraft/${encodeURIComponent(hex)}${raw ? '?raw=1' : ''}`, lookupResponseSchema, signal),
-
-  searchAircraft: (q: string, type?: AircraftQueryKind, signal?: AbortSignal) =>
-    getJson(
-      `/api/aircraft/search?q=${encodeURIComponent(q)}${type ? `&type=${type}` : ''}`,
-      lookupResponseSchema,
-      signal,
-    ),
-
   metar: (ids: string[], signal?: AbortSignal) =>
     getJson(`/api/weather/metar?ids=${ids.join(',')}`, metarResponseSchema, signal) as Promise<{
       data: Metar[];

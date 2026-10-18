@@ -3,9 +3,8 @@ import { useMemo } from 'react';
 import { classifyAircraft } from '@shared/classify';
 import { formatLatLon } from '@shared/geo';
 import { AircraftGlyph } from '@/components/icons';
-import { useDemo } from '@/data/demo';
-import { useFeed } from '@/data/feed';
-import { fmtAge, fmtAltitude, fmtSpeed } from '@/lib/format';
+import { simNow, useSim } from '@/data/world';
+import { fmtAltitude, fmtSpeed } from '@/lib/format';
 import { useNow, useSelectedTrack } from '@/lib/hooks';
 import { styleAttribution } from '@/map/styles';
 import { useSettings } from '@/state/settings';
@@ -36,18 +35,17 @@ function ScaleBar() {
 }
 
 export function StatusBar() {
-  const now = useNow(1000);
+  useNow(1000);
   const t = useSelectedTrack();
   const cursor = useUI((s) => s.cursor);
   const units = useSettings((s) => s.units);
   const style = useSettings((s) => s.mapStyle);
   const terrain = useSettings((s) => s.terrain3d);
   const radar = useSettings((s) => s.showRadar);
-  const demo = useDemo((d) => d.active);
   const zoom = useView((s) => s.zoom);
-  const clipped = useFeed((s) => s.viewportClipped);
-  const meta = traffic.meta;
-  const age = meta ? traffic.serverNow(now) - meta.fetchedAt : undefined;
+  const ground = useSim((s) => s.ground);
+  const speed = useSim((s) => s.speed);
+  void traffic;
 
   return (
     <motion.footer
@@ -75,26 +73,14 @@ export function StatusBar() {
       </span>
       <span className="tnum hidden shrink-0 xl:inline">z {zoom.toFixed(1)}</span>
       <span className="hidden shrink-0 lg:inline">
-        {demo ? (
-          'Demo mode — simulated traffic'
-        ) : meta ? (
-          <>
-            Data {fmtAge(age ?? 0)} old{meta.cacheHit ? ' · shared snapshot' : ''}
-            {clipped && ' · live area clipped to 250 NM'}
-          </>
-        ) : (
-          'Waiting for live data…'
-        )}
+        <span className="tnum">
+          {new Date(simNow()).toUTCString().slice(5, 22)} UTC{speed > 1 ? ` · ${speed}×` : ''} · {ground.toLocaleString()} on the ground
+        </span>
       </span>
       <div className="ml-auto flex min-w-0 items-center gap-1.5 truncate">
-        <span className="shrink-0">Data</span>
-        {demo ? (
-          <span className="shrink-0 font-semibold text-[#c4b5fd]">Simulated (demo)</span>
-        ) : (
-          <a className="shrink-0 text-fg-2 hover:text-fg" href="https://adsb.fi" target="_blank" rel="noopener noreferrer">
-            adsb.fi
-          </a>
-        )}
+        <span className="shrink-0 font-semibold text-fg-2" title="Every aircraft on this map is simulated">
+          Simulated traffic
+        </span>
         <span>·</span>
         <a className="shrink-0 text-fg-2 hover:text-fg" href="https://ourairports.com/data/" target="_blank" rel="noopener noreferrer">
           OurAirports

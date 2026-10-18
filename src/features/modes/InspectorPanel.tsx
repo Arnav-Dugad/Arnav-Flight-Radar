@@ -1,13 +1,10 @@
-import { useQuery } from '@tanstack/react-query';
-import { Download } from 'lucide-react';
-import { useState } from 'react';
 import { InspectorIcon } from '@/components/icons';
 import { CopyButton } from '@/components/ui/Data';
-import { EmptyState, ErrorState, Spinner } from '@/components/ui/Feedback';
-import { GlassButton, Section } from '@/components/ui/Glass';
+import { EmptyState } from '@/components/ui/Feedback';
+import { Section } from '@/components/ui/Glass';
 import { Panel } from '@/components/ui/Sheet';
-import { api } from '@/lib/api';
-import { useSelectedTrack } from '@/lib/hooks';
+import { simFlight } from '@/data/world';
+import { useNow, useSelectedTrack } from '@/lib/hooks';
 import { traffic } from '@/state/traffic';
 import { useUI } from '@/state/ui';
 
@@ -23,61 +20,52 @@ function Json({ value }: { value: unknown }) {
   );
 }
 
+/** Developer view of the selected aircraft: the record the map uses and the simulator's flight state. */
 export function InspectorPanel() {
   const open = useUI((s) => s.panel === 'inspector');
   const openPanel = useUI((s) => s.openPanel);
   const t = useSelectedTrack();
-  const [wantRaw, setWantRaw] = useState(false);
-  const hex = t?.ac.icao24;
-  const raw = useQuery({
-    queryKey: ['raw', hex],
-    queryFn: ({ signal }) => api.aircraft(hex!, true, signal),
-    enabled: open && wantRaw && !!hex && !hex.startsWith('~'),
-    staleTime: 10_000,
-  });
+  useNow(2000);
+  const info = t ? simFlight(t.id) : undefined;
 
   return (
-    <Panel open={open} onClose={() => openPanel(t ? 'aircraft' : null)} title="Data inspector" icon={<InspectorIcon size={18} />} ariaLabel="Data inspector" subtitle={t ? `${t.ac.callsign ?? t.ac.icao24.toUpperCase()} · normalized and raw fields` : 'Select an aircraft'}>
+    <Panel open={open} onClose={() => openPanel(t ? 'aircraft' : null)} title="Data inspector" icon={<InspectorIcon size={18} />} ariaLabel="Data inspector" subtitle={t ? `${t.ac.callsign ?? t.id} · the record behind the map` : 'Select an aircraft'}>
       {!t ? (
         <EmptyState icon={<InspectorIcon />} title="No aircraft selected" body="Select an aircraft on the map to inspect its data." />
       ) : (
         <div className="space-y-5 pt-1">
-          <Section title="Normalized record (what the app uses)">
+          <Section title="Aircraft record (what the map draws)">
             <Json value={t.ac} />
-            <p className="text-[11px] text-fg-3">Units: feet, knots, ft/min, degrees true, epoch milliseconds. Absent keys mean the provider did not report the value.</p>
+            <p className="text-[11px] text-fg-3">Units: feet, knots, ft/min, degrees true, epoch milliseconds. Every value is simulated.</p>
           </Section>
-          <Section title="Tracking state">
-            <Json
-              value={{
-                positionAgeAtFetchMs: Math.round(t.ageAtFetch),
-                fetchedAt: t.fetchedAt,
-                lost: t.lost,
-                outsideRegion: t.outsideRegion,
-                trailPoints: traffic.trailOf(t).length,
-                firstSeenAtClient: t.firstSeenAt,
-              }}
-            />
-          </Section>
-          <Section title="Raw provider record">
-            {!wantRaw ? (
-              <div className="space-y-2">
-                <p className="text-[12px] text-fg-3">Loading the raw adsb.fi record makes one extra (rate-limited, cached) request.</p>
-                <GlassButton size="sm" onClick={() => setWantRaw(true)} disabled={t.ac.icao24.startsWith('~')}>
-                  <Download size={14} /> Load raw record
-                </GlassButton>
-              </div>
-            ) : raw.isPending ? (
-              <div className="flex items-center gap-2 text-[12px] text-fg-3">
-                <Spinner size={14} /> Requesting…
-              </div>
-            ) : raw.isError ? (
-              <ErrorState title="Raw record unavailable" body={(raw.error as Error).message} />
-            ) : (
-              <>
-                <Json value={raw.data.raw ?? []} />
-                <p className="text-[11px] text-fg-3">Source: adsb.fi open data (ADSBexchange-v2-compatible fields). Personal, non-commercial use.</p>
-              </>
-            )}
+          {info && (
+            <Section title="Simulated flight state">
+              <Json
+                value={{
+                  flight: info.flight,
+                  flightIata: info.flightIata,
+                  status: info.status,
+                  phase: info.phase,
+                  from: info.from.ident,
+                  to: info.to.ident,
+                  divertedFrom: info.divertedFrom?.ident,
+                  canceledTo: info.canceledTo?.ident,
+                  scheduledOut: new Date(info.std).toISOString(),
+                  scheduledIn: new Date(info.sta).toISOString(),
+                  estimatedIn: new Date(info.eta).toISOString(),
+                  cruiseFt: info.cruiseFt,
+                  progress: Math.round(info.progress * 1000) / 1000,
+                  holdMin: info.holdMin,
+                  wind: info.wind,
+                  codeshares: info.codeshares,
+                  standOut: info.gateFrom,
+                  standIn: info.gateTo,
+                }}
+              />
+            </Section>
+          )}
+          <Section title="Rendering state">
+            <Json value={{ trailPoints: traffic.trailOf(t).length, firstSeenAtClient: t.firstSeenAt }} />
           </Section>
         </div>
       )}

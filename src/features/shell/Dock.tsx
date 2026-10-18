@@ -3,6 +3,7 @@ import { motion, useMotionValue, useSpring, useTransform, type MotionValue } fro
 import { useRef, type ReactNode } from 'react';
 import {
   AirportIcon,
+  DiscoverIcon,
   AltitudeIcon,
   AnalyticsIcon,
   BookmarkIcon,
@@ -76,6 +77,7 @@ export function Dock() {
         badge: nFilters,
         onClick: () => togglePanel('filters'),
       },
+      { key: 'widgets', label: 'Right now', shortcut: 'W', icon: <DiscoverIcon />, active: panel === 'widgets', onClick: () => togglePanel('widgets') },
       { key: 'analytics', label: 'Analytics', icon: <AnalyticsIcon />, active: panel === 'analytics', onClick: () => togglePanel('analytics') },
       { key: 'bookmarks', label: 'Bookmarks', shortcut: 'B', icon: <BookmarkIcon />, active: panel === 'bookmarks', onClick: () => togglePanel('bookmarks') },
       { key: 'layers', label: 'Layers', shortcut: 'L', icon: <LayersIcon />, active: panel === 'layers', onClick: () => togglePanel('layers') },

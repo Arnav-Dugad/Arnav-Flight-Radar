@@ -16,6 +16,9 @@ const SpotterPanel = named(() => import('./modes/SpotterPanel'), 'SpotterPanel')
 const SettingsPanel = named(() => import('./settings/SettingsPanel'), 'SettingsPanel');
 const AirportsBrowser = named(() => import('./airports/AirportsBrowser'), 'AirportsBrowser');
 const LayersPanel = named(() => import('./layers/LayersPanel'), 'LayersPanel');
+const CreditsPanel = named(() => import('./data/CreditsPanel'), 'CreditsPanel');
+const AirlinePanel = named(() => import('./airlines/AirlinePanel'), 'AirlinePanel');
+const WidgetsPanel = named(() => import('./widgets/WidgetsPanel'), 'WidgetsPanel');
 
 function OnDemand({ id, children }: { id: PanelId; children: ReactNode }) {
   const active = useUI((s) => s.panel === id);
@@ -59,6 +62,15 @@ export function LazyPanels() {
       </OnDemand>
       <OnDemand id="layers">
         <LayersPanel />
+      </OnDemand>
+      <OnDemand id="credits">
+        <CreditsPanel />
+      </OnDemand>
+      <OnDemand id="airline">
+        <AirlinePanel />
+      </OnDemand>
+      <OnDemand id="widgets">
+        <WidgetsPanel />
       </OnDemand>
     </>
   );
