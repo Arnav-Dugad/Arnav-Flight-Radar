@@ -85,12 +85,14 @@ describe('North Atlantic tracks', () => {
     const w = world();
     const nat = w.airframes.filter((a) => a.leg.route?.nat);
     expect(nat.length).toBeGreaterThan(5);
-    for (const af of nat.slice(0, 10)) expect(af.leg.route!.text).toContain(`NAT ${af.leg.route!.nat!.letter}`);
+    // Any organised track system (NAT, PACOTS, AUSOTS) appears in the route string by name.
+    for (const af of nat.slice(0, 10)) expect(af.leg.route!.text).toContain(`${af.leg.route!.nat!.system} ${af.leg.route!.nat!.letter}`);
   });
 
   it('flies over the track points: crossing 30°W at the track latitude', () => {
     const w = world();
-    const nat = w.airframes.filter((a) => a.leg.route?.nat && !a.leg.emergency).slice(0, 15);
+    const nat = w.airframes.filter((a) => a.leg.route?.nat?.system === 'NAT' && !a.leg.emergency).slice(0, 15);
+    expect(nat.length).toBeGreaterThan(3);
     for (const af of nat) {
       const lat30 = Number(af.leg.route!.nat!.text.split(' ')[1]!.split('/')[0]);
       let prev = w.state(af, af.leg.tTakeoff);

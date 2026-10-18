@@ -1,6 +1,8 @@
 // Builds accurate 3D airport buildings from OpenStreetMap (ODbL) via Overpass:
 //   public/data/buildings/<ICAO>.json — GeoJSON FeatureCollection of extrusion-ready polygons
-//     properties: kind, height_m, min_height_m, [part], [colour], [roof_colour], [material], [name], [osm]
+//     properties: kind, height_m, min_height_m, [part], [colour], [roof_colour], [material], [name], [osm],
+//                 [roof_shape], [roof_height_m], [roof_orientation], [roof_direction], [levels]
+//     plus `pads`: OSM aeroway=deicing_pad outlines ([lon, lat] rings), when there are any
 //   public/data/buildings/index.json   — { v, airports: { ICAO: [lat, lon, s, w, n, e, features] } }
 //
 //   node scripts/build-buildings.mjs                 (resumable; the output is committed)
@@ -387,6 +389,7 @@ export function buildFeatures(elements, keep = () => true) {
   for (const el of elements) {
     const t = el.tags ?? {};
     if (el.type === 'relation' && t.type === 'building') continue; // members come separately
+    if (t.aeroway === 'deicing_pad' && !t.building) continue; // a pavement, not a building (see deicingPads)
     if (skipTags(t)) continue;
     if (el.type === 'node') {
       if (classify(t) === 'control_tower' && keep([el.lon, el.lat], t)) towerNodes.push({ el, kind: 'control_tower', polys: [[circle([el.lon, el.lat], 6)]], node: true });
@@ -466,6 +469,7 @@ export function buildFeatures(elements, keep = () => true) {
     if (roofColour) extra.roof_colour = roofColour;
     if (material && /^[a-z_;]{2,24}$/.test(material)) extra.material = material;
     if (name) extra.name = name;
+    Object.assign(extra, roofTags(t, pt));
     if (it.el.type !== 'node') extra.osm = `${it.el.type[0]}${it.el.id}`;
     const push = (rings, p, grow = 0.5) => features.push({ type: 'Feature', properties: { ...p, ...extra }, geometry: { type: 'Polygon', coordinates: finishPolygon(rings, grow) } });
 
@@ -523,6 +527,41 @@ export function buildFeatures(elements, keep = () => true) {
     }
   }
   return features;
+}
+
+const COMPASS = { n: 0, nne: 22.5, ne: 45, ene: 67.5, e: 90, ese: 112.5, se: 135, sse: 157.5, s: 180, ssw: 202.5, sw: 225, wsw: 247.5, w: 270, wnw: 292.5, nw: 315, nnw: 337.5 };
+
+/**
+ * Roof-related OSM tags kept for the 3D roofs (src/map/airportRoofs.ts): roof_shape,
+ * roof_height_m, roof_orientation, roof_direction (degrees) and levels. `pt` = a parent outline's tags.
+ */
+export function roofTags(t = {}, pt = {}) {
+  const out = {};
+  const shape = String(t['roof:shape'] ?? pt['roof:shape'] ?? '').toLowerCase();
+  if (/^[a-z_-]{3,20}$/.test(shape)) out.roof_shape = shape;
+  const rh = parseLength(t['roof:height'] ?? pt['roof:height']);
+  if (rh > 0 && rh < 60) out.roof_height_m = rh;
+  const ori = String(t['roof:orientation'] ?? '').toLowerCase();
+  if (ori === 'along' || ori === 'across') out.roof_orientation = ori;
+  const dir = String(t['roof:direction'] ?? '').trim().toLowerCase();
+  const deg = COMPASS[dir] ?? (dir !== '' && Number.isFinite(Number(dir)) ? ((Number(dir) % 360) + 360) % 360 : undefined);
+  if (deg !== undefined) out.roof_direction = deg;
+  const levels = Number(String(t['building:levels'] ?? '').replace(',', '.'));
+  if (Number.isFinite(levels) && levels > 0 && levels < 200) out.levels = levels;
+  return out;
+}
+
+/** OSM de-icing pads (aeroway=deicing_pad) as closed [lon, lat] rings (5-decimal precision). */
+export function deicingPads(elements, keep = () => true) {
+  const pads = [];
+  for (const el of elements) {
+    if (el.tags?.aeroway !== 'deicing_pad') continue;
+    for (const poly of polygonsOf(el)) {
+      const ring = poly[0];
+      if (ring.length >= 4 && keep(ringCentroid(ring), el.tags)) pads.push(ring.map(([x, y]) => [r5(x), r5(y)]));
+    }
+  }
+  return pads;
 }
 
 /** Things tagged as buildings that are not visible structures above ground. */
@@ -632,7 +671,8 @@ function bbox(lat, lon, rws) {
   return [s - m, w - m / Math.cos(lat * D2R), n + m, e + m / Math.cos(lat * D2R)];
 }
 
-const FILTERS = (a) => `way[building](${a});relation[building](${a});way[aeroway~"^(terminal|hangar|gate|jet_bridge|control_tower|tower)$"](${a});way[man_made=tower](${a});node[man_made=tower](${a});node[aeroway=control_tower](${a});way["building:part"](${a});`;
+const FILTERS = (a) =>
+  `way[building](${a});relation[building](${a});way[aeroway~"^(terminal|hangar|gate|jet_bridge|control_tower|tower)$"](${a});way[man_made=tower](${a});node[man_made=tower](${a});node[aeroway=control_tower](${a});way["building:part"](${a});way[aeroway=deicing_pad](${a});relation[aeroway=deicing_pad](${a});`;
 
 /** Near the aerodrome (fallback without an area): within 500 m of a taxiway node or terminal. */
 /** The aerodrome outline(s) for an airport: tagged with its ICAO code, else containing it, else nearest. */
@@ -769,10 +809,9 @@ out body geom qt;
       const inAerodrome = (c) => aerodrome.some((ring) => pointInRing(c, ring));
       const near = nearGround(ident);
       const keep = !fallback ? () => true : aerodrome.length ? (c, t = {}) => inAerodrome(c) && !RESIDENTIAL.test(t.building ?? '') : near;
-      const features = buildFeatures(
-        j.elements.filter((x) => x.type !== 'area' && !(x.tags?.aeroway === 'aerodrome' && !x.tags.building)),
-        keep,
-      );
+      const elements = j.elements.filter((x) => x.type !== 'area' && !(x.tags?.aeroway === 'aerodrome' && !x.tags.building));
+      const features = buildFeatures(elements, keep);
+      const pads = deicingPads(elements, keep);
       let bs = 90;
       let bw = 180;
       let bn = -90;
@@ -792,6 +831,7 @@ out body geom qt;
         center: [r5(lat), r5(lon)],
         bbox: features.length ? [r5(bs), r5(bw), r5(bn), r5(be)] : [s, w, n, e].map(r5),
         features,
+        ...(pads.length ? { pads } : {}),
       };
       const json = JSON.stringify(out);
       writeFileSync(file, json);

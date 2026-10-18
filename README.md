@@ -12,7 +12,7 @@
 Arnav Flight Radar is a full-stack flight tracker that runs its own **world simulation**:
 
 - **Fleet:** about 15,000 aircraft from more than 230 real airlines (core and extended lists), flying real aircraft types between real airports.
-- **Ground:** at about 220 airports, aircraft park on real stands at the right terminal and taxi along real, named OpenStreetMap taxiways.
+- **Ground:** at about 340 airports, aircraft park on real stands at the right terminal and taxi along real, named OpenStreetMap taxiways.
 - **Weather:** real METAR and TAF weather choose the runway in use and set how much traffic each airport can take, now and in the hours ahead.
 
 The interface is modelled on the best commercial trackers, with flight cards, airport boards,
@@ -27,12 +27,19 @@ airline pages, widgets and a 3D view, on an original Apple-style glass design.
 **Gate to gate**
 - **Clearance and push-back:** the flight is cleared via a departure procedure, then pushes back off a
   real stand at the terminal its airline really uses (Terminal 5 for British Airways at Heathrow).
-- **Taxi** on real, named OpenStreetMap taxiways ("via A, B3 to holding point A1"). Aircraft hold
-  short of and cross other runways, and de-ice when the real METAR reports freezing precipitation.
+- **Taxi** strictly along the centre lines of real, named OpenStreetMap taxiways ("via A, B3 to holding
+  point A1"): the push-back ends on the taxilane facing the route, corners are turned with a realistic
+  radius, aircraft hold short at the real holding position, then line up through the entry taxiway.
+  They cross other runways at stop-bars (longer waits in low visibility) and de-ice before departure
+  when the real METAR reports freezing precipitation.
+- **Runway configuration:** airports with independent parallel runways run segregated mode (arrivals on
+  one, departures on the other); Heathrow alternates its runways at 15:00. Night curfews (Frankfurt,
+  Sydney, Zurich and others) keep scheduled flights out of the night.
 - **Departure queue:** take-offs keep ICAO wake-turbulence spacing (a medium behind a heavy waits two
   minutes). Long queues become gate holds.
 - **Departure route:** out over a real VOR or NDB on a procedure-style departure, or at US airports on
-  the real published FAA departure (CIFP).
+  the real published FAA departure (CIFP). Domestic US flights then file along the real published
+  airways (J and Q routes for jets, Victor and T routes for turboprops).
 - **Climb and cruise:** 250 kt below FL100, then a semicircular flight level, with step climbs on long
   flights and winds aloft that move the arrival estimate.
 - **Oceanic tracks:** transatlantic flights use the day's simulated North Atlantic tracks, Pacific flights
@@ -52,6 +59,10 @@ airline pages, widgets and a 3D view, on an original Apple-style glass design.
 - **Rare emergencies:** medical diversions (PAN PAN), engine failures, depressurisations and bird strikes
   divert to the nearest suitable airport (or return). A repaired aircraft positions empty back to base.
 - **Crews:** duty-time limits mean waits for a fresh crew; weather diversions first hold for an improvement.
+- **Maintenance and wet leases:** aircraft go out of service overnight for A-checks (rarely for days
+  for a C-check); in summer and for Hajj some flights are operated by wet-lease (ACMI) operators.
+- **ETOPS:** twin-engine flights far from land show their diversion time and en-route alternates.
+- **Runway occupancy:** on tight finals a slow-vacating aircraft ahead now and then causes a go-around.
 
 **Timetable and fleet**
 - **Routes:** flight numbers stay stable per route. Thin and leisure routes run on fixed weekdays,
@@ -100,30 +111,44 @@ airline pages, widgets and a 3D view, on an original Apple-style glass design.
     clearances, approach type, wake category and days of operation;
   - a **simulated radio** transcript (real airport frequencies) you can listen to, with squelch;
   - the aircraft's rotation for the day and a weekly schedule strip;
-  - an estimated **load sheet** with a seat map, fuel plan and weights;
+  - an estimated **load sheet** with a seat map, fuel plan and weights, a weight-and-balance **trim sheet**
+    (%MAC, stabiliser trim, CG envelope chart), the fuel-tankering decision and connecting passengers;
+  - the aircraft model with its manufacturer's logo; wet-lease operator, maintenance checks and ETOPS;
   - the airframe's recent **history**, flight data, a graph and a turnaround timeline.
-- Follow, a 3D chase view behind the aircraft with a **true-scale 3D model** (landing gear, flaps, night
-  lighting) and optional synthesised engine sound, a route line with clickable fixes, the cleared taxi
+- **Flight-sim chase view** (key X): the camera sits just behind the **true-scale 3D model** (landing gear,
+  flaps, night lighting) at its real altitude, with sky, horizon fog and sun colours, orbit by dragging,
+  a glass PFD-style HUD (speed and altitude tapes, heading ribbon), contrails in cold air at altitude, and optional synthesised engine sound, a route line with clickable fixes, the cleared taxi
   route on the ground, a 3D flight path with an altitude profile, sharing and comparing.
 - **Route search:** "LHR JFK", "LHR-JFK" or "London to New York".
 - **Aircraft type pages:** specs, a typical cabin and every simulated example flying now.
 
 **Airports**
-- Arrivals and departures boards (delays, holding, diversions, cancellations, codeshares, stands).
+- Arrivals and departures boards (delays, holding, diversions, cancellations, stands, slot (CTOT) times,
+  and codeshares — collapsed or listed as their own rows like a real FIDS).
+- **Operations:** runway configuration (segregated or mixed mode), low-visibility procedures, de-icing,
+  night curfew, slot coordination and upcoming runway closures.
+- **Procedures:** the SIDs and STARs for the runways in use (published FAA ones at US airports), drawn
+  on the map with a diagram.
+- **Where can I fly from here?** Every simulated destination with weekly frequency, drawn as arcs.
 - An "On the ground" list and the departure queue.
 - The runway in use and an hourly movement chart.
 - Sunrise, sunset, moonrise and moonset; METAR and TAF; runway diagrams and an approach explorer.
 - **Delays:** seven days of punctuality and a 24-hour disruption forecast built from the real TAF.
-- **Radio scanner:** listen to an airport's Delivery, Ground, Tower or Approach frequency.
+- **Ground radar:** a surface-movement-radar view of an airport with every aircraft's taxi clearance.
+- **Radio scanner:** listen to an airport's Delivery, Ground, Tower, Departure or Approach frequency, with
+  hand-offs between them.
 - **Compare airports** side by side, and a session punctuality league of airlines.
 - **Accurate 3D airport buildings** (terminals, piers, hangars, control towers, jet bridges from
-  OpenStreetMap) and runway, approach and taxiway lighting at night.
+  OpenStreetMap) with roof shapes, 3D ground vehicles (tugs, baggage trains, catering and fuel trucks,
+  stairs, de-icing rigs), stop-bars, and runway, approach and taxiway lighting at night.
+- **Airport surface markings:** runway designators, threshold and touchdown markings, yellow taxiway
+  centre lines, holding positions, airfield signs and stand lead-in lines when zoomed in.
 - Terminal outlines, numbered stands and 3D buildings when you zoom in; links to public airport webcams.
 - Pin up to four airports to the map as mini-boards. Installed apps get home-screen shortcuts for them.
 
 **Discover**
 - **Right now** widgets: busiest airports, a disruption index, and the longest, fastest and highest flights.
-- Airline pages (fleet, hubs, flights).
+- Airline pages (fleet, hubs, flights, and a day-of-week chart of when each route operates).
 - Search for flights, airlines, airports, cities and coordinates.
 - Analytics, Timeline playback, Compare, Spotter and Presentation mode.
 - **Follow a random flight** (`J`), and clock speeds 1×, 5×, 15× and 30× (`1`–`4`).

@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { airportAt, basemapIds, LIGHT, localProjection, mixColour, nightFactor, parseColour, placeAlong, polylineLength, runwayLights, taxiPolylines } from '@/map/airport3d';
+import { airportAt, basemapIds, displacedThresholds, LIGHT, localProjection, mixColour, nightFactor, paletteFor, parseColour, placeAlong, polylineLength, runwayLights, taxiPolylines, type BuildingProps, type BuildingsFile, type RunwayRow } from '@/map/airport3d';
+import { cleanRing, insetRing, orientedBox, ringAreaXY, roofedBuildings, roofFor, roofMesh, triangulate, type Obb } from '@/map/airportRoofs';
+import { holdBars, litBars } from '@/map/airportLvp';
 
 type Ring = [number, number][];
 interface BuildHelpers {
+  roofTags(t: Record<string, string>, pt?: Record<string, string>): Record<string, unknown>;
+  deicingPads(elements: unknown[]): Ring[];
   parseLength(v: unknown): number | undefined;
   buildingHeights(tags: Record<string, string>, kind: string): { height: number; min: number };
   classify(tags: Record<string, string>, parentKind?: string): string;
@@ -228,5 +232,246 @@ describe('helpers', () => {
     const [lon, lat] = P.inv(...P.fwd(51.01, 0.02));
     expect(lat).toBeCloseTo(51.01, 9);
     expect(lon).toBeCloseTo(0.02, 9);
+  });
+});
+
+// ---------------------------------------------------------------- roofs (airportRoofs.ts)
+
+/** A w × h rectangle (local metres) centred on (cx, cy), rotated by `deg` counter-clockwise. */
+function box(w: number, h: number, deg = 0, cx = 0, cy = 0): [number, number][] {
+  const a = (deg * Math.PI) / 180;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  return [
+    [-w / 2, -h / 2],
+    [w / 2, -h / 2],
+    [w / 2, h / 2],
+    [-w / 2, h / 2],
+  ].map(([x, y]) => [cx + x! * c - y! * s, cy + x! * s + y! * c] as [number, number]);
+}
+const props = (kind: BuildingProps['kind'], h: number, extra: Partial<BuildingProps> = {}): BuildingProps => ({ kind, height_m: h, min_height_m: 0, osm: 'w1', ...extra });
+/** Horizontal (plan) area covered by a mesh's roof triangles. */
+function planArea(m: { pos: number[]; wall: number[] }): number {
+  let a = 0;
+  for (let i = 0; i < m.wall.length; i += 3) {
+    if (m.wall[i]) continue;
+    const [x0, y0, x1, y1, x2, y2] = [m.pos[i * 3]!, m.pos[i * 3 + 1]!, m.pos[i * 3 + 3]!, m.pos[i * 3 + 4]!, m.pos[i * 3 + 6]!, m.pos[i * 3 + 7]!];
+    a += Math.abs((x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0)) / 2;
+  }
+  return a;
+}
+
+describe('roof geometry', () => {
+  it('fits an oriented box to a rotated footprint', () => {
+    const o = orientedBox(box(80, 30, 25, 10, -5));
+    expect(o.hl).toBeCloseTo(40, 3);
+    expect(o.hw).toBeCloseTo(15, 3);
+    expect(o.fill).toBeCloseTo(1, 3);
+    expect(Math.abs(o.u[0] * Math.cos((25 * Math.PI) / 180) + o.u[1] * Math.sin((25 * Math.PI) / 180))).toBeCloseTo(1, 5);
+    expect(o.c[0]).toBeCloseTo(10, 3);
+    const l: [number, number][] = [
+      [0, 0],
+      [60, 0],
+      [60, 20],
+      [20, 20],
+      [20, 50],
+      [0, 50],
+    ];
+    expect(orientedBox(l).fill).toBeLessThan(0.7);
+  });
+
+  it('cleans, insets and triangulates footprints', () => {
+    const r = cleanRing([...box(40, 20), box(40, 20)[0]!].reverse());
+    expect(r.length).toBe(4);
+    expect(ringAreaXY(r)).toBeCloseTo(800, 6);
+    expect(ringAreaXY(insetRing(r, 1)!)).toBeCloseTo(38 * 18, 3);
+    expect(insetRing(box(3, 3), 2)).toBeNull();
+    const l: [number, number][] = [
+      [0, 0],
+      [60, 0],
+      [60, 20],
+      [20, 20],
+      [20, 50],
+      [0, 50],
+    ];
+    const tris = triangulate(l)!;
+    expect(tris.length).toBe(4);
+    expect(tris.reduce((s, t) => s + ringAreaXY(t), 0)).toBeCloseTo(60 * 20 + 20 * 30, 6);
+  });
+
+  it('picks roofs by type, or from OSM tags', () => {
+    const big = orientedBox(box(90, 60));
+    expect(roofFor(props('hangar', 25), big, 5400).shape).toBe('barrel');
+    expect(roofFor(props('office', 30), big, 5400).shape).toBe('flat');
+    expect(roofFor(props('parking', 15), big, 5400).shape).toBe('flat');
+    const shed = orientedBox(box(14, 9));
+    expect(['gable', 'hipped']).toContain(roofFor(props('other', 7), shed, 126).shape);
+    const tagged = roofFor(props('other', 12, { roof_shape: 'gabled', roof_height_m: 3 }), big, 5400);
+    expect(tagged).toMatchObject({ shape: 'gable', rise: 3 });
+    // the roof never eats the walls
+    const low = roofFor(props('hangar', 6), big, 5400);
+    expect(low.shape === 'flat' || 6 - low.rise >= 2.5).toBe(true);
+  });
+
+  it('vaults a hangar across its short side, covering the footprint, with closed ends', () => {
+    const ring = box(80, 40, 30);
+    const o: Obb = orientedBox(ring);
+    const m = roofMesh(ring, { shape: 'barrel', rise: 6, across: false }, o)!;
+    expect(planArea(m)).toBeCloseTo(3200, 0);
+    let top = 0;
+    let topT = Infinity;
+    for (let i = 0; i < m.wall.length; i++) {
+      const z = m.pos[i * 3 + 2]!;
+      if (m.wall[i]) continue;
+      expect(z).toBeGreaterThanOrEqual(-1e-6);
+      expect(z).toBeLessThanOrEqual(6 + 1e-6);
+      if (z > top - 1e-6) {
+        top = z;
+        topT = Math.abs((m.pos[i * 3]! - o.c[0]) * o.v[0] + (m.pos[i * 3 + 1]! - o.c[1]) * o.v[1]);
+      }
+    }
+    expect(top).toBeCloseTo(6, 1);
+    expect(topT).toBeLessThan(2); // the crown runs along the long axis
+    expect(m.wall.some((w) => w === 1)).toBe(true);
+    // normals point up on the roof
+    for (let i = 0; i < m.wall.length; i++) if (!m.wall[i]) expect(m.nrm[i * 3 + 2]!).toBeGreaterThan(0.3);
+  });
+
+  it('meshes gables and hips over an L-shaped footprint', () => {
+    const l: [number, number][] = [
+      [0, 0],
+      [30, 0],
+      [30, 10],
+      [10, 10],
+      [10, 20],
+      [0, 20],
+    ];
+    for (const shape of ['gable', 'hipped', 'pyramid', 'skillion', 'dome'] as const) {
+      const m = roofMesh(l, { shape, rise: 3, across: false }, orientedBox(l))!;
+      expect(planArea(m)).toBeCloseTo(400, 0);
+    }
+  });
+
+  it('builds parapets, glazing and roof meshes for a buildings file', () => {
+    const P = localProjection(51, 0);
+    const ll = (r: [number, number][]) => [...r, r[0]!].map(([x, y]) => {
+      const [lon, lat] = P.inv(x, y);
+      return [lon, lat];
+    });
+    const file: BuildingsFile = {
+      type: 'FeatureCollection',
+      icao: 'TEST',
+      center: [51, 0],
+      bbox: [50.99, -0.01, 51.01, 0.01],
+      features: [
+        { type: 'Feature', properties: props('hangar', 24, { osm: 'w2' }), geometry: { type: 'Polygon', coordinates: [ll(box(90, 50, 0, -200, 0))] } },
+        { type: 'Feature', properties: props('office', 20, { osm: 'w3' }), geometry: { type: 'Polygon', coordinates: [ll(box(60, 40, 0, 200, 0))] } },
+        { type: 'Feature', properties: props('parking', 15, { osm: 'w4' }), geometry: { type: 'Polygon', coordinates: [ll(box(80, 50, 0, 0, 200))] } },
+      ],
+    };
+    const r = roofedBuildings(file, paletteFor('dark' as never), 0);
+    expect(r.roofs.ranges.length).toBe(1); // the hangar's vault
+    expect(r.roofs.vertexCount).toBeGreaterThan(30);
+    const feats = r.extrusion.features.map((f) => f.properties as { base: number; top: number; kind: string });
+    // the hangar's walls stop at the eaves under its vault
+    const hangar = feats.filter((f) => f.kind === 'hangar');
+    expect(Math.max(...hangar.map((f) => f.top))).toBeLessThan(24);
+    // offices: window bands and a parapet; car park: decks over a recessed core, lamp posts
+    expect(feats.filter((f) => f.kind === 'office').length).toBeGreaterThan(6);
+    expect(r.extrusion.features.some((f) => f.properties!.kind === 'office' && (f.geometry as { coordinates: unknown[] }).coordinates.length === 2)).toBe(true);
+    expect(feats.filter((f) => f.kind === 'parking' && f.top > 15).length).toBeGreaterThan(2);
+  });
+});
+
+// ---------------------------------------------------------------- stop bars (airportLvp.ts)
+
+describe('stop bars', () => {
+  // a north-south taxiway meeting an east-west runway 100 m north of the hold
+  const P = localProjection(51, 0);
+  const at = (x: number, y: number): [number, number] => {
+    const [lon, lat] = P.inv(x, y);
+    return [lat, lon];
+  };
+  const rows: RunwayRow[] = [['09', ...at(-1500, 100), 90, '27', ...at(1500, 100), 270, 3000] as unknown as RunwayRow];
+  const [hl, ho] = at(0, 0);
+  const ground = {
+    nodes: [at(0, -300), at(0, 100), at(-400, -300), at(-400, 300)],
+    edges: [
+      [0, 1, -1],
+      [2, 3, -1],
+    ] as [number, number, number][],
+    holds: [
+      [hl, ho, 'A1'],
+      [...at(-400, 250), 'B1'],
+    ] as [number, number, string][],
+  };
+  const bars = holdBars(ground, rows, P);
+
+  it('lays a bar of red lights across the taxiway at each holding position', () => {
+    expect(bars.length).toBe(2);
+    const a = bars.find((b) => b.ref === 'A1')!;
+    expect(Math.abs(a.dir[1])).toBeCloseTo(1, 3); // the taxiway runs north-south
+    expect(a.lights.length).toBe(8);
+    const xs = a.lights.map((p) => p[0]);
+    const ys = a.lights.map((p) => p[1]);
+    expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(21, 3);
+    expect(Math.max(...ys) - Math.min(...ys)).toBeCloseTo(0, 3);
+    expect(a.toRunway[1]).toBeCloseTo(1, 3);
+    expect(a.runways).toEqual(['09', '27']);
+    expect(a.guards[0][1]).toBeCloseTo(0, 3);
+  });
+
+  it('serves a runway only within ~120 m of its centreline', () => {
+    const b = bars.find((x) => x.ref === 'B1')!;
+    expect(b.runways).toEqual([]);
+  });
+
+  it('lights every bar in LVP, and at night those of the runways in use', () => {
+    expect(litBars(bars, { lvp: true, night: 0, inUse: [] }).length).toBe(2);
+    expect(litBars(bars, { lvp: false, night: 0, inUse: ['27'] }).length).toBe(0);
+    expect(litBars(bars, { lvp: false, night: 1, inUse: ['27'] }).map((b) => b.ref)).toEqual(['A1']);
+    expect(litBars(bars, { lvp: false, night: 1, inUse: ['18'] }).length).toBe(0);
+  });
+});
+
+describe('build script: roof tags and de-icing pads', () => {
+  it('keeps roof shape, height, orientation, direction and levels', () => {
+    expect(B.roofTags({ 'roof:shape': 'Gabled', 'roof:height': '3 m', 'roof:orientation': 'across', 'roof:direction': 'NE', 'building:levels': '4' })).toEqual({
+      roof_shape: 'gabled',
+      roof_height_m: 3,
+      roof_orientation: 'across',
+      roof_direction: 45,
+      levels: 4,
+    });
+    expect(B.roofTags({ 'roof:direction': '370' }).roof_direction).toBe(10);
+    expect(B.roofTags({}, { 'roof:shape': 'round' })).toEqual({ roof_shape: 'round' });
+  });
+  it('collects de-icing pads but never extrudes them', () => {
+    const geometry = rect(80, 60).map(([lon, lat]) => ({ lon, lat }));
+    const el = { type: 'way', id: 7, tags: { aeroway: 'deicing_pad' }, geometry };
+    expect(B.deicingPads([el]).length).toBe(1);
+    expect(B.buildFeatures([el]).length).toBe(0);
+  });
+});
+
+describe('displaced thresholds', () => {
+  it('moves the threshold bar, touchdown zone and approach lights in from the pavement end', () => {
+    const plain = runwayLights([0, 0], [3000, 0], 45, true);
+    const disp = runwayLights([0, 0], [3000, 0], 45, true, 309);
+    const greens = (l: typeof plain) => l.steady.filter((x) => x.c === LIGHT.green).map((x) => x.x);
+    expect(Math.max(...greens(plain))).toBeCloseTo(-1, 6);
+    expect(Math.min(...greens(disp))).toBeCloseTo(308, 6);
+    expect(Math.max(...greens(disp))).toBeCloseTo(308, 6);
+    // edge lights before the displaced threshold show red; the far end is unchanged
+    expect(disp.steady.some((x) => x.c === LIGHT.red && x.x > 50 && x.x < 300 && Math.abs(x.y) > 20)).toBe(true);
+    expect(disp.steady.filter((x) => x.c === LIGHT.red && x.x > 3000).length).toBe(plain.steady.filter((x) => x.c === LIGHT.red && x.x > 3000).length);
+    // the approach lights (and their flashers) start at the threshold, partly inset in the pavement
+    expect(Math.max(...disp.flashers.map((f) => f.x))).toBeCloseTo(309 - 330, 6);
+    expect(Math.min(...disp.flashers.map((f) => f.x))).toBeCloseTo(309 - 900, 6);
+  });
+  it('reads displaced thresholds from the airport record', () => {
+    const m = displacedThresholds([{ leIdent: '09R', heIdent: '27L', leDisplacedThresholdFt: 1014 }]);
+    expect(m.get('09R')).toBeCloseTo(309.07, 1);
+    expect(m.has('27L')).toBe(false);
   });
 });

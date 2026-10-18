@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { bestIndices } from '@/features/airports/AirportCompare';
-import { publishedFreq, SCANNER_KINDS } from '@/features/airports/AirportRadio';
+import { publishedFreq, RADIO_CHANNELS, SCANNER_KINDS } from '@/features/airports/AirportRadio';
 
 describe('airport comparison: best value per row', () => {
   it('marks the highest or lowest value', () => {
@@ -35,5 +35,8 @@ describe('airport scanner frequencies', () => {
     expect(publishedFreq([{ type: 'CLD', mhz: 135.15 }], 'del')).toBe(135.15);
     expect(publishedFreq([{ type: 'DEP', mhz: 125.4 }], 'app')).toBe(125.4);
     expect(publishedFreq([{ type: 'CTAF', mhz: 122.8 }], 'twr')).toBeUndefined();
+  });
+  it('offers Departure as its own channel between Tower and Approach', () => {
+    expect(RADIO_CHANNELS.map((c) => c.id)).toEqual(['del', 'gnd', 'twr', 'dep', 'app']);
   });
 });

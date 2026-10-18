@@ -30,6 +30,9 @@ export interface Fix {
   real: boolean;
   name?: string;
   kind?: number;
+  /** Published altitude constraint (ft): at or above / at or below; both equal = "at". */
+  altMin?: number;
+  altMax?: number;
 }
 
 const NAV_KIND = ['VOR', 'VOR-DME', 'VORTAC', 'NDB', 'NDB-DME'];

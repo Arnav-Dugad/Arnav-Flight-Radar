@@ -473,6 +473,44 @@ export function startAircraftEngine(map: MlMap): AircraftEngine {
   unsubs.push(() => models?.dispose());
   maybeModels();
 
+  // Flight-sim chase camera and contrails: fetched the first time they are needed.
+  let chaseCam: { frame(now: number): void; dispose(): void } | null = null;
+  let chaseLoading = false;
+  const maybeChase = () => {
+    const u = ui();
+    if (chaseCam || chaseLoading || !(u.following && u.chase)) return;
+    chaseLoading = true;
+    void import('./chaseView')
+      .then((m) => {
+        chaseCam = m.startChaseView(map);
+      })
+      .catch(() => undefined)
+      .finally(() => (chaseLoading = false));
+  };
+  unsubs.push(useUI.subscribe((s, p) => (s.chase !== p.chase || s.following !== p.following) && maybeChase()));
+  unsubs.push(() => chaseCam?.dispose());
+  maybeChase();
+
+  let contrails: { dispose(): void } | null = null;
+  let contrailsLoading = false;
+  const maybeContrails = () => {
+    if (contrails || contrailsLoading || !getSettings().showContrails) return;
+    if (map.getZoom() < 5.5 && !ui().chase) return;
+    contrailsLoading = true;
+    void import('./contrails')
+      .then((m) => {
+        contrails = m.startContrails(map);
+      })
+      .catch(() => undefined)
+      .finally(() => (contrailsLoading = false));
+  };
+  map.on('zoomend', maybeContrails);
+  unsubs.push(() => map.off('zoomend', maybeContrails));
+  unsubs.push(useSettings.subscribe((s, p) => s.showContrails !== p.showContrails && maybeContrails()));
+  unsubs.push(useUI.subscribe((s, p) => s.chase !== p.chase && maybeContrails()));
+  unsubs.push(() => contrails?.dispose());
+  maybeContrails();
+
   let lastDrawn = 0;
   function interval(): number {
     const zoom = map.getZoom();
@@ -672,11 +710,9 @@ export function startAircraftEngine(map: MlMap): AircraftEngine {
 
     // Camera follow.
     const u = ui();
-    if (u.following && !u.followPaused && now - lastFollow > 16) {
+    if (u.following && !u.chase && !u.followPaused && now - lastFollow > 16) {
       lastFollow = now;
-      const headingUp = u.chase || getSettings().cameraMode === 'heading-up';
-      // Chase view eases the bearing so turns feel like sitting behind the aircraft.
-      const bearing = headingUp && pos.trk !== undefined ? (u.chase ? map.getBearing() + (((pos.trk - map.getBearing() + 540) % 360) - 180) * 0.08 : pos.trk) : map.getBearing();
+      const bearing = getSettings().cameraMode === 'heading-up' && pos.trk !== undefined ? pos.trk : map.getBearing();
       map.jumpTo({ center: [pos.lon, pos.lat], bearing, padding: viewPadding() });
     }
   }
@@ -691,6 +727,10 @@ export function startAircraftEngine(map: MlMap): AircraftEngine {
       rebuild(now);
     }
     updateSelected(now);
+    // Flight-sim chase camera: every frame (no throttle) so the model stays locked on screen, and
+    // independent of the layer sources so it keeps flying through a map-style swap.
+    const u = ui();
+    if (u.following && u.chase && !u.followPaused && !u.replay.active) chaseCam?.frame(now);
   }
   raf = requestAnimationFrame(frame);
 

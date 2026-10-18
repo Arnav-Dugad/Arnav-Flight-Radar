@@ -25,7 +25,7 @@ import { traffic, type Track } from '@/state/traffic';
 import { useUI } from '@/state/ui';
 import { RepresentativePhoto } from './AircraftPhoto';
 import { EmergencyBanner, FlightPlan } from './FlightDetails';
-import { AirlineBadge, AirlineLogo, AllianceBadge, FlightRoute, StatusChip } from './FlightParts';
+import { AircraftModelCard, AirlineBadge, AirlineLogo, AllianceBadge, FlightRoute, modelName, StatusChip } from './FlightParts';
 import { AltitudeGauge, HeadingGauge, SpeedGauge, VerticalSpeedGauge } from './Gauges';
 import { MakerLogo } from './MakerLogo';
 import { TrailProfile } from './TrailProfile';
@@ -50,7 +50,11 @@ const TABS: { id: Tab; label: string }[] = [
 function TabBar({ value, onChange }: { value: Tab; onChange: (t: Tab) => void }) {
   const bar = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    bar.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+    bar.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView({
+      block: 'nearest',
+      inline: 'nearest',
+      behavior: 'smooth',
+    });
   }, [value]);
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
     const i = TABS.findIndex((t) => t.id === value);
@@ -75,15 +79,10 @@ function TabBar({ value, onChange }: { value: Tab; onChange: (t: Tab) => void })
               aria-selected={active}
               tabIndex={active ? 0 : -1}
               onClick={() => onChange(t.id)}
-              className={cn(
-                'relative shrink-0 whitespace-nowrap rounded-t-[8px] px-2.5 pb-2.5 pt-1.5 text-[12.5px] font-medium transition-colors focus-visible:shadow-[var(--focus)]',
-                active ? 'text-fg' : 'text-fg-3 hover:text-fg-2',
-              )}
+              className={cn('relative shrink-0 whitespace-nowrap rounded-t-[8px] px-2.5 pb-2.5 pt-1.5 text-[12.5px] font-medium transition-colors focus-visible:shadow-[var(--focus)]', active ? 'text-fg' : 'text-fg-3 hover:text-fg-2')}
             >
               {t.label}
-              {active && (
-                <motion.span layoutId="aircraft-tab" className="absolute inset-x-2 -bottom-px h-[2px] rounded-full bg-[var(--accent)]" transition={{ type: 'spring', stiffness: 500, damping: 36 }} />
-              )}
+              {active && <motion.span layoutId="aircraft-tab" className="absolute inset-x-2 -bottom-px h-[2px] rounded-full bg-[var(--accent)]" transition={{ type: 'spring', stiffness: 500, damping: 36 }} />}
             </button>
           );
         })}
@@ -189,9 +188,17 @@ function AircraftDetails({ t }: { t: Track }) {
   const ident = info?.flightIata ?? a.callsign ?? a.registration ?? a.icao24.replace('~', '').toUpperCase();
   const isFav = favorites.some((f) => f.hex === a.icao24);
   const fromTz = useTimeZone(info?.from.lat, info?.from.lon);
+  const spec = a.aircraftType ? specOf(a.aircraftType) : undefined;
 
   useEffect(() => {
-    addRecent({ kind: 'aircraft', id: a.id, label: ident, sub: a.typeDescription ?? a.aircraftType, lat: a.lat, lon: a.lon });
+    addRecent({
+      kind: 'aircraft',
+      id: a.id,
+      label: ident,
+      sub: a.typeDescription ?? a.aircraftType,
+      lat: a.lat,
+      lon: a.lon,
+    });
     // Real (OpenStreetMap) taxiway names for the taxi clearances.
     simPrepareFlight(a.id);
     // Only when a different aircraft is opened.
@@ -201,10 +208,18 @@ function AircraftDetails({ t }: { t: Track }) {
   const share = async () => {
     const url = shareUrl({ aircraft: a.id.replace(/^~/, '') });
     try {
-      if (navigator.share) await navigator.share({ title: `${ident} on Arnav Flight Radar (simulated)`, url });
+      if (navigator.share)
+        await navigator.share({
+          title: `${ident} on Arnav Flight Radar (simulated)`,
+          url,
+        });
       else {
         await navigator.clipboard.writeText(url);
-        toast({ kind: 'success', title: 'Link copied', body: 'Opens this simulated flight (links last for today’s simulation).' });
+        toast({
+          kind: 'success',
+          title: 'Link copied',
+          body: 'Opens this simulated flight (links last for today’s simulation).',
+        });
       }
     } catch {
       /* user cancelled */
@@ -222,7 +237,17 @@ function AircraftDetails({ t }: { t: Track }) {
         [Math.min(...lons), Math.min(...lats)],
         [Math.max(...lons), Math.max(...lats)],
       ],
-      { padding: { ...viewPadding(), top: viewPadding().top + 90, bottom: viewPadding().bottom + 90, left: viewPadding().left + 90, right: viewPadding().right + 90 }, duration: 1200, maxZoom: 9 },
+      {
+        padding: {
+          ...viewPadding(),
+          top: viewPadding().top + 90,
+          bottom: viewPadding().bottom + 90,
+          left: viewPadding().left + 90,
+          right: viewPadding().right + 90,
+        },
+        duration: 1200,
+        maxZoom: 9,
+      },
     );
   };
 
@@ -236,11 +261,7 @@ function AircraftDetails({ t }: { t: Track }) {
     <div className="flex min-h-full flex-col">
       {/* ------------------------------------------------ hero photo */}
       <div className="relative">
-        {showPhotos ? (
-          <RepresentativePhoto hero type={a.aircraftType} typeName={a.typeDescription} airlineIcao={info?.airline?.icao} airlineName={info?.airline?.name} />
-        ) : (
-          <div className="h-12" />
-        )}
+        {showPhotos ? <RepresentativePhoto hero type={a.aircraftType} typeName={a.typeDescription} airlineIcao={info?.airline?.icao} airlineName={info?.airline?.name} /> : <div className="h-12" />}
         <IconButton label="Close" shortcut="Esc" onClick={() => select(null)} size={34} variant="glass" className="!absolute right-3 top-3">
           <X size={17} />
         </IconButton>
@@ -295,7 +316,9 @@ function AircraftDetails({ t }: { t: Track }) {
         </Notice>
       )}
       {info?.status === 'Holding' && <Notice tone="warn">Holding for an arrival slot — about {info.holdMin} min planned.</Notice>}
-      {info?.status === 'Go-around' && <Notice tone="warn">Went around and is flying a circuit for another approach.</Notice>}
+      {info?.status === 'Go-around' && (
+        <Notice tone="warn">{info.goAroundOccupied ? 'Sent around by Tower: the aircraft ahead was slow to vacate the runway. Flying a circuit for another approach.' : 'Went around and is flying a circuit for another approach.'}</Notice>
+      )}
 
       {/* ------------------------------------------------ route */}
       {info && (
@@ -303,6 +326,13 @@ function AircraftDetails({ t }: { t: Track }) {
           <div className="glass-2 rounded-[20px] p-3.5">
             <FlightRoute info={info} />
           </div>
+        </div>
+      )}
+
+      {/* ------------------------------------------------ aircraft model (maker logo + model) */}
+      {(a.aircraftType || a.typeDescription) && (
+        <div className="px-5 pb-3">
+          <AircraftModelCard code={a.aircraftType} spec={spec} description={a.typeDescription} registration={a.registration} onOpen={a.aircraftType ? () => selectType(a.aircraftType!) : undefined} />
         </div>
       )}
       {info?.ground && (
@@ -379,14 +409,9 @@ function AircraftDetails({ t }: { t: Track }) {
                   label="Aircraft type"
                   value={
                     a.aircraftType ? (
-                      <button
-                        type="button"
-                        onClick={() => a.aircraftType && selectType(a.aircraftType)}
-                        title="Open aircraft type"
-                        className="inline-flex max-w-full items-center gap-0.5 text-[var(--accent)] hover:underline"
-                      >
-                        <MakerLogo maker={specOf(a.aircraftType)?.maker} size={16} maxWidth={60} className="mr-1" />
-                        <span className="truncate">{a.typeDescription ?? a.aircraftType}</span>
+                      <button type="button" onClick={() => a.aircraftType && selectType(a.aircraftType)} title="Open aircraft type" className="inline-flex max-w-full items-center gap-0.5 text-[var(--accent)] hover:underline">
+                        <MakerLogo maker={spec?.maker} size={18} maxWidth={68} className="mr-1.5" />
+                        <span className="truncate">{spec ? modelName(spec) : (a.typeDescription ?? a.aircraftType)}</span>
                         <ChevronRight size={13} className="shrink-0" />
                       </button>
                     ) : (
@@ -416,9 +441,7 @@ function AircraftDetails({ t }: { t: Track }) {
             {tab === 'graph' && <GraphTab t={t} />}
           </motion.div>
         </AnimatePresence>
-        <p className="mt-4 text-[11px] leading-relaxed text-fg-3">
-          Simulated flight: the airline, airports and aircraft type are real; the flight, registration, schedule and telemetry are invented. Not for navigation.
-        </p>
+        <p className="mt-4 text-[11px] leading-relaxed text-fg-3">Simulated flight: the airline, airports and aircraft type are real; the flight, registration, schedule and telemetry are invented. Not for navigation.</p>
       </div>
     </div>
   );
@@ -426,13 +449,7 @@ function AircraftDetails({ t }: { t: Track }) {
 
 function Notice({ tone, children }: { tone: 'warn' | 'danger'; children: ReactNode }) {
   return (
-    <div
-      role="status"
-      className={cn(
-        'mx-5 mb-3 rounded-[14px] px-3.5 py-2.5 text-[12px] leading-snug',
-        tone === 'danger' ? 'bg-[rgba(255,93,115,0.12)] text-[#ffb3bd]' : 'bg-[rgba(255,181,71,0.12)] text-[#ffd59a]',
-      )}
-    >
+    <div role="status" className={cn('mx-5 mb-3 rounded-[14px] px-3.5 py-2.5 text-[12px] leading-snug', tone === 'danger' ? 'bg-[rgba(255,93,115,0.12)] text-[#ffb3bd]' : 'bg-[rgba(255,181,71,0.12)] text-[#ffd59a]')}>
       {children}
     </div>
   );

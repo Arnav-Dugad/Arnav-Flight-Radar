@@ -7,10 +7,17 @@
 //     lights, an approach lighting system with its sequenced-flasher "rabbit", green taxiway
 //     centreline and blue edge lights, and warm apron floodlighting. They fade in as the sun
 //     at the airport (simulated clock) sinks below the horizon.
+//   • Loaded on demand (separate chunks, once an airport is on screen): airportRoofs.ts —
+//     shaped roofs (barrel-vaulted hangars, arched terminals, gables …), parapets, glazing,
+//     car-park decks, tower cabs and antennas, terrain-seated; airportLvp.ts — stop bars and
+//     runway guard lights at the holding positions, follow-the-greens in low visibility,
+//     de-icing pad outlines.
 
 import type * as GeoJSON from 'geojson';
 import type { ExpressionSpecification, FilterSpecification, GeoJSONSource, Map as MlMap } from 'maplibre-gl';
+import type { Runway } from '@shared/types';
 import { simNow, simRunwayInUse } from '@/data/world';
+import { api } from '@/lib/api';
 import { getSettings, useSettings, type MapStyleId } from '@/state/settings';
 import { solarElevation, subsolarPoint } from './extraOverlays';
 
@@ -27,20 +34,34 @@ export interface BuildingProps {
   material?: string;
   name?: string;
   osm?: string;
+  /** OSM roof:shape (flat, gabled, hipped, pyramidal, dome, round, skillion …) when mapped. */
+  roof_shape?: string;
+  /** OSM roof:height (m) when mapped. */
+  roof_height_m?: number;
+  /** OSM roof:orientation ('along' | 'across'). */
+  roof_orientation?: string;
+  /** OSM roof:direction (degrees the roof slopes down towards, skillion). */
+  roof_direction?: number;
+  /** OSM building:levels. */
+  levels?: number;
 }
-interface BuildingsFile {
+export interface BuildingsFile {
   type: 'FeatureCollection';
   icao: string;
   center: [number, number];
   bbox: [number, number, number, number]; // s, w, n, e
   features: GeoJSON.Feature<GeoJSON.Polygon, BuildingProps>[];
+  /** OSM aeroway=deicing_pad outlines ([lon, lat] rings), when the data has them. */
+  pads?: [number, number][][];
 }
 /** Runway row from runways-major.json. */
 export type RunwayRow = [string, number, number, number, string, number, number, number, number];
-interface GroundFile {
+export interface GroundFile {
   nodes: [number, number][];
   edges: [number, number, number?][];
   stands?: [number, number, ...unknown[]][];
+  /** OSM runway holding positions: lat, lon, ref. */
+  holds?: [number, number, string][];
 }
 type XY = [number, number];
 export interface Light {
@@ -108,13 +129,18 @@ export const LIGHT = {
  * Edge lights every 60 m (yellow in the last 600 m), centreline every 15 m (alternating red /
  * white in the last 900 m, red in the last 300 m), green threshold bar with wing bars, red
  * end bar, touchdown-zone barrettes, and — when `als` — a 900 m approach lighting system with
- * sequenced flashers (returned separately with their rabbit group).
+ * sequenced flashers (returned separately with their rabbit group). `displacedM`: a displaced
+ * threshold that far in from `a` (threshold bar, touchdown zone and approach lights move with it).
  */
-export function runwayLights(a: XY, b: XY, width: number, als: boolean): { steady: Light[]; flashers: Light[] } {
+export function runwayLights(a: XY, b: XY, width: number, als: boolean, displacedM = 0): { steady: Light[]; flashers: Light[] } {
   const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
   const steady: Light[] = [];
   const flashers: Light[] = [];
   if (L < 200) return { steady, flashers };
+  // A displaced threshold (OurAirports le/he_displaced_threshold_ft) moves the threshold bar,
+  // touchdown zone and approach lights `d` metres in from the pavement end `a`; the edge lights
+  // before it show red towards a landing aircraft and the approach lights there are inset.
+  const d = Math.max(0, Math.min(displacedM, L - 400));
   const u: XY = [(b[0] - a[0]) / L, (b[1] - a[1]) / L];
   const n: XY = [-u[1], u[0]];
   const at = (s: number, t: number, c: string, r = 1, g?: number): Light => {
@@ -127,7 +153,7 @@ export function runwayLights(a: XY, b: XY, width: number, als: boolean): { stead
   const edgeN = Math.max(1, Math.round(L / 60));
   for (let i = 0; i <= edgeN; i++) {
     const s = (L * i) / edgeN;
-    const c = L - s <= 600 ? LIGHT.yellow : LIGHT.white;
+    const c = s < d - 1 ? LIGHT.red : L - s <= 600 ? LIGHT.yellow : LIGHT.white;
     steady.push(at(s, half + 1.5, c), at(s, -half - 1.5, c));
   }
   // Centreline every 15 m.
@@ -137,27 +163,28 @@ export function runwayLights(a: XY, b: XY, width: number, als: boolean): { stead
     steady.push(at(s, 0, c, 0.8));
   }
   // Threshold (green, with wing bars) and runway end (red).
+  const th = d - 1; // the threshold bar, just short of the (displaced) threshold
   for (let t = -half; t <= half + 1e-6; t += 3) {
-    steady.push(at(-1, t, LIGHT.green, 1.15));
+    steady.push(at(th, t, LIGHT.green, 1.15));
     steady.push(at(L + 1, t, LIGHT.red, 1.1));
   }
-  for (let k = 1; k <= 5; k++) for (const sgn of [1, -1]) steady.push(at(-1, sgn * (half + 2 + k * 3), LIGHT.green, 1.15));
-  // Touchdown zone: barrettes of three either side of the centreline, 60 m apart to 900 m.
-  if (L >= 1800)
-    for (let s = 60; s <= 900; s += 60) for (const t of [9, 10.5, 12]) steady.push(at(s, t, LIGHT.white, 0.85), at(s, -t, LIGHT.white, 0.85));
-  if (als && L >= 1800) {
+  for (let k = 1; k <= 5; k++) for (const sgn of [1, -1]) steady.push(at(th, sgn * (half + 2 + k * 3), LIGHT.green, 1.15));
+  // Touchdown zone: barrettes of three either side of the centreline, 60 m apart to 900 m past the threshold.
+  if (L - d >= 1800)
+    for (let s = 60; s <= 900; s += 60) for (const t of [9, 10.5, 12]) steady.push(at(d + s, t, LIGHT.white, 0.85), at(d + s, -t, LIGHT.white, 0.85));
+  if (als && L - d >= 1800) {
     for (let s = 30; s <= 900; s += 30) {
       // Centreline barrettes of five.
-      for (let t = -2.1; t <= 2.11; t += 1.05) steady.push(at(-s, t, LIGHT.white, 0.9));
+      for (let t = -2.1; t <= 2.11; t += 1.05) steady.push(at(d - s, t, LIGHT.white, 0.9));
       // Red side barrettes in the inner 270 m.
-      if (s <= 270) for (const t of [9, 10.5, 12]) steady.push(at(-s, t, LIGHT.red, 0.85), at(-s, -t, LIGHT.red, 0.85));
+      if (s <= 270) for (const t of [9, 10.5, 12]) steady.push(at(d - s, t, LIGHT.red, 0.85), at(d - s, -t, LIGHT.red, 0.85));
     }
     // Crossbar at 300 m.
-    for (let t = 4; t <= 15; t += 1.5) steady.push(at(-300, t, LIGHT.white, 0.9), at(-300, -t, LIGHT.white, 0.9));
+    for (let t = 4; t <= 15; t += 1.5) steady.push(at(d - 300, t, LIGHT.white, 0.9), at(d - 300, -t, LIGHT.white, 0.9));
     // Sequenced flashers from 900 m in to 330 m — five groups, running toward the threshold.
     const stations: number[] = [];
     for (let s = 900; s >= 330; s -= 30) stations.push(s);
-    stations.forEach((s, i) => flashers.push(at(-s, 0, LIGHT.flash, 1.6, Math.floor((i * 5) / stations.length))));
+    stations.forEach((s, i) => flashers.push(at(d - s, 0, LIGHT.flash, 1.6, Math.floor((i * 5) / stations.length))));
   }
   return { steady, flashers };
 }
@@ -246,7 +273,7 @@ interface Swatch {
   wall: string;
   roof: string;
 }
-type Palette = Record<BuildingKind, Swatch> & { cab: Swatch; shaft: Swatch; cap: Swatch; glow: string; night: string; dark: boolean };
+export type Palette = Record<BuildingKind, Swatch> & { cab: Swatch; shaft: Swatch; cap: Swatch; glow: string; night: string; dark: boolean };
 
 const DARK: Palette = {
   terminal: { wall: '#25364d', roof: '#46597a' },
@@ -291,31 +318,42 @@ const SAT: Palette = {
   hangar: { wall: '#4a5059', roof: '#8a919b' },
   other: { wall: '#3d444e', roof: '#6c747f' },
 };
-function paletteFor(style: MapStyleId): Palette {
+export function paletteFor(style: MapStyleId): Palette {
   return style === 'arctic' ? LIGHTP : style === 'satellite' ? SAT : DARK;
+}
+
+const LIT_KINDS = new Set<BuildingKind>(['terminal', 'pier', 'hotel', 'office', 'parking']);
+
+/**
+ * Wall and roof colours of a building: the style's swatch for its kind (tower parts their own),
+ * tinted by OSM `building:colour` / `roof:colour`; at night lit façades warm up and roofs sink
+ * into the dark.
+ */
+export function buildingColours(p: BuildingProps, pal: Palette, night: number): { wall: string; roof: string } {
+  const sw = p.part ? pal[p.part === 'base' ? 'control_tower' : p.part] : pal[p.kind] ?? pal.other;
+  let wall = mixColour(sw.wall, p.colour, 0.28);
+  let roof = mixColour(sw.roof, p.roof_colour ?? p.colour, 0.3);
+  if (night > 0 && pal.dark) {
+    if (LIT_KINDS.has(p.kind)) wall = mixColour(wall, pal.glow, 0.12 * night);
+    roof = mixColour(roof, pal.night, 0.35 * night);
+  }
+  return { wall, roof };
 }
 
 /**
  * Extrusion features for a buildings file: each building becomes a body and a thin roof slab
  * (a lighter roof colour that reads as a parapet from the side); tower parts keep their own
  * colours. OSM `building:colour` / `roof:colour` tint the style's colours; at night lit
- * buildings warm up.
+ * buildings warm up. (Shaped roofs, parapets, glazing and rooftop details come from
+ * airportRoofs.ts once it has loaded; this is the immediate first draw.)
  */
 export function extrusionFeatures(features: GeoJSON.Feature<GeoJSON.Polygon, BuildingProps>[], pal: Palette, night: number): GeoJSON.FeatureCollection {
   const out: GeoJSON.Feature[] = [];
-  const lit = new Set<BuildingKind>(['terminal', 'pier', 'hotel', 'office', 'parking']);
   for (const f of features) {
     const p = f.properties;
     const h = p.height_m;
     const base = p.min_height_m;
-    const sw = p.part ? pal[p.part === 'base' ? 'control_tower' : p.part] : pal[p.kind] ?? pal.other;
-    let wall = mixColour(sw.wall, p.colour, 0.28);
-    let roof = mixColour(sw.roof, p.roof_colour ?? p.colour, 0.3);
-    if (night > 0 && pal.dark) {
-      // Lit façades take a faint warm glow; roofs, lit by nothing, sink into the dark.
-      if (lit.has(p.kind)) wall = mixColour(wall, pal.glow, 0.12 * night);
-      roof = mixColour(roof, pal.night, 0.35 * night);
-    }
+    const { wall, roof } = buildingColours(p, pal, night);
     const span = h - base;
     if (p.part || p.kind === 'jet_bridge' || span < 3) {
       out.push({ type: 'Feature', geometry: f.geometry, properties: { color: wall, base, top: h, kind: p.kind } });
@@ -366,6 +404,30 @@ function loadGroundFile(icao: string) {
   return p;
 }
 
+const displacedCache = new Map<string, Promise<Map<string, number>>>();
+/** Displaced thresholds (m) per runway end ident, from the airport's OurAirports record. */
+function loadDisplaced(icao: string): Promise<Map<string, number>> {
+  let p = displacedCache.get(icao);
+  if (!p) {
+    p = api
+      .airport(icao)
+      .then((d) => displacedThresholds(d.runways))
+      .catch(() => new Map<string, number>());
+    displacedCache.set(icao, p);
+  }
+  return p;
+}
+
+/** Runway end ident → displaced threshold in metres (ends without one are left out). */
+export function displacedThresholds(runways: Pick<Runway, 'leIdent' | 'heIdent' | 'leDisplacedThresholdFt' | 'heDisplacedThresholdFt'>[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const r of runways) {
+    if (r.leIdent && (r.leDisplacedThresholdFt ?? 0) > 0) out.set(r.leIdent, r.leDisplacedThresholdFt! * 0.3048);
+    if (r.heIdent && (r.heDisplacedThresholdFt ?? 0) > 0) out.set(r.heIdent, r.heDisplacedThresholdFt! * 0.3048);
+  }
+  return out;
+}
+
 /** The airport whose buildings box (grown by ~1.5 km) contains the point, nearest first. */
 export function airportAt(index: Record<string, IndexRow>, lat: number, lon: number): string | undefined {
   let best: string | undefined;
@@ -411,6 +473,8 @@ interface LightSet {
   inUse: string | undefined;
   rows: RunwayRow[];
   ground: GroundFile | null;
+  /** Displaced threshold (m) per runway end ident. */
+  disp: Map<string, number>;
   lat: number;
   lon: number;
   steady: GeoJSON.FeatureCollection;
@@ -422,7 +486,7 @@ interface LightSet {
 /** Heading difference in degrees (0–180). */
 const hdgDiff = (a: number, b: number) => Math.abs((((a - b) % 360) + 540) % 360 - 180);
 
-function buildLights(icao: string, rows: RunwayRow[], ground: GroundFile | null): LightSet | undefined {
+function buildLights(icao: string, rows: RunwayRow[], ground: GroundFile | null, disp = new Map<string, number>()): LightSet | undefined {
   const r0 = rows.find((r) => r[1] && r[5]);
   if (!r0) return undefined;
   const lat0 = r0[1];
@@ -448,7 +512,7 @@ function buildLights(icao: string, rows: RunwayRow[], ground: GroundFile | null)
     // Landing direction: the runway in use (and its parallels), else the lower-numbered end.
     const reverse = inUseHdg !== undefined && hdgDiff(r[7], inUseHdg) < hdgDiff(r[3], inUseHdg);
     const [a, b] = reverse ? [he, le] : [le, he];
-    const { steady: s, flashers: f } = runwayLights(a, b, width, L >= 1800);
+    const { steady: s, flashers: f } = runwayLights(a, b, width, L >= 1800, disp.get(reverse ? r[4] : r[0]) ?? 0);
     for (const l of s) steady.push(toFeature(l));
     flashers.push(...f);
   }
@@ -489,6 +553,7 @@ function buildLights(icao: string, rows: RunwayRow[], ground: GroundFile | null)
     inUse,
     rows,
     ground,
+    disp,
     lat: lat0,
     lon: lon0,
     steady: { type: 'FeatureCollection', features: steady },
@@ -519,9 +584,49 @@ const state = {
   forceNight: undefined as number | undefined,
 };
 
+/** The airport buildings file on screen (null: none) — e.g. for jet-bridge (contact stand) checks. */
+export const airportBuildings = (): BuildingsFile | null => state.buildings;
+/** The dev override of the light level (window.__arnav.airport3d.forceNight), if set. */
+export const forcedNight = (): number | undefined => state.forceNight;
+
+// ---------------------------------------------------------------- lazily loaded parts
+
+let roofsMod: typeof import('./airportRoofs') | null = null;
+let lvpMod: typeof import('./airportLvp') | null = null;
+let roofsLoading = false;
+let lvpLoading = false;
+
+function loadRoofs(map: MlMap) {
+  if (roofsMod || roofsLoading) return;
+  roofsLoading = true;
+  import('./airportRoofs')
+    .then((m) => {
+      roofsMod = m;
+      m.installRoofLayer(map, beforeBuildings(map));
+      renderBuildings(map);
+      syncVisibility(map);
+    })
+    .catch((e: unknown) => console.warn('[airport3d] roofs unavailable:', e));
+}
+
+function loadLvp(map: MlMap) {
+  if (lvpMod || lvpLoading) return;
+  lvpLoading = true;
+  import('./airportLvp')
+    .then((m) => {
+      lvpMod = m;
+      m.installLvp(map, L_BLDG);
+      m.setLvpNight(state.night);
+      m.setLvpAirport(map, state.lights);
+      m.setDeicePads(map, state.buildings?.pads);
+    })
+    .catch((e: unknown) => console.warn('[airport3d] stop bars unavailable:', e));
+}
+
 /** px radius for a size in metres on the ground at zoom 16 (scaled exponentially with zoom). */
 function metresAtZoom(m: number, lat: number): ExpressionSpecification {
-  const px16 = m / ((156_543.03 * Math.cos(lat * D2R)) / 2 ** 16);
+  // MapLibre's 512 px tiles: 78,271.5 × cos(lat) metres per pixel at zoom 0
+  const px16 = m / ((78_271.517 * Math.cos(lat * D2R)) / 2 ** 16);
   return ['interpolate', ['exponential', 2], ['zoom'], 10, px16 / 64, 20, px16 * 16];
 }
 
@@ -616,6 +721,8 @@ export function installAirport3d(map: MlMap) {
       },
       before,
     );
+  roofsMod?.installRoofLayer(map, before);
+  lvpMod?.installLvp(map, L_BLDG);
   // A fresh style: put the current airport's data back.
   state.hiddenIds = [];
   state.rabbitOn.clear();
@@ -628,7 +735,16 @@ function renderBuildings(map: MlMap) {
   const src = map.getSource(SRC_B) as GeoJSONSource | undefined;
   if (!src) return;
   const b = state.buildings;
-  src.setData(b ? extrusionFeatures(b.features, paletteFor(getSettings().mapStyle), state.night) : EMPTY);
+  const pal = paletteFor(getSettings().mapStyle);
+  if (b && roofsMod) {
+    const r = roofsMod.roofedBuildings(b, pal, state.night);
+    src.setData(r.extrusion);
+    roofsMod.setRoofs(map, r.roofs);
+  } else {
+    src.setData(b ? extrusionFeatures(b.features, pal, state.night) : EMPTY);
+    roofsMod?.setRoofs(map, null);
+  }
+  lvpMod?.setDeicePads(map, b?.pads);
   hideBasemapTwins(map);
 }
 
@@ -654,12 +770,14 @@ function renderLights(map: MlMap) {
   (map.getSource(SRC_F) as GeoJSONSource | undefined)?.setData(l?.flood ?? EMPTY);
   state.rabbitOn.clear();
   if (l && map.getLayer('apt-flood')) map.setPaintProperty('apt-flood', 'circle-radius', metresAtZoom(55, l.lat));
+  lvpMod?.setLvpAirport(map, l);
 }
 
 const buildingsShown = (map: MlMap) => getSettings().show3dBuildings && map.getPitch() > 15;
 
 function syncVisibility(map: MlMap) {
   if (map.getLayer(L_BLDG)) map.setLayoutProperty(L_BLDG, 'visibility', buildingsShown(map) && state.buildings ? 'visible' : 'none');
+  roofsMod?.setRoofsVisible(map, buildingsShown(map) && !!state.buildings);
   hideBasemapTwins(map);
   const f = state.night;
   const on = f > 0.02 && !!state.lights;
@@ -699,6 +817,7 @@ export function bindAirport3d(map: MlMap): () => void {
         if (disposed || state.buildingsFor !== icao) return;
         state.buildings = b;
         renderBuildings(map);
+        if (b) loadRoofs(map);
       } else if (!icao && state.buildingsFor) {
         state.buildingsFor = '';
         state.buildings = null;
@@ -713,11 +832,12 @@ export function bindAirport3d(map: MlMap): () => void {
       if (icao && icao !== state.lightsFor) {
         state.lightsFor = icao;
         const rows = runways[icao] ?? [];
-        const ground = await loadGroundFile(icao);
+        const [ground, disp] = await Promise.all([loadGroundFile(icao), loadDisplaced(icao)]);
         if (disposed || state.lightsFor !== icao) return;
-        state.lights = buildLights(icao, rows, ground) ?? null;
+        state.lights = buildLights(icao, rows, ground, disp) ?? null;
         renderLights(map);
       }
+      if (state.lights?.ground?.holds?.length && z >= 12) loadLvp(map);
     }
     refreshNight();
   };
@@ -726,7 +846,7 @@ export function bindAirport3d(map: MlMap): () => void {
     // The simulated runway in use changed: turn the lights round.
     const was = state.lights;
     if (was && simRunwayInUse(was.icao)?.runway !== was.inUse) {
-      state.lights = buildLights(was.icao, was.rows, was.ground) ?? null;
+      state.lights = buildLights(was.icao, was.rows, was.ground, was.disp) ?? null;
       renderLights(map);
     }
     const l = state.lights;
@@ -739,6 +859,7 @@ export function bindAirport3d(map: MlMap): () => void {
     }
     syncVisibility(map);
     syncRabbit();
+    lvpMod?.setLvpNight(state.night);
   };
 
   const tickRabbit = () => {
@@ -797,6 +918,7 @@ export function bindAirport3d(map: MlMap): () => void {
     document.removeEventListener('visibilitychange', onVis);
     clearInterval(nightTimer);
     if (rabbitTimer) clearInterval(rabbitTimer);
+    lvpMod?.disposeLvp();
     unsub();
     state.buildingsFor = '';
     state.lightsFor = '';

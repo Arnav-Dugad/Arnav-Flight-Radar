@@ -45,10 +45,25 @@ export function LogoTile({
 }) {
   const pad = item.tone === 'opaque' ? 0 : Math.max(2, Math.round(height * 0.12));
   const box: CSSProperties = { width, maxWidth, height, borderRadius: Math.round(height * 0.28), padding: pad };
-  const fluid: CSSProperties | undefined = width === undefined ? { height: height - 2 * pad, width: 'auto', maxWidth: maxWidth === undefined ? undefined : maxWidth - 2 * pad } : undefined;
+  // Explicit pixel limits: `max-height: 100%` does not resolve inside an auto-sized grid
+  // row, so tall logos (Emirates' calligraphy) would overflow the tile and be cropped.
+  const inner: CSSProperties =
+    width === undefined
+      ? { height: height - 2 * pad, width: 'auto', maxWidth: maxWidth === undefined ? undefined : maxWidth - 2 * pad }
+      : { maxHeight: height - 2 * pad, maxWidth: width - 2 * pad };
+  // Fade the tile in once the image is there (an empty light tile would flash as a sliver).
+  const [loaded, setLoaded] = useState(false);
   return (
-    <span className={cn('grid shrink-0 place-items-center overflow-hidden', TONE_CLASS[item.tone ?? 'plain'], className)} style={box} title={title}>
+    <span
+      className={cn('grid shrink-0 place-items-center overflow-hidden transition-opacity duration-200', TONE_CLASS[item.tone ?? 'plain'], !loaded && 'opacity-0', className)}
+      style={box}
+      title={title}
+    >
       <img
+        ref={(el) => {
+          if (el?.complete && el.naturalWidth > 0) setLoaded(true);
+        }}
+        onLoad={() => setLoaded(true)}
         src={item.src}
         srcSet={`${item.src} 2x`}
         alt={alt}
@@ -57,7 +72,7 @@ export function LogoTile({
         draggable={false}
         referrerPolicy="strict-origin-when-cross-origin"
         onError={onError}
-        style={fluid}
+        style={inner}
         className={cn('max-h-full max-w-full select-none object-contain', item.tone === 'opaque' && 'h-full w-full')}
       />
     </span>
@@ -74,6 +89,7 @@ export function MakerLogo({ maker, size = 20, maxWidth, className }: { maker: st
   if (!maker || !logo || failed === logo.src) return null;
   return (
     <LogoTile
+      key={logo.src}
       item={logo}
       alt={`${maker} logo`}
       maxWidth={maxWidth ?? Math.round(size * 4.5)}

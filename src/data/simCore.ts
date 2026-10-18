@@ -15,6 +15,7 @@ import type { AirlineProfile } from './sim/fleet';
 import type { Airframe, World, Leg, LegKind, Phase, SimAirport, TaxiGraph, TaxiInfo, RouteInfo, Emergency } from './sim/engine';
 import type { RouteDays } from './sim/schedule';
 import { legKindLabel } from './sim/labels';
+import { curfewEnd, curfewOf } from './sim/runwayConfig';
 
 export { legKindLabel };
 
@@ -62,7 +63,10 @@ export async function coreInit(o: { now: number; seed: number; scale: number }):
   byId = new Map(world.airframes.map((af) => [`~${af.hex}`, af]));
   const count = new Map<string, number>();
   for (const af of world.airframes) if (af.airline) count.set(af.leg.to.ident, (count.get(af.leg.to.ident) ?? 0) + 1);
-  const hubs = [...count.entries()].sort((a, b) => b[1] - a[1]).slice(0, 40).map(([id]) => id);
+  const hubs = [...count.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 40)
+    .map(([id]) => id);
   return { hubs, airframes: world.airframes.length };
 }
 
@@ -72,15 +76,19 @@ type GlideRow = [string, string, number, number, string, number | null];
 
 /** Helicopter (air ambulance, offshore, shuttle) and gliding traffic, plus published US procedures. */
 export async function coreLoadExtra(scale: number) {
-  const [heli, gliding, procs] = await Promise.all([
+  const [heli, gliding, procs, airways] = await Promise.all([
     loadSimData<HeliRow[]>('heliports'),
     loadSimData<GlideRow[]>('gliding'),
     fetch('/data/sim/procedures-us.json')
       .then((r) => (r.ok ? (r.json() as Promise<import('./sim/usProcedures').ProceduresData>) : null))
       .catch(() => null),
+    fetch('/data/sim/airways-us.json')
+      .then((r) => (r.ok ? (r.json() as Promise<import('./sim/usAirways').AirwaysData>) : null))
+      .catch(() => null),
   ]);
   if (!world) return;
   if (procs) world.setUsProcedures(procs);
+  if (airways) world.setUsAirways(airways);
   world.populateExtra(NOW, scale, heli, gliding);
   byId = new Map(world.airframes.map((af) => [`~${af.hex}`, af]));
 }
@@ -254,7 +262,14 @@ export function coreTick(sim: number): { packet: TickPacket; transfer: ArrayBuff
       if (!alerted.has(key)) {
         alerted.add(key);
         if (sim - e.t < 10 * 60_000)
-          p.alerts.push({ id: `~${af.hex}`, kind: e.kind, flight: leg.flightIata ?? leg.flight, from: leg.from.iata ?? leg.from.ident, to: (leg.divertedFrom ?? leg.to).iata ?? leg.to.ident, divertTo: e.divertTo.name });
+          p.alerts.push({
+            id: `~${af.hex}`,
+            kind: e.kind,
+            flight: leg.flightIata ?? leg.flight,
+            from: leg.from.iata ?? leg.from.ident,
+            to: (leg.divertedFrom ?? leg.to).iata ?? leg.to.ident,
+            divertTo: e.divertTo.name,
+          });
       }
     }
   }
@@ -270,11 +285,30 @@ export function coreResetMeta() {
 }
 
 /** Simulated past positions of an aircraft's current leg (for the trail). */
-export function simTrail(id: string, full: boolean): { lat: number; lon: number; t: number; gs: number; vr: number; alt?: number }[] | undefined {
+export function simTrail(
+  id: string,
+  full: boolean,
+):
+  | {
+      lat: number;
+      lon: number;
+      t: number;
+      gs: number;
+      vr: number;
+      alt?: number;
+    }[]
+  | undefined {
   const af = byId.get(id);
   if (!world || !af) return undefined;
   return world.trail(af, NOW, full ? Infinity : 6 * 60_000).map((p) => {
-    const tp: { lat: number; lon: number; t: number; gs: number; vr: number; alt?: number } = { lat: p.lat, lon: p.lon, t: p.t, gs: p.gs, vr: p.vr };
+    const tp: {
+      lat: number;
+      lon: number;
+      t: number;
+      gs: number;
+      vr: number;
+      alt?: number;
+    } = { lat: p.lat, lon: p.lon, t: p.t, gs: p.gs, vr: p.vr };
     if (p.alt !== undefined) tp.alt = p.alt;
     return tp;
   });
@@ -283,24 +317,7 @@ export function simTrail(id: string, full: boolean): { lat: number; lon: number;
 // ---------------------------------------------------------------- flight info
 
 export type FlightStatus =
-  | 'Scheduled'
-  | 'Boarding'
-  | 'Delayed'
-  | 'Canceled'
-  | 'Gate hold'
-  | 'De-icing'
-  | 'Departed'
-  | 'Taxiing'
-  | 'En route'
-  | 'Holding'
-  | 'Diverted'
-  | 'Emergency'
-  | 'Go-around'
-  | 'On station'
-  | 'Soaring'
-  | 'Approach'
-  | 'Landed'
-  | 'Arrived';
+  'Scheduled' | 'Boarding' | 'Delayed' | 'Canceled' | 'Gate hold' | 'De-icing' | 'Departed' | 'Taxiing' | 'En route' | 'Holding' | 'Diverted' | 'Emergency' | 'Go-around' | 'On station' | 'Soaring' | 'Approach' | 'Landed' | 'Arrived';
 
 export interface FlightInfo {
   flight: string;
@@ -330,7 +347,11 @@ export interface FlightInfo {
   wind?: { dir: number; kt: number; comp: number };
   alliance?: string;
   /** Turnaround on the stand before departure (simulated ground operations). */
-  ground?: { start: number; end: number; steps: { label: string; t0: number; t1: number }[] };
+  ground?: {
+    start: number;
+    end: number;
+    steps: { label: string; t0: number; t1: number }[];
+  };
   canceledTo?: SimAirport;
   kind: LegKind;
   /** Operator for non-airline flights (military, air ambulance, helicopter operators). */
@@ -348,8 +369,22 @@ export interface FlightInfo {
   wake: string;
   remoteFrom: boolean;
   crewDelayMin: number;
+  /** Out of service for a maintenance check before this flight. */
+  maintenance?: { check: string; from: number; until: number };
+  /** Wet lease (ACMI): flown for the airline by another operator's aircraft and crew. */
+  operatedBy?: { icao: string; name: string; country: string };
+  /** Went around because the aircraft ahead was slow to vacate the runway. */
+  goAroundOccupied?: boolean;
+  /** Twin-engine extended operations (selected flight only). */
+  etops?: import('./sim/opsRules').EtopsInfo;
   /** The aircraft's day: earlier legs, this flight and where it goes next. */
-  rotation: { flight: string; from: SimAirport; to: SimAirport; t: number; state: 'done' | 'now' | 'next' }[];
+  rotation: {
+    flight: string;
+    from: SimAirport;
+    to: SimAirport;
+    t: number;
+    state: 'done' | 'now' | 'next';
+  }[];
 }
 
 /** Alliance memberships, taken from the simulator chunk once it has loaded. */
@@ -374,7 +409,15 @@ const TURN_STEPS: [string, number, number][] = [
 
 function groundOps(start: number, end: number) {
   const span = Math.max(1, end - start);
-  return { start, end, steps: TURN_STEPS.map(([label, a, b]) => ({ label, t0: start + a * span, t1: start + b * span })) };
+  return {
+    start,
+    end,
+    steps: TURN_STEPS.map(([label, a, b]) => ({
+      label,
+      t0: start + a * span,
+      t1: start + b * span,
+    })),
+  };
 }
 
 function legInfo(af: Airframe, leg: Leg, sim: number): FlightInfo {
@@ -429,16 +472,52 @@ function legInfo(af: Airframe, leg: Leg, sim: number): FlightInfo {
     crewDelayMin: Math.round((leg.crewDelayMs ?? 0) / 60_000),
     rotation: [],
   };
+  if (leg.maint) info.maintenance = leg.maint;
+  if (af.acmi)
+    info.operatedBy = {
+      icao: af.acmi.icao,
+      name: af.acmi.name,
+      country: af.acmi.country,
+    };
+  if (leg.events.some((e) => e.k === 'goaround' && e.b === 'occupied')) info.goAroundOccupied = true;
   if (af.airline) {
-    const done = af.history.filter((h) => h.tOn > leg.tOff - 20 * 3_600_000 && h.tOn <= leg.tOff).slice(0, 3).reverse();
+    const done = af.history
+      .filter((h) => h.tOn > leg.tOff - 20 * 3_600_000 && h.tOn <= leg.tOff)
+      .slice(0, 3)
+      .reverse();
     info.rotation = [
-      ...done.map((h) => ({ flight: h.flightIata ?? h.flight, from: h.from, to: h.to, t: h.tOff, state: 'done' as const })),
-      { flight: leg.flightIata ?? leg.flight, from: leg.from, to: leg.canceledTo ?? leg.to, t: leg.std, state: 'now' as const },
+      ...done.map((h) => ({
+        flight: h.flightIata ?? h.flight,
+        from: h.from,
+        to: h.to,
+        t: h.tOff,
+        state: 'done' as const,
+      })),
+      {
+        flight: leg.flightIata ?? leg.flight,
+        from: leg.from,
+        to: leg.canceledTo ?? leg.to,
+        t: leg.std,
+        state: 'now' as const,
+      },
     ];
-    if (leg.plannedNext) info.rotation.push({ flight: '', from: leg.to, to: leg.plannedNext, t: leg.tOn + leg.turnAfter, state: 'next' });
+    if (leg.plannedNext)
+      info.rotation.push({
+        flight: '',
+        from: leg.to,
+        to: leg.plannedNext,
+        t: leg.tOn + leg.turnAfter,
+        state: 'next',
+      });
   }
   if (phase) info.phase = phase;
-  if (af.op) info.operator = { icao: af.op.icao, name: af.op.name, tel: af.op.tel, country: af.op.country };
+  if (af.op)
+    info.operator = {
+      icao: af.op.icao,
+      name: af.op.name,
+      tel: af.op.tel,
+      country: af.op.country,
+    };
   if (leg.route) info.route = leg.route;
   if (leg.taxiOut) info.taxiOut = leg.taxiOut;
   if (leg.taxiIn) info.taxiIn = leg.taxiIn;
@@ -459,7 +538,13 @@ function legInfo(af: Airframe, leg: Leg, sim: number): FlightInfo {
     info.ground = groundOps(start, leg.tOff);
   }
   if (leg.flightIata) info.flightIata = leg.flightIata;
-  if (af.airline) info.airline = { icao: af.airline.icao, iata: af.airline.iata, name: af.airline.name, country: af.airline.country };
+  if (af.airline)
+    info.airline = {
+      icao: af.airline.icao,
+      iata: af.airline.iata,
+      name: af.airline.name,
+      country: af.airline.country,
+    };
   if (sim >= leg.tOff) info.atd = leg.tOff;
   if (sim >= leg.tOn) info.ata = leg.tOn;
   return info;
@@ -472,7 +557,10 @@ export function simFlight(id: string | null | undefined): FlightInfo | undefined
   const sim = simNow();
   // Shortly after arrival the aircraft still shows the flight it just completed.
   const leg = sim < af.leg.tOff && af.prev && sim - af.prev.tOn < 15 * 60_000 ? af.prev : af.leg;
-  return legInfo(af, leg, sim);
+  const info = legInfo(af, leg, sim);
+  const etops = leg === af.leg ? world.etops(af) : null;
+  if (etops) info.etops = etops;
+  return info;
 }
 
 export interface BoardRow {
@@ -496,6 +584,8 @@ export interface BoardRow {
   divertedFrom?: SimAirport;
   /** Set on this airport's arrivals board when the flight diverted elsewhere. */
   divertedTo?: SimAirport;
+  /** Calculated take-off time (slot) for departures at coordinated or congested airports. */
+  ctot?: number;
 }
 
 /** Simulated arrivals/departures board for an airport. */
@@ -522,6 +612,10 @@ export function simBoard(ident: string, opts: { pastMin?: number; aheadMin?: num
     };
     const gate = dep ? leg.stand.ref : leg.standTo.ref;
     if (gate) r.gate = gate;
+    if (dep && !leg.canceled && (SLOT_COORDINATED.has(leg.from.ident) || leg.gateHoldMs > 0 || leg.events.some((e) => e.k === 'edct'))) {
+      const tk = leg.segs.find((s) => s.phase === 'takeoff');
+      if (tk) r.ctot = tk.t0;
+    }
     const term = dep ? leg.stand.terminal : leg.standTo.terminal;
     if (term) r.terminal = term;
     if (leg.divertedFrom) r.divertedFrom = leg.divertedFrom;
@@ -556,19 +650,34 @@ export function simBoard(ident: string, opts: { pastMin?: number; aheadMin?: num
 export function simRunwayInUse(ident: string): { runway: string; basis: 'simulated' | 'metar'; wind?: string } | undefined {
   const a = world?.airports.get(ident);
   if (!a) return undefined;
-  const out: { runway: string; basis: 'simulated' | 'metar'; wind?: string } = { runway: a.inUse.ident, basis: a.inUseBasis };
+  const out: { runway: string; basis: 'simulated' | 'metar'; wind?: string } = {
+    runway: a.inUse.ident,
+    basis: a.inUseBasis,
+  };
   const w = a.weather;
   if (w?.windDir !== undefined && w.windKt !== undefined) out.wind = `${String(Math.round(w.windDir)).padStart(3, '0')}° ${w.windKt} kt${w.gustKt ? ` G${w.gustKt}` : ''}`;
   return out;
 }
 
 /** Route geometry for the selected simulated flight: origin, destination and the path still to fly. */
-export function simRoute(id: string | null | undefined): { from: SimAirport; to: SimAirport; ahead: [number, number][]; divertedFrom?: SimAirport } | undefined {
+export function simRoute(id: string | null | undefined):
+  | {
+      from: SimAirport;
+      to: SimAirport;
+      ahead: [number, number][];
+      divertedFrom?: SimAirport;
+    }
+  | undefined {
   const af = id ? byId.get(id) : undefined;
   if (!af || !world) return undefined;
   const sim = simNow();
   if (sim < af.leg.tOff || sim >= af.leg.tOn) return undefined;
-  const out: { from: SimAirport; to: SimAirport; ahead: [number, number][]; divertedFrom?: SimAirport } = { from: af.leg.from, to: af.leg.to, ahead: world.plannedPath(af, sim) };
+  const out: {
+    from: SimAirport;
+    to: SimAirport;
+    ahead: [number, number][];
+    divertedFrom?: SimAirport;
+  } = { from: af.leg.from, to: af.leg.to, ahead: world.plannedPath(af, sim) };
   if (af.leg.divertedFrom) out.divertedFrom = af.leg.divertedFrom;
   return out;
 }
@@ -584,7 +693,11 @@ export function simPlannedProfile(id: string | null | undefined): { lat: number;
   const step = Math.max(30_000, (end - sim) / 90);
   for (let t = sim; t <= end; t += step) {
     const s = world.state(af, t);
-    out.push({ lat: s.lat, lon: s.lon, alt: s.onGround ? af.leg.to.elev : (s.alt ?? 0) });
+    out.push({
+      lat: s.lat,
+      lon: s.lon,
+      alt: s.onGround ? af.leg.to.elev : (s.alt ?? 0),
+    });
   }
   return out;
 }
@@ -614,24 +727,31 @@ export async function coreApplyForecast(taf: Parameters<TafLib['hourlyForecast']
   if (!a || !world) return;
   tafLib ??= import('@/lib/tafImpact');
   const lib = await tafLib;
-  const hours = lib.hourlyForecast(taf, { from: Math.floor(NOW / 3_600_000) * 3_600_000, hours: 30, runwayHeadings: a.runways.map((r) => r.hdg) });
-  world.setForecast(taf.station, hours.map((h) => ({ t: h.t, capacity: h.capacity })));
+  const hours = lib.hourlyForecast(taf, {
+    from: Math.floor(NOW / 3_600_000) * 3_600_000,
+    hours: 30,
+    runwayHeadings: a.runways.map((r) => r.hdg),
+  });
+  world.setForecast(
+    taf.station,
+    hours.map((h) => ({ t: h.t, capacity: h.capacity })),
+  );
 }
 
 /** When zoomed in near an airport, load its OpenStreetMap taxiway network. */
 export function coreViewChanged(view: { lat: number; lon: number; zoom: number }) {
-  if (!world || view.zoom < 11) return;
-  let best: SimAirport | undefined;
-  let bd = 4;
+  if (!world || view.zoom < 9.5) return;
+  // Every airport with OpenStreetMap ground data in (roughly) the view, nearest first, so
+  // flights planned from now on taxi on the real network before you zoom all the way in.
+  const radius = view.zoom >= 12 ? 4 : view.zoom >= 11 ? 12 : 30;
+  const near: [number, SimAirport][] = [];
   for (const a of world.airports.values()) {
     if (!a.stands) continue;
     const d = distanceNm(view.lat, view.lon, a.lat, a.lon);
-    if (d < bd) {
-      bd = d;
-      best = a;
-    }
+    if (d < radius) near.push([d, a]);
   }
-  if (best) void loadGround(best.ident);
+  near.sort((x, y) => x[0] - y[0]);
+  for (const [, a] of near.slice(0, 3)) void loadGround(a.ident);
 }
 
 export interface GroundData {
@@ -639,7 +759,12 @@ export interface GroundData {
   edges: [number, number, number?][];
   names?: string[];
   holds?: [number, number, string][];
-  terminals?: { name: string; lat: number; lon: number; ring: [number, number][] }[];
+  terminals?: {
+    name: string;
+    lat: number;
+    lon: number;
+    ring: [number, number][];
+  }[];
 }
 const groundData = new Map<string, Promise<GroundData | null>>();
 
@@ -659,7 +784,15 @@ export function loadGround(ident: string): Promise<GroundData | null> {
         adj[y]!.push(x);
         if (nm !== undefined && nm >= 0 && j.names?.[nm]) edgeNames.set(x < y ? `${x}-${y}` : `${y}-${x}`, j.names[nm]!);
       }
-      const g: TaxiGraph = { nodes: j.nodes, adj, edgeNames, holds: (j.holds ?? []).map(([la, lo, ref]) => ({ pt: [la, lo] as [number, number], ref })) };
+      const g: TaxiGraph = {
+        nodes: j.nodes,
+        adj,
+        edgeNames,
+        holds: (j.holds ?? []).map(([la, lo, ref]) => ({
+          pt: [la, lo] as [number, number],
+          ref,
+        })),
+      };
       world.setTaxiGraph(ident, g, NOW);
       return j;
     })
@@ -677,7 +810,11 @@ export function simMovementsByHour(ident: string, hours = 6): { t: number; arriv
   if (!b) return undefined;
   const sim = simNow();
   const h0 = Math.floor(sim / 3_600_000) * 3_600_000 - (hours - 1) * 3_600_000;
-  const buckets = Array.from({ length: hours + 2 }, (_, i) => ({ t: h0 + i * 3_600_000, arrivals: 0, departures: 0 }));
+  const buckets = Array.from({ length: hours + 2 }, (_, i) => ({
+    t: h0 + i * 3_600_000,
+    arrivals: 0,
+    departures: 0,
+  }));
   const put = (t: number, k: 'arrivals' | 'departures') => {
     const i = Math.floor((t - h0) / 3_600_000);
     if (i >= 0 && i < buckets.length) buckets[i]![k]++;
@@ -710,7 +847,18 @@ export function simSearch(q: string, limit = 8): { id: string; label: string; su
 /** Headline numbers about the simulated world (About panel, widgets). */
 export function simStats() {
   const s = counts;
-  if (!world) return { airborne: s.airborne, ground: s.ground, airframes: 0, airlines: 0, airports: 0, groundAirports: 0, metarAirports: 0, holding: 0, diverted: 0 };
+  if (!world)
+    return {
+      airborne: s.airborne,
+      ground: s.ground,
+      airframes: 0,
+      airlines: 0,
+      airports: 0,
+      groundAirports: 0,
+      metarAirports: 0,
+      holding: 0,
+      diverted: 0,
+    };
   const sim = simNow();
   const airlines = new Set<string>();
   const airports = new Set<string>();
@@ -729,7 +877,17 @@ export function simStats() {
     if (a.stands?.length) groundAirports++;
     if (a.weather) metarAirports++;
   }
-  return { airborne: s.airborne, ground: s.ground, airframes: world.airframes.length, airlines: airlines.size, airports: airports.size, groundAirports, metarAirports, holding, diverted };
+  return {
+    airborne: s.airborne,
+    ground: s.ground,
+    airframes: world.airframes.length,
+    airlines: airlines.size,
+    airports: airports.size,
+    groundAirports,
+    metarAirports,
+    holding,
+    diverted,
+  };
 }
 
 // ---------------------------------------------------------------- airlines
@@ -745,6 +903,9 @@ export interface AirlineFlightRow {
   status: FlightStatus;
   progress: number;
   transmitting: boolean;
+  /** The route's days of operation in the simulated timetable (airline flights). */
+  days?: RouteDays;
+  kind: LegKind;
 }
 
 export interface AirlineInfo {
@@ -765,7 +926,11 @@ export function simAirline(icao: string | null | undefined): AirlineInfo | undef
   const fleet = new Map<string, { type: string; desc: string; count: number }>();
   const flights: AirlineFlightRow[] = [];
   for (const af of own) {
-    const f = fleet.get(af.type.code) ?? { type: af.type.code, desc: af.type.desc, count: 0 };
+    const f = fleet.get(af.type.code) ?? {
+      type: af.type.code,
+      desc: af.type.desc,
+      count: 0,
+    };
     f.count++;
     fleet.set(af.type.code, f);
     const info = legInfo(af, af.leg, sim);
@@ -779,14 +944,34 @@ export function simAirline(icao: string | null | undefined): AirlineInfo | undef
       status: info.status,
       progress: info.progress,
       transmitting: world.state(af, sim).emit,
+      kind: af.leg.kind,
     };
+    if (af.leg.days) row.days = af.leg.days;
     if (af.leg.flightIata) row.flightIata = af.leg.flightIata;
     flights.push(row);
   }
-  const order: Record<string, number> = { 'En route': 0, Holding: 0, Approach: 0, Diverted: 0, Taxiing: 1, Landed: 1, Boarding: 2, Delayed: 2, Scheduled: 3, Arrived: 4, Departed: 0 };
+  const order: Record<string, number> = {
+    'En route': 0,
+    Holding: 0,
+    Approach: 0,
+    Diverted: 0,
+    Taxiing: 1,
+    Landed: 1,
+    Boarding: 2,
+    Delayed: 2,
+    Scheduled: 3,
+    Arrived: 4,
+    Departed: 0,
+  };
   flights.sort((a, b) => (order[a.status] ?? 5) - (order[b.status] ?? 5) || a.flight.localeCompare(b.flight));
   return {
-    profile: { icao: al.icao, iata: al.iata, name: al.name, country: al.country, hubs: al.hubs },
+    profile: {
+      icao: al.icao,
+      iata: al.iata,
+      name: al.name,
+      country: al.country,
+      hubs: al.hubs,
+    },
     hubs: al.hubs.map((h) => world!.airports.get(h)).filter((a): a is SimAirport => !!a),
     fleet: [...fleet.values()].sort((a, b) => b.count - a.count),
     airframes: own.length,
@@ -808,7 +993,13 @@ export function simAirlineSearch(q: string, limit = 5): { icao: string; iata: st
       hit.airframes++;
       continue;
     }
-    if (al.name.toLowerCase().includes(n) || al.icao.toLowerCase() === n || al.iata.toLowerCase() === n) seen.set(al.icao, { icao: al.icao, iata: al.iata, name: al.name, airframes: 1 });
+    if (al.name.toLowerCase().includes(n) || al.icao.toLowerCase() === n || al.iata.toLowerCase() === n)
+      seen.set(al.icao, {
+        icao: al.icao,
+        iata: al.iata,
+        name: al.name,
+        airframes: 1,
+      });
   }
   return [...seen.values()].sort((a, b) => Number(b.name.toLowerCase().startsWith(n)) - Number(a.name.toLowerCase().startsWith(n)) || b.airframes - a.airframes).slice(0, limit);
 }
@@ -838,14 +1029,37 @@ export interface NotableFlight {
 }
 
 /** Busiest and most disrupted airports, and notable flights, over the last simulated hour. */
-export function simWidgets(): { airports: AirportActivity[]; longest: NotableFlight[]; fastest: NotableFlight[]; highest: NotableFlight[] } | undefined {
+export function simWidgets():
+  | {
+      airports: AirportActivity[];
+      longest: NotableFlight[];
+      fastest: NotableFlight[];
+      highest: NotableFlight[];
+    }
+  | undefined {
   if (!world) return undefined;
   const sim = simNow();
   const H = 3_600_000;
   const acts = new Map<string, AirportActivity & { delaySum: number; delayN: number }>();
   const get = (a: SimAirport) => {
     let x = acts.get(a.ident);
-    if (!x) acts.set(a.ident, (x = { airport: a, movements: 0, arrivals: 0, departures: 0, avgDelayMin: 0, holding: 0, diverted: 0, canceled: 0, disruption: 0, delaySum: 0, delayN: 0 }));
+    if (!x)
+      acts.set(
+        a.ident,
+        (x = {
+          airport: a,
+          movements: 0,
+          arrivals: 0,
+          departures: 0,
+          avgDelayMin: 0,
+          holding: 0,
+          diverted: 0,
+          canceled: 0,
+          disruption: 0,
+          delaySum: 0,
+          delayN: 0,
+        }),
+      );
     return x;
   };
   const longest: NotableFlight[] = [];
@@ -875,8 +1089,17 @@ export function simWidgets(): { airports: AirportActivity[]; longest: NotableFli
     const st = world.state(af, sim);
     if (st.phase === 'holding') get(af.leg.to).holding++;
     if (!st.onGround && st.emit && st.alt !== undefined) {
-      const base = { id: `~${af.hex}`, flight: af.leg.flightIata ?? af.leg.flight, from: af.leg.from, to: af.leg.to, type: af.type.code };
-      longest.push({ ...base, value: distanceNm(af.leg.from.lat, af.leg.from.lon, af.leg.to.lat, af.leg.to.lon) });
+      const base = {
+        id: `~${af.hex}`,
+        flight: af.leg.flightIata ?? af.leg.flight,
+        from: af.leg.from,
+        to: af.leg.to,
+        type: af.type.code,
+      };
+      longest.push({
+        ...base,
+        value: distanceNm(af.leg.from.lat, af.leg.from.lon, af.leg.to.lat, af.leg.to.lon),
+      });
       fastest.push({ ...base, value: st.gs });
       highest.push({ ...base, value: st.alt });
     }
@@ -902,7 +1125,12 @@ export function simWidgets(): { airports: AirportActivity[]; longest: NotableFli
     return out;
   });
   const top = (l: NotableFlight[]) => l.sort((a, b) => b.value - a.value).slice(0, 6);
-  return { airports, longest: top(longest), fastest: top(fastest), highest: top(highest) };
+  return {
+    airports,
+    longest: top(longest),
+    fastest: top(fastest),
+    highest: top(highest),
+  };
 }
 
 // ---------------------------------------------------------------- airport operations
@@ -936,7 +1164,15 @@ export function simDepartureQueue(ident: string): QueueRow[] {
     else if (seg && seg.phase === 'taxi' && seg.nose !== undefined) state = 'Holding short';
     else if (seg && seg.phase === 'taxi' && seg.b === leg.segs.find((x) => x.phase === 'takeoff')?.a) state = 'Lining up';
     const takeoff = leg.segs.find((s) => s.phase === 'takeoff')?.t0 ?? leg.tTakeoff;
-    out.push({ id: `~${af.hex}`, flight: leg.flightIata ?? leg.flight, type: af.type.code, to: leg.to, runway: leg.from.inUse.ident, state, takeoff });
+    out.push({
+      id: `~${af.hex}`,
+      flight: leg.flightIata ?? leg.flight,
+      type: af.type.code,
+      to: leg.to,
+      runway: leg.from.inUse.ident,
+      state,
+      takeoff,
+    });
   }
   return out.sort((a, b) => a.takeoff - b.takeoff);
 }
@@ -964,7 +1200,12 @@ export function simStands(ident: string): StandState[] {
   }
   return a.stands.map((s) => {
     const af = parked.get(`${s.lat.toFixed(5)},${s.lon.toFixed(5)}`);
-    const out: StandState = { lat: s.lat, lon: s.lon, ref: s.ref ?? '', occupied: !!af };
+    const out: StandState = {
+      lat: s.lat,
+      lon: s.lon,
+      ref: s.ref ?? '',
+      occupied: !!af,
+    };
     if (af) {
       out.flight = af.leg.flightIata ?? af.leg.flight;
       out.id = `~${af.hex}`;
@@ -976,7 +1217,7 @@ export function simStands(ident: string): StandState[] {
 export interface ServiceVehicle {
   lat: number;
   lon: number;
-  kind: 'catering' | 'fuel' | 'stairs' | 'baggage' | 'tug';
+  kind: 'catering' | 'fuel' | 'stairs' | 'baggage' | 'tug' | 'deice';
   hdg: number;
 }
 
@@ -990,7 +1231,19 @@ export function simServiceVehicles(bounds: [number, number, number, number]): Se
     if (!af.airline) continue;
     const leg = af.leg;
     const st = world.state(af, sim);
-    if ((st.phase !== 'parked' && st.phase !== 'pushback') || st.lat < s || st.lat > n || st.lon < w || st.lon > e) continue;
+    if (st.lat < s || st.lat > n || st.lon < w || st.lon > e) continue;
+    if (st.phase === 'taxi' && leg.deiceMs > 0 && st.gs < 1) {
+      // De-icing at the pad before the holding point: two spray trucks either side.
+      const ev = leg.events.find((x) => x.k === 'deice');
+      if (ev && sim >= ev.t && sim < ev.t + leg.deiceMs + 30_000) {
+        for (const side of [-1, 1]) {
+          const p = destination(st.lat, st.lon, st.trk + side * 70, af.type.cls === 'wide' ? 0.022 : 0.016);
+          out.push({ lat: p[0], lon: p[1], kind: 'deice', hdg: st.trk });
+        }
+      }
+      continue;
+    }
+    if (st.phase !== 'parked' && st.phase !== 'pushback') continue;
     const at = (dist: number, side: number, kind: ServiceVehicle['kind']) => {
       const p = destination(st.lat, st.lon, st.trk + side, dist);
       out.push({ lat: p[0], lon: p[1], kind, hdg: st.trk });
@@ -1055,8 +1308,6 @@ function countryAt(lat: number, lon: number): string | undefined {
   return undefined;
 }
 
-
-
 const titleCase = (s: string) => s.toLowerCase().replace(/\b(\w)/g, (c) => c.toUpperCase());
 
 /** Simulated radio transcript of the flight being shown. */
@@ -1088,6 +1339,10 @@ export async function simRadio(id: string | null | undefined): Promise<{ lines: 
 export interface FlightLoad {
   sheet: import('./sim/loadsheet').LoadSheet;
   model: string;
+  /** Estimated share of passengers connecting at a hub on this flight (0–1), and where. */
+  connecting?: { share: number; hub: string };
+  /** Fuel price index at origin vs destination (1 = average) for tankering decisions. */
+  fuelPrice: { origin: number; dest: number };
 }
 
 /** Estimated passengers, cabin, fuel and weights for the flight (simulated). */
@@ -1105,12 +1360,55 @@ export async function simLoad(id: string | null | undefined): Promise<FlightLoad
   const taxiMin = Math.max(4, (leg.tTakeoff - leg.tOff + (leg.tOn - leg.tLand)) / 60_000);
   const leisure = sched.leisureOf(leg.to.ident, leg.to.lat, leg.to.lon);
   const longHaul = distanceNm(leg.from.lat, leg.from.lon, leg.to.lat, leg.to.lon) > 2500;
-  const lf = af.role === 'airline' ? sched.loadFactor({ model, flight: leg.flight, std: leg.std, fromLon: leg.from.lon, leisure, longHaul }) : af.role === 'ga' ? 0.5 : 0.3;
-  const o: Parameters<typeof loadSheet>[0] = { spec, model, lf, seed: Number.parseInt(af.hex, 16) + Math.floor(leg.std / 86_400_000), airborneH, taxiMin, positioning: leg.kind === 'positioning' || leg.kind === 'delivery' };
+  const lf =
+    af.role === 'airline'
+      ? sched.loadFactor({
+          model,
+          flight: leg.flight,
+          std: leg.std,
+          fromLon: leg.from.lon,
+          leisure,
+          longHaul,
+        })
+      : af.role === 'ga'
+        ? 0.5
+        : 0.3;
+  const o: Parameters<typeof loadSheet>[0] = {
+    spec,
+    model,
+    lf,
+    seed: Number.parseInt(af.hex, 16) + Math.floor(leg.std / 86_400_000),
+    airborneH,
+    taxiMin,
+    positioning: leg.kind === 'positioning' || leg.kind === 'delivery',
+  };
   if (extra?.first !== undefined && longHaul) o.first = extra.first;
   if (extra?.premEco !== undefined) o.premEco = extra.premEco && longHaul;
   if (sim > leg.tTakeoff) o.elapsedH = Math.min(airborneH, (sim - leg.tTakeoff) / 3_600_000);
-  return { sheet: loadSheet(o), model };
+  const fuelPrice = {
+    origin: fuelPriceIndex(leg.from.country),
+    dest: fuelPriceIndex(leg.to.country),
+  };
+  o.fuelPrice = fuelPrice;
+  const out: FlightLoad = { sheet: loadSheet(o), model, fuelPrice };
+  // Connecting passengers: big transfer hubs carry most of their passengers onward.
+  const al = af.airline;
+  if (al && model === 'full') {
+    const hub = al.hubs.includes(leg.to.ident) ? leg.to : al.hubs.includes(leg.from.ident) ? leg.from : undefined;
+    if (hub) {
+      const big = ['OMDB', 'OTHH', 'OMAA', 'LTFM', 'OERK', 'HAAB', 'WSSS', 'VHHH', 'EFHK', 'LOWW'].includes(hub.ident)
+        ? 0.68
+        : ['EGLL', 'LFPG', 'EDDF', 'EHAM', 'EDDM', 'LSZH', 'KATL', 'KDFW', 'KORD', 'KDEN', 'KIAH', 'KCLT', 'RJAA', 'RKSI', 'ZBAD', 'VIDP'].includes(hub.ident)
+          ? 0.42
+          : 0.22;
+      const v = Math.max(0, Math.min(0.9, big + ((hash32(leg.flight) % 100) - 50) / 400));
+      out.connecting = {
+        share: Math.round(v * 100) / 100,
+        hub: hub.iata ?? hub.ident,
+      };
+    }
+  }
+  return out;
 }
 
 export interface HistoryRow {
@@ -1158,7 +1456,14 @@ export interface TypeStats {
   airframes: number;
   airborne: number;
   operators: { icao: string; name: string; count: number; airline: boolean }[];
-  flights: { id: string; flight: string; from: SimAirport; to: SimAirport; status: FlightStatus; reg: string }[];
+  flights: {
+    id: string;
+    flight: string;
+    from: SimAirport;
+    to: SimAirport;
+    status: FlightStatus;
+    reg: string;
+  }[];
 }
 
 /** How a type is used in the simulated world right now. */
@@ -1176,12 +1481,31 @@ export function simTypeStats(code: string): TypeStats | undefined {
     if (!st.onGround && st.emit) airborne++;
     const key = af.airline?.icao ?? af.op?.icao ?? 'GA';
     const name = af.airline?.name ?? af.op?.name ?? 'Private owners';
-    const o = ops.get(key) ?? { icao: key, name, count: 0, airline: !!af.airline };
+    const o = ops.get(key) ?? {
+      icao: key,
+      name,
+      count: 0,
+      airline: !!af.airline,
+    };
     o.count++;
     ops.set(key, o);
-    if (st.emit && flights.length < 60) flights.push({ id: `~${af.hex}`, flight: af.leg.flightIata ?? af.leg.flight, from: af.leg.from, to: af.leg.to, status: legInfo(af, af.leg, sim).status, reg: af.reg });
+    if (st.emit && flights.length < 60)
+      flights.push({
+        id: `~${af.hex}`,
+        flight: af.leg.flightIata ?? af.leg.flight,
+        from: af.leg.from,
+        to: af.leg.to,
+        status: legInfo(af, af.leg, sim).status,
+        reg: af.reg,
+      });
   }
-  return { code, airframes, airborne, operators: [...ops.values()].sort((a, b) => b.count - a.count), flights };
+  return {
+    code,
+    airframes,
+    airborne,
+    operators: [...ops.values()].sort((a, b) => b.count - a.count),
+    flights,
+  };
 }
 
 // ---------------------------------------------------------------- airport statistics
@@ -1256,9 +1580,15 @@ export function simAirportHistory(ident: string): DayStats[] | undefined {
     const lat = Math.abs(a.lat);
     const snowy = (lat > 45 && (mm === 11 || mm <= 1)) || (lat > 55 && (mm === 10 || mm === 2)) || (lat > 38 && mm === 0 && a.elev > 2000);
     const roll = r();
-    const weather: DayStats['weather'] =
-      snowy && roll < 0.14 ? 'snow' : cool && lat > 30 && roll < 0.22 ? 'fog' : summer && lat < 48 && roll < 0.25 ? 'storms' : roll < 0.45 ? 'rain' : roll < 0.52 ? 'wind' : 'fine';
-    const wxDelay = { fine: 0, rain: 3, wind: 6, fog: 14, storms: 22, snow: 28 }[weather];
+    const weather: DayStats['weather'] = snowy && roll < 0.14 ? 'snow' : cool && lat > 30 && roll < 0.22 ? 'fog' : summer && lat < 48 && roll < 0.25 ? 'storms' : roll < 0.45 ? 'rain' : roll < 0.52 ? 'wind' : 'fine';
+    const wxDelay = {
+      fine: 0,
+      rain: 3,
+      wind: 6,
+      fog: 14,
+      storms: 22,
+      snow: 28,
+    }[weather];
     const congestion = Math.min(1.4, daily / (a.large ? 900 : 250));
     const avg = Math.max(2, Math.round(4 + congestion * 8 + wxDelay * (0.6 + r() * 0.8) + (wd === 5 ? 3 : 0) + r() * 4));
     const movements = Math.round(daily * vol * (0.95 + r() * 0.1) * (weather === 'snow' ? 0.9 : 1));
@@ -1308,7 +1638,15 @@ export function simNatTracks(): NatTrackView[] {
       seen.add(k);
       return true;
     })
-    .map((t) => ({ letter: t.letter, eastbound: t.eastbound, pts: t.lats.map((la, i) => [la, lons[i]!] as [number, number]), text: t.lats.map((la, i) => `${la}/${-lons[i]!}`).join(' '), from: t.from, to: t.to, flights: count.get(t.letter) ?? 0 }));
+    .map((t) => ({
+      letter: t.letter,
+      eastbound: t.eastbound,
+      pts: t.lats.map((la, i) => [la, lons[i]!] as [number, number]),
+      text: t.lats.map((la, i) => `${la}/${-lons[i]!}`).join(' '),
+      from: t.from,
+      to: t.to,
+      flights: count.get(t.letter) ?? 0,
+    }));
 }
 
 /** Ground elevation (ft) under a simulated aircraft on the ground: its departure or arrival field. */
@@ -1370,12 +1708,24 @@ export async function simAirportRadio(ident: string, kind: ScannerKind, windowMi
       for (const l of t) {
         if (l.t < from || l.t > sim) continue;
         if (l.station !== station && l.station !== alt) continue;
-        lines.push({ t: l.t, who: l.who, station: l.station, text: l.text, flight: leg.flightIata ?? leg.flight, id: `~${af.hex}` });
+        lines.push({
+          t: l.t,
+          who: l.who,
+          station: l.station,
+          text: l.text,
+          flight: leg.flightIata ?? leg.flight,
+          id: `~${af.hex}`,
+        });
       }
     }
   }
   lines.sort((x, y) => x.t - y.t);
-  const out: { station: string; freq?: number; lines: ScannerLine[]; now: number } = { station, lines: lines.slice(-200), now: sim };
+  const out: {
+    station: string;
+    freq?: number;
+    lines: ScannerLine[];
+    now: number;
+  } = { station, lines: lines.slice(-200), now: sim };
   const f = freqs[ident]?.[kind]?.[0] ?? (kind === 'del' ? freqs[ident]?.gnd?.[0] : undefined);
   if (f) out.freq = f;
   return out;
@@ -1410,7 +1760,19 @@ function recordPunctuality(sim: number) {
       if (leg.tOn < sessionStart) continue;
       if (leg.kind !== 'scheduled' && leg.kind !== 'cargo') continue;
       let p = punctuality.get(al.icao);
-      if (!p) punctuality.set(al.icao, (p = { icao: al.icao, name: al.name, flights: 0, onTime: 0, delaySum: 0, canceled: 0, diverted: 0 }));
+      if (!p)
+        punctuality.set(
+          al.icao,
+          (p = {
+            icao: al.icao,
+            name: al.name,
+            flights: 0,
+            onTime: 0,
+            delaySum: 0,
+            canceled: 0,
+            diverted: 0,
+          }),
+        );
       if (leg.canceled) {
         p.canceled++;
         continue;
@@ -1438,7 +1800,15 @@ export interface PunctualityRow {
 export function simPunctuality(minFlights = 5): PunctualityRow[] {
   return [...punctuality.values()]
     .filter((p) => p.flights >= minFlights)
-    .map((p) => ({ icao: p.icao, name: p.name, flights: p.flights, onTimePct: Math.round((100 * p.onTime) / p.flights), avgDelayMin: Math.round(p.delaySum / p.flights), canceled: p.canceled, diverted: p.diverted }))
+    .map((p) => ({
+      icao: p.icao,
+      name: p.name,
+      flights: p.flights,
+      onTimePct: Math.round((100 * p.onTime) / p.flights),
+      avgDelayMin: Math.round(p.delaySum / p.flights),
+      canceled: p.canceled,
+      diverted: p.diverted,
+    }))
     .sort((a, b) => b.onTimePct - a.onTimePct || b.flights - a.flights);
 }
 
@@ -1459,7 +1829,13 @@ export interface AirportSummary {
   canceledToday: number;
   destinations: number;
   topAirlines: { icao: string; name: string; flights: number }[];
-  weather?: { category?: string; wind?: string; visSm?: number; tempC?: number; wx?: string };
+  weather?: {
+    category?: string;
+    wind?: string;
+    visSm?: number;
+    tempC?: number;
+    wx?: string;
+  };
 }
 
 /** Key numbers for one airport, for side-by-side comparison. */
@@ -1477,7 +1853,11 @@ export function simAirportSummary(ident: string): AirportSummary | undefined {
     if (leg.from !== a && leg.to !== a) continue;
     dests.add(leg.from === a ? leg.to.ident : leg.from.ident);
     if (af.airline) {
-      const x = airlines.get(af.airline.icao) ?? { icao: af.airline.icao, name: af.airline.name, flights: 0 };
+      const x = airlines.get(af.airline.icao) ?? {
+        icao: af.airline.icao,
+        name: af.airline.name,
+        flights: 0,
+      };
       x.flights++;
       airlines.set(af.airline.icao, x);
     }
@@ -1542,13 +1922,23 @@ export function simRouteSearch(fromIdents: string[], toIdents: string[], limit =
       const fwd = A.has(leg.from.ident) && B.has(to.ident);
       const rev = B.has(leg.from.ident) && A.has(to.ident);
       if (!fwd && !rev) continue;
-      const hit: RouteHit = { id: `~${af.hex}`, flight: leg.flightIata ?? leg.flight, from: leg.from, to, std: leg.std, status: legInfo(af, leg, sim).status, type: af.type.code, reverse: !fwd };
+      const hit: RouteHit = {
+        id: `~${af.hex}`,
+        flight: leg.flightIata ?? leg.flight,
+        from: leg.from,
+        to,
+        std: leg.std,
+        status: legInfo(af, leg, sim).status,
+        type: af.type.code,
+        reverse: !fwd,
+      };
       hit.airline = af.airline.name;
       hit.airlineIcao = af.airline.icao;
       out.push(hit);
     }
   }
-  const rank = (s: FlightStatus) => (['En route', 'Holding', 'Approach', 'Emergency', 'Diverted', 'Go-around', 'On station'].includes(s) ? 0 : s === 'Taxiing' || s === 'Boarding' || s === 'Gate hold' || s === 'De-icing' ? 1 : s === 'Scheduled' || s === 'Delayed' ? 2 : 3);
+  const rank = (s: FlightStatus) =>
+    ['En route', 'Holding', 'Approach', 'Emergency', 'Diverted', 'Go-around', 'On station'].includes(s) ? 0 : s === 'Taxiing' || s === 'Boarding' || s === 'Gate hold' || s === 'De-icing' ? 1 : s === 'Scheduled' || s === 'Delayed' ? 2 : 3;
   return out.sort((x, y) => Number(x.reverse) - Number(y.reverse) || rank(x.status) - rank(y.status) || x.std - y.std).slice(0, limit);
 }
 
@@ -1570,9 +1960,26 @@ export function simRouteFixes(id: string | null | undefined): RouteFix[] {
   if (!af || !r) return [];
   const navKind = (k?: number) => (k === undefined ? 'Waypoint' : (['VOR', 'VOR-DME', 'VORTAC', 'NDB', 'NDB-DME'][k] ?? 'Navaid'));
   const out: RouteFix[] = [];
-  const add = (f: { ident: string; lat: number; lon: number; name?: string; real: boolean; kind?: number }, role: RouteFix['role'], what: string) => {
+  const add = (
+    f: {
+      ident: string;
+      lat: number;
+      lon: number;
+      name?: string;
+      real: boolean;
+      kind?: number;
+    },
+    role: RouteFix['role'],
+    what: string,
+  ) => {
     if (out.some((x) => x.ident === f.ident && Math.abs(x.lat - f.lat) < 0.01)) return;
-    const fx: RouteFix = { ident: f.ident, lat: f.lat, lon: f.lon, role, detail: `${what} · ${f.real ? navKind(f.kind) : 'generated waypoint'}` };
+    const fx: RouteFix = {
+      ident: f.ident,
+      lat: f.lat,
+      lon: f.lon,
+      role,
+      detail: `${what} · ${f.real ? navKind(f.kind) : 'generated waypoint'}`,
+    };
     if (f.name) fx.name = f.name;
     out.push(fx);
   };
@@ -1591,7 +1998,13 @@ export function simRouteFixes(id: string | null | undefined): RouteFix[] {
         lat = Number(m[1]) * (m[2] === 'S' ? -1 : 1);
         lon = m[3] === '180' ? 180 : Number(m[3]) * (m[4] === 'W' ? -1 : 1);
       }
-      out.push({ ident: p, lat, lon, role: 'ocean', detail: `Oceanic track ${r.nat.letter} · FL${r.nat.fl}` });
+      out.push({
+        ident: p,
+        lat,
+        lon,
+        role: 'ocean',
+        detail: `Oceanic track ${r.nat.letter} · FL${r.nat.fl}`,
+      });
     }
   }
   if (r.star) for (const f of r.star.fixes ?? [r.star.fix]) add(f, 'star', `${r.star.name}${r.star.published ? ` (published, ${r.star.published})` : ''}`);
@@ -1631,7 +2044,12 @@ export function simTaxiPath(id: string | null | undefined): TaxiView | undefined
   const view: TaxiView = { path, label };
   if (out) {
     const holdSeg = leg.segs.find((s) => s.phase === 'taxi' && s.nose !== undefined && s.t0 > leg.tOff + 60_000 && s.a[0] === s.b[0] && s.a[1] === s.b[1] && s.t1 <= leg.tTakeoff);
-    if (holdSeg) view.hold = { lat: holdSeg.a[0], lon: holdSeg.a[1], text: t?.hold ? `Hold short · ${t.hold}` : `Hold short · ${runway}` };
+    if (holdSeg)
+      view.hold = {
+        lat: holdSeg.a[0],
+        lon: holdSeg.a[1],
+        text: t?.hold ? `Hold short · ${t.hold}` : `Hold short · ${runway}`,
+      };
   }
   return view;
 }
@@ -1670,7 +2088,11 @@ export async function simOceanicTracks(): Promise<OceanicTrackView[]> {
     const nat = af.leg.route?.nat;
     if (nat && sim >= af.leg.tTakeoff && sim < af.leg.tLand) count.set(`${nat.system}${nat.letter}`, (count.get(`${nat.system}${nat.letter}`) ?? 0) + 1);
   }
-  const nat: OceanicTrackView[] = simNatTracks().map((t) => ({ ...t, system: 'NAT', flights: count.get(`NAT${t.letter}`) ?? 0 }));
+  const nat: OceanicTrackView[] = simNatTracks().map((t) => ({
+    ...t,
+    system: 'NAT',
+    flights: count.get(`NAT${t.letter}`) ?? 0,
+  }));
   const seen = new Set<string>();
   const others = [...pacotsTracks(sim - 86_400_000, world.seed), ...pacotsTracks(sim, world.seed), ...ausotsTracks(sim, world.seed)]
     .filter((t) => sim < t.to + 3 * 3_600_000 && sim > t.from - 6 * 3_600_000)
@@ -1680,7 +2102,16 @@ export async function simOceanicTracks(): Promise<OceanicTrackView[]> {
       seen.add(k);
       return true;
     })
-    .map((t) => ({ letter: t.letter, eastbound: t.eastbound, pts: t.pts, text: otsString(t), from: t.from, to: t.to, flights: count.get(`${t.system}${t.letter}`) ?? 0, system: t.system }));
+    .map((t) => ({
+      letter: t.letter,
+      eastbound: t.eastbound,
+      pts: t.pts,
+      text: otsString(t),
+      from: t.from,
+      to: t.to,
+      flights: count.get(`${t.system}${t.letter}`) ?? 0,
+      system: t.system,
+    }));
   return [...nat, ...others];
 }
 
@@ -1706,11 +2137,221 @@ export async function simSeason(): Promise<SeasonNotes> {
       seen.add(h.name);
       return true;
     })
-    .map((h) => ({ name: h.name, where: h.countries === 'all' ? 'Worldwide' : h.countries.slice(0, 4).join(', ') + (h.countries.length > 4 ? '…' : '') }));
+    .map((h) => ({
+      name: h.name,
+      where: h.countries === 'all' ? 'Worldwide' : h.countries.slice(0, 4).join(', ') + (h.countries.length > 4 ? '…' : ''),
+    }));
   const out: SeasonNotes = { season: sched.iataSeason(t).name, holidays };
   const hajj = sched.hajjInfo(t);
   if (hajj) out.hajj = hajj;
   const ash = world?.ash(t);
   if (ash) out.ash = ash.name;
   return out;
+}
+
+// ---------------------------------------------------------------- airport operations & route network
+
+/** IATA Level 3 (fully slot-coordinated) airports among the busiest simulated ones. */
+export const SLOT_COORDINATED = new Set(
+  'EGLL EGKK EGSS EGCC LFPG LFPO EDDF EDDM EDDL EHAM LEMD LEBL LEPA LIRF LIML LSZH LSGG LOWW EKCH ENGM ESSA EFHK EIDW EBBR LPPT LTFM LGAV KJFK KLGA KDCA RJTT RJAA RJBB RJCC ZBAA ZBAD ZSPD ZGGG ZGSZ VHHH RCTP WSSS WMKK VTBS OMDB OTHH VIDP VABB YSSY'.split(
+    ' ',
+  ),
+);
+
+export interface AirportOps {
+  arrRunway: string;
+  depRunway: string;
+  /** Low-visibility procedures (stop-bars lit, wider spacing). */
+  lvp: boolean;
+  deicing: boolean;
+  slotCoordinated: boolean;
+  closures: { from: number; to: number; reason: string }[];
+  curfew?: { from: string; to: string };
+  /** The curfew is in force now (on the simulator's clock). */
+  curfewActive: boolean;
+  night: boolean;
+}
+
+/** Live operational state of an airport: runways in use, LVP, de-icing, closures, curfew. */
+export function simAirportOps(ident: string): AirportOps | undefined {
+  const a = world?.airports.get(ident);
+  if (!world || !a) return undefined;
+  const w = a.weather;
+  const icing = !!w && (w.tempC ?? 10) <= 3 && !!w.wx && (/SN|FZ|SG|PL|GS|IC/.test(w.wx) || ((w.tempC ?? 10) <= 0 && /RA|DZ|FG|BR/.test(w.wx)));
+  const out: AirportOps = {
+    arrRunway: '',
+    depRunway: '',
+    lvp: (w?.visSm ?? 10) < 0.75,
+    deicing: icing,
+    slotCoordinated: SLOT_COORDINATED.has(ident),
+    curfewActive: curfewEnd(ident, NOW, a.lon) !== null,
+    closures: (a.closures ?? []).filter((c) => c.to > NOW && c.from < NOW + 6 * 3_600_000).slice(0, 4),
+    night: false,
+  };
+  world.runwaysAt(a, NOW);
+  const cf = curfewOf(a.ident);
+  if (cf) out.curfew = cf;
+  const lh = (((NOW / 3_600_000 + a.lon / 15) % 24) + 24) % 24;
+  out.night = lh < 6 || lh >= 22;
+  out.arrRunway = a.inUse.ident;
+  out.depRunway = (a.inUseDep ?? a.inUse).ident;
+  return out;
+}
+
+export interface RouteDest {
+  airport: SimAirport;
+  airlines: { icao: string; name: string }[];
+  perWeek: number;
+  distNm: number;
+}
+
+/**
+ * The airport's simulated route network: every destination its flights are serving or
+ * planned to serve today, with airlines and an estimate of weekly frequency.
+ */
+export function simAirportRoutes(ident: string): RouteDest[] | undefined {
+  const a = world?.airports.get(ident);
+  if (!world || !a) return undefined;
+  const dests = new Map<
+    string,
+    {
+      airport: SimAirport;
+      airlines: Map<string, string>;
+      flights: Map<string, number>;
+    }
+  >();
+  const add = (to: SimAirport, af: Airframe, flight: string, perWeek: number) => {
+    if (to === a || to.site) return;
+    let d = dests.get(to.ident);
+    if (!d) dests.set(to.ident, (d = { airport: to, airlines: new Map(), flights: new Map() }));
+    if (af.airline) d.airlines.set(af.airline.icao, af.airline.name);
+    d.flights.set(flight, Math.max(d.flights.get(flight) ?? 0, perWeek));
+  };
+  for (const af of world.airframes) {
+    if (!af.airline) continue;
+    for (const leg of af.prev ? [af.prev, af.leg] : [af.leg]) {
+      const per = leg.days?.perWeek ?? 7;
+      if (leg.from === a) add(leg.canceledTo ?? leg.to, af, leg.flight, per);
+      else if (leg.to === a) add(leg.from, af, leg.flight, per);
+      if (leg.to === a && leg.plannedNext) add(leg.plannedNext, af, `${af.hex}>`, 7);
+    }
+    for (const h of af.history.slice(0, 4)) {
+      if (h.from === a) add(h.to, af, h.flight, 7);
+      else if (h.to === a) add(h.from, af, h.flight, 7);
+    }
+  }
+  return [...dests.values()]
+    .map((d) => ({
+      airport: d.airport,
+      airlines: [...d.airlines].map(([icao, name]) => ({ icao, name })),
+      perWeek: Math.max(1, Math.round([...d.flights.values()].reduce((s, v) => s + v, 0))),
+      distNm: Math.round(distanceNm(a.lat, a.lon, d.airport.lat, d.airport.lon)),
+    }))
+    .sort((x, y) => y.perWeek - x.perWeek)
+    .slice(0, 250);
+}
+
+function hash32(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193) >>> 0;
+  return h;
+}
+
+/** Illustrative jet-fuel price index by country (1 = world average). */
+function fuelPriceIndex(country: string): number {
+  const cheap = ['AE', 'QA', 'SA', 'KW', 'BH', 'OM', 'US', 'SG', 'MY', 'RU', 'DZ', 'EG', 'IR'];
+  const dear = ['IN', 'JP', 'GB', 'FR', 'DE', 'IT', 'ES', 'NL', 'CH', 'NO', 'SE', 'DK', 'BR', 'AR', 'NG', 'KE', 'ZA', 'AU', 'NZ', 'IS', 'FJ'];
+  if (cheap.includes(country)) return 0.86;
+  if (dear.includes(country)) return 1.14;
+  return 1;
+}
+
+/** Departure and arrival procedures for an airport's runways in use (for diagrams). */
+export function simAirportProcedures(ident: string) {
+  const a = world?.airports.get(ident);
+  if (!world || !a || !a.runways.length) return undefined;
+  return world.airportProcedures(a, NOW);
+}
+
+export interface GroundTraffic {
+  id: string;
+  callsign: string;
+  type: string;
+  lat: number;
+  lon: number;
+  trk: number;
+  gs: number;
+  phase: Phase;
+  /** What the aircraft is cleared to do on the surface. */
+  clearance: string;
+  /** Taxiways of its route, the holding point and runway. */
+  via: string[];
+  hold?: string;
+  runway?: string;
+  outbound: boolean;
+}
+
+/** Every aircraft on the surface of an airport with its taxi clearance (ground-radar view). */
+export function simGroundTraffic(ident: string): GroundTraffic[] | undefined {
+  const a = world?.airports.get(ident);
+  if (!world || !a) return undefined;
+  const sim = simNow();
+  const out: GroundTraffic[] = [];
+  for (const af of world.airframes) {
+    const leg = af.leg;
+    if (leg.from !== a && leg.to !== a) continue;
+    const st = world.state(af, sim);
+    if (!st.onGround || distanceNm(st.lat, st.lon, a.lat, a.lon) > 4) continue;
+    const outbound = sim < leg.tTakeoff && leg.from === a;
+    const info = outbound ? leg.taxiOut : leg.taxiIn;
+    let clearance: string;
+    switch (st.phase) {
+      case 'parked':
+        clearance = outbound ? (sim >= leg.tOff - 15 * 60_000 ? 'Cleared to start' : 'On stand') : 'On blocks';
+        break;
+      case 'pushback':
+        clearance = 'Push-back approved';
+        break;
+      case 'takeoff':
+        clearance = `Cleared for take-off ${info?.runway ?? ''}`.trim();
+        break;
+      case 'landing':
+        clearance = `Landing ${info?.runway ?? ''}`.trim();
+        break;
+      default:
+        clearance = outbound
+          ? st.gs < 1
+            ? info?.hold
+              ? `Holding short at ${info.hold}`
+              : 'Holding'
+            : `Taxi to ${info?.hold ? `holding point ${info.hold}` : `runway ${info?.runway ?? ''}`}`.trim()
+          : st.gs < 1
+            ? 'Holding position'
+            : `Taxi to stand${leg.standTo.ref ? ` ${leg.standTo.ref}` : ''}`;
+    }
+    const g: GroundTraffic = {
+      id: af.hex,
+      callsign: leg.flight || af.reg,
+      type: af.type.code,
+      lat: st.lat,
+      lon: st.lon,
+      trk: st.trk,
+      gs: st.gs,
+      phase: st.phase,
+      clearance,
+      via: info?.via ?? [],
+      outbound,
+    };
+    if (info?.hold) g.hold = info.hold;
+    if (info?.runway) g.runway = info.runway;
+    out.push(g);
+  }
+  return out.slice(0, 400);
+}
+
+/** ETOPS (twin-engine extended operations) for a flight: rule time and en-route alternates. */
+export function simEtops(id: string | null | undefined) {
+  const af = id ? byId.get(id) : undefined;
+  if (!world || !af) return undefined;
+  return world.etops(af);
 }

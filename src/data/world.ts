@@ -28,6 +28,9 @@ import type { AsyncQuery, SyncQuery } from './sim.worker';
 export { legKindLabel } from './sim/labels';
 export type {
   AirportActivity,
+  AirportOps,
+  RouteDest,
+  GroundTraffic,
   AirportSummary,
   AirlineFlightRow,
   AirlineInfo,
@@ -538,3 +541,12 @@ export const simOceanicTracks = async () => (await qa<R<'simOceanicTracks'>>('si
 
 /** Travel peaks, IATA season, Hajj and ash advisory at the simulated date. */
 export const simSeason = () => qa<R<'simSeason'>>('simSeason', []);
+export const simAirportOps = (ident: string) => q<R<'simAirportOps'>>('simAirportOps', [ident]);
+/** Destinations served from an airport today (undefined while the worker answers). */
+export const simAirportRoutes = (ident: string) => q<R<'simAirportRoutes'>>('simAirportRoutes', [ident]);
+/** Procedures (published at US airports) for an airport's runways in use. */
+export const simAirportProcedures = (ident: string) => q<R<'simAirportProcedures'>>('simAirportProcedures', [ident]);
+/** Every aircraft on an airport's surface with its taxi clearance (ground radar). */
+export const simGroundTraffic = (ident: string) => q<R<'simGroundTraffic'>>('simGroundTraffic', [ident]);
+/** ETOPS diversion time and en-route alternates of a twin-engine flight (null: not needed). */
+export const simEtops = (id: string | null | undefined) => q<R<'simEtops'>>('simEtops', [id]);

@@ -43,10 +43,16 @@
 // (console.warn once) instead of breaking the map. GL state we touch (blend, depth, cull,
 // program, VAO, array buffer, attribute divisors) is restored after drawing. The layer re-adds
 // itself after style swaps.
+//
+// Ground-service vehicles (vehicleMeshes.ts, loaded on demand) are extra shapes registered with
+// registerMeshes(); they ride the same instanced pipeline. For them the gear channel (i_anim.x)
+// drives their moving parts (catering box lift and scissor arms, de-icing boom), they add matte
+// rubber / chassis / lamp-lens materials and light types for rotating amber beacons, head and
+// tail lamps, de-icing spray particles and work floodlights (see the constants in modelMeshes.ts).
 
 import { MercatorCoordinate, type CustomLayerInterface, type CustomRenderMethodInput, type Map as MlMap } from 'maplibre-gl';
 import type { ModelShape } from '@/data/sim/refTypes';
-import { LIGHT_STRIDE, MAT_ROTOR, MODEL_SHAPES, getModelMesh, type ModelMesh } from './modelMeshes';
+import { LIGHT_STRIDE, MAT_ROTOR, MODEL_SHAPES, getModelMesh, type ModelMesh, type VehicleShape } from './modelMeshes';
 
 export interface ModelInstance {
   id: string;
@@ -56,14 +62,14 @@ export interface ModelInstance {
   hdg: number; // degrees true, where the nose points
   pitch: number; // degrees, nose up positive
   roll: number; // degrees, right wing down positive
-  shape: ModelShape;
+  shape: ModelShape | VehicleShape;
   lengthM: number;
   spanM: number;
   body: [number, number, number]; // 0..1 rgb
   tail: [number, number, number];
   selected?: boolean;
   rotorRpm?: number; // helicopters/props spin when > 0
-  /** Gear-down fraction 0 (retracted) .. 1 (down and locked). Default 1. */
+  /** Gear-down fraction 0 (retracted) .. 1 (down and locked). Default 1. Vehicles: lift / boom fraction. */
   gear?: number;
   /** Flap setting 0 (clean) .. 0.35 (take-off) .. 1 (landing, ~35°). Default 0. */
   flaps?: number;
@@ -155,27 +161,43 @@ void main() {
   vec3 n = a_nrm;
   float kind = a_part.x;
   if (kind > 0.5) {
+    // integer part: kind of moving part; fraction: a per-part parameter (vehicles)
+    float kf = floor(kind + 0.001);
+    float kp = kind - kf;
     vec3 piv = a_part.yzw;
-    float ang;
+    vec3 ax = a_axis.xyz;
+    float ang = 0.0;
     vec3 sl = vec3(0.0);
-    if (kind < 1.5) {
+    float g = clamp(i_anim.x, 0.0, 1.0);
+    if (kf < 1.5) {
       // landing gear: swings 90° into its well and shortens as it folds; gone when up
-      float g = clamp(i_anim.x, 0.0, 1.0);
       ang = (1.0 - g) * 1.5708;
       p = g < 0.005 ? piv : piv + (p - piv) * mix(0.72, 1.0, g);
-    } else if (kind < 2.5) {
+    } else if (kf < 2.5) {
       // trailing-edge flap: hinge rotation (35° at 1) plus Fowler travel aft
       float f = clamp(i_anim.y, 0.0, 1.0);
       ang = f * 0.61;
       sl = vec3(0.0, -a_axis.w * f, 0.0);
-    } else {
+    } else if (kf < 3.5) {
       // leading-edge slat: forward and down
       float f = clamp(i_anim.y * 2.5, 0.0, 1.0);
       ang = -f * 0.33;
       sl = vec3(0.0, a_axis.w * f, -0.4 * a_axis.w * f);
+    } else if (kf < 4.5) {
+      // vehicle body lift (catering box); its platform slides forward once clear of the cab
+      sl = vec3(0.0, kp * smoothstep(0.32, 0.42, g), a_axis.w * g);
+    } else if (kf < 6.5) {
+      // scissor arm: its angle follows the lift height (|axis| = arm length, kp = sin of the stowed angle)
+      float lb = max(length(ax), 1e-6);
+      ax /= lb;
+      ang = asin(clamp(kp + g * a_axis.w / lb, -1.0, 1.0)) - asin(kp);
+      if (kf > 5.5) sl = vec3(0.0, 0.0, a_axis.w * g);
+    } else {
+      // rigid swing (de-icing boom)
+      ang = g * a_axis.w;
     }
-    p = piv + arot(p - piv, a_axis.xyz, ang) + sl;
-    n = arot(n, a_axis.xyz, ang);
+    p = piv + arot(p - piv, ax, ang) + sl;
+    n = arot(n, ax, ang);
   }
   gl_Position = u_proj * (mat4(i_m0, i_m1, i_m2, i_m3) * vec4(p, 1.0));
   v_wn = vec4(qrot(i_q, n * vec3(i_misc.w, 1.0, 1.0)), a_pos.w);
@@ -185,7 +207,8 @@ void main() {
   v_body = vec4(i_body.rgb, i_tail.w);
   v_tail = vec4(i_tail.rgb, i_misc.z);
   float t = u_time + i_misc.y * 1.2;
-  v_fx = vec4(strobeAt(t), beaconAt(t + 0.37), 0.0, 0.0);
+  // z: rotating amber beacon reflector (two lobes, ~1.5 rev/s)
+  v_fx = vec4(strobeAt(t), beaconAt(t + 0.37), pow(0.5 + 0.5 * sin((u_time + i_misc.y * 7.0) * 18.85), 3.0), 0.0);
 }`;
 
 const FS = `
@@ -279,7 +302,10 @@ void main() {
   if (m > 0.5 && m < 1.5) base = v_tail.rgb;
   else if (m > 1.5 && m < 2.5) { base = vec3(0.07, 0.085, 0.11); spec = 0.55; shin = 80.0; }
   else if (m > 2.5 && m < 3.5) { base = vec3(0.76, 0.78, 0.81); spec = 0.42; shin = 55.0; }
-  else if (m > 4.5) { base = vec3(0.70, 0.73, 0.77); spec = 0.3; shin = 45.0; }
+  else if (m > 4.5 && m < 5.5) { base = vec3(0.70, 0.73, 0.77); spec = 0.3; shin = 45.0; }
+  else if (m > 5.5 && m < 6.5) { base = vec3(0.04, 0.042, 0.046); spec = 0.05; shin = 12.0; }
+  else if (m > 6.5 && m < 7.5) { base = vec3(0.15, 0.16, 0.175); spec = 0.2; shin = 30.0; }
+  else if (m > 7.5) { base = m < 8.5 ? vec3(0.95, 0.5, 0.06) : m < 9.5 ? vec3(0.72, 0.05, 0.04) : vec3(0.9, 0.91, 0.88); spec = 0.6; shin = 70.0; }
 
   float win = 0.0;
   float glass = 0.0;
@@ -326,6 +352,12 @@ void main() {
   // warm cabin windows and a faint cockpit glow at night
   c = mix(c, vec3(1.0, 0.8, 0.5) * 0.95, win * night * lit * 0.85);
   c += vec3(0.25, 0.35, 0.45) * glass * night * lit * 0.12;
+  if (m > 7.5) {
+    // vehicle lamp lenses: beacons pulse with their rotating reflector, head / tail lamps glow at night
+    vec3 lc = m < 8.5 ? vec3(1.0, 0.55, 0.08) : m < 9.5 ? vec3(1.0, 0.1, 0.06) : vec3(1.0, 0.97, 0.9);
+    float on = m < 8.5 ? mix(0.3, 1.0, v_fx.z) * mix(0.55, 1.0, night) : night * 0.9;
+    c = mix(c, lc * 1.25, clamp(on * lit, 0.0, 1.0));
+  }
 
   if (v_mp.w > 0.5) {
     float fres = pow(1.0 - clamp(dot(N, V), 0.0, 1.0), 2.5);
@@ -355,6 +387,7 @@ void main() {
   float k = 0.0;
   float core = 1.0;
   float grow = 1.0;
+  vec3 lp = a_lpos.xyz;
   if (type < 0.5) { col = vec3(1.0, 0.13, 0.07); k = mix(0.3, 1.0, night); }
   else if (type < 1.5) { col = vec3(0.1, 1.0, 0.4); k = mix(0.3, 1.0, night); }
   else if (type < 2.5) { col = vec3(1.0, 0.97, 0.92); k = mix(0.2, 0.8, night); }
@@ -367,7 +400,45 @@ void main() {
     k = g * mix(0.5, 1.3, night) * mix(0.6, 1.35, face);
   }
   else if (type < 6.5) { col = vec3(1.0, 0.85, 0.6); k = g * mix(0.0, 0.55, night); core = 0.0; }
-  else { col = vec3(1.0, 0.93, 0.8); k = night * 0.3; core = 0.0; }
+  else if (type < 7.5) { col = vec3(1.0, 0.93, 0.8); k = night * 0.3; core = 0.0; }
+  else if (type < 8.5) {
+    // rotating amber beacon: flashes as the reflector's beam sweeps past the viewer
+    float ang = (u_time + i_misc.y * 7.0) * 9.42;
+    vec3 beam = qrot(i_q, vec3(cos(ang), sin(ang), 0.0));
+    float hv = length(u_view.xy);
+    float side = pow(max(dot(beam.xy, u_view.xy / max(hv, 1e-3)), 0.0), 6.0);
+    float f = mix(pow(0.5 + 0.5 * sin(ang * 2.0), 4.0), side, smoothstep(0.05, 0.3, hv));
+    col = vec3(1.0, 0.55, 0.07);
+    k = (0.14 + 1.05 * f) * mix(0.55, 1.2, night);
+    grow = 0.65 + 0.55 * f;
+  } else if (type < 9.5) {
+    // headlamp: forward facing
+    vec3 fwd = qrot(i_q, vec3(0.0, 1.0, 0.0));
+    col = vec3(1.0, 0.95, 0.85);
+    k = mix(0.05, 0.85, night) * mix(0.25, 1.2, smoothstep(-0.2, 0.9, dot(fwd, u_view)));
+  } else if (type < 10.5) {
+    // tail lamp: rear facing
+    vec3 fwd = qrot(i_q, vec3(0.0, 1.0, 0.0));
+    col = vec3(1.0, 0.08, 0.05);
+    k = mix(0.04, 0.55, night) * mix(0.3, 1.0, smoothstep(-0.2, 0.9, -dot(fwd, u_view)));
+  } else if (type < 11.5) {
+    // de-icing spray: particles stream from the nozzle (+x and down), fan out and fade to mist
+    float seed = a_lparam.z;
+    float s = fract(u_time * 0.6 + seed * 7.31);
+    float fan = (fract(seed * 31.7) - 0.5) * 0.8;
+    float drop = 0.35 + fract(seed * 13.37) * 0.4;
+    vec3 dir = normalize(vec3(1.0, fan, -drop));
+    lp += (dir * (8.0 * s) + vec3(0.0, 0.0, -2.5 * s * s)) / max(i_misc.x, 1.0);
+    col = mix(vec3(1.0, 0.8, 0.52), vec3(0.9, 0.94, 1.0), s);
+    k = (1.0 - s) * smoothstep(0.0, 0.1, s) * mix(0.07, 0.15, night) * step(0.995, g);
+    grow = 0.5 + 2.6 * s;
+    core = 0.0;
+  } else {
+    // work floodlight on the de-icing basket (night, boom up)
+    col = vec3(1.0, 0.9, 0.72);
+    k = night * 0.5 * step(0.98, g);
+    core = 0.0;
+  }
   // lights level: 1 all, 0.5 taxi (no strobes, no landing beams), 0.25 parked (nav, logo only)
   float lv = i_misc.z;
   k *= step(0.01, lv) * a_lparam.y;
@@ -380,7 +451,7 @@ void main() {
     v_col = vec4(0.0);
     return;
   }
-  vec4 w = mat4(i_m0, i_m1, i_m2, i_m3) * vec4(a_lpos.xyz, 1.0);
+  vec4 w = mat4(i_m0, i_m1, i_m2, i_m3) * vec4(lp, 1.0);
   w.xyz += u_viewW;
   gl_Position = u_proj * w;
   float px = a_lparam.x * grow * mix(0.6, 1.0, night) * u_px.x * u_px.y / max(gl_Position.w, 1e-6);
@@ -671,12 +742,37 @@ function instanceAttribs(g: Gpu, first: number) {
   }
 }
 
-function shapeGpu(g: Gpu, shape: ModelShape, lod: number): ShapeGpu {
+// ------------------------------------------------------------------ shape registry
+// Aircraft shapes first (fixed), then shapes registered at run time (ground vehicles).
+const SHAPES: string[] = [...MODEL_SHAPES];
+const SHAPE_INDEX = new Map<string, number>(SHAPES.map((s, i) => [s, i]));
+const N_AIRCRAFT_SHAPES = SHAPES.length;
+const extraMeshes = new Map<string, (lod: number) => ModelMesh>();
+/** Vehicles are small: they switch to finer meshes at this fraction of the aircraft LOD size. */
+const EXTRA_LOD_SCALE = 0.35;
+
+/** Registers extra mesh shapes (e.g. ground vehicles) drawn by every models layer. */
+export function registerMeshes(shapes: readonly string[], get: (shape: string, lod: number) => ModelMesh) {
+  for (const s of shapes) {
+    if (!SHAPE_INDEX.has(s)) {
+      SHAPE_INDEX.set(s, SHAPES.length);
+      SHAPES.push(s);
+    }
+    extraMeshes.set(s, (lod) => get(s, lod));
+  }
+}
+
+function meshOf(shape: string, lod = 0): ModelMesh {
+  const extra = extraMeshes.get(shape);
+  return extra ? extra(lod) : getModelMesh(shape as ModelShape, lod);
+}
+
+function shapeGpu(g: Gpu, shape: string, lod: number): ShapeGpu {
   const key = `${shape}|${lod}`;
   let s = g.shapes.get(key);
   if (s) return s;
   const gl = g.gl;
-  const mesh = getModelMesh(shape, lod);
+  const mesh = meshOf(shape, lod);
   const data = new Float32Array(mesh.vertexCount * VF);
   for (let v = 0; v < mesh.vertexCount; v++) {
     const o = v * VF;
@@ -700,7 +796,7 @@ function shapeGpu(g: Gpu, shape: ModelShape, lod: number): ShapeGpu {
   gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
   gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
   let lvbo: WebGLBuffer | null = null;
-  const full = getModelMesh(shape, 0); // light points are the same at every level of detail
+  const full = meshOf(shape, 0); // light points are the same at every level of detail
   if (full.lightCount > 0) {
     lvbo = gl.createBuffer();
     if (!lvbo) throw new Error('createBuffer failed');
@@ -752,7 +848,6 @@ const LIGHT: [number, number, number] = (() => {
 
 const NO_GLASS = new Float32Array([0, 0, 1, 0, 0, 0, 0, 0]);
 const NO_CABIN = new Float32Array([0, 0, 1, 0, -99, 0, -99, 0.2]);
-const SHAPE_INDEX = new Map<ModelShape, number>(MODEL_SHAPES.map((s, i) => [s, i]));
 const NARROW = SHAPE_INDEX.get('narrow') ?? 0;
 const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
@@ -781,10 +876,9 @@ export function installModels(
   const mvpG64 = new Float64Array(16);
   const rot = new Float64Array(9);
   const proj32 = new Float32Array(16);
-  // instance groups: shape index × 3 + level of detail
-  const NG = MODEL_SHAPES.length * 3;
-  const counts = new Int32Array(NG);
-  const starts = new Int32Array(NG);
+  // instance groups: shape index × 3 + level of detail (grows when shapes are registered)
+  let counts = new Int32Array(SHAPES.length * 3);
+  let starts = new Int32Array(SHAPES.length * 3);
   let data = new Float32Array(IF * 256);
   let stage = new Float32Array(IF * 256);
   let gid = new Int32Array(256);
@@ -833,6 +927,11 @@ export function installModels(
       stage = new Float32Array(Math.max(list.length, (stage.length / IF) * 2) * IF);
       gid = new Int32Array(stage.length / IF);
     }
+    if (counts.length < SHAPES.length * 3) {
+      counts = new Int32Array(SHAPES.length * 3);
+      starts = new Int32Array(SHAPES.length * 3);
+    }
+    const NG = counts.length;
 
     // per-frame origin: the camera centre in mercator units
     const c = MercatorCoordinate.fromLngLat(map.getCenter());
@@ -862,7 +961,7 @@ export function installModels(
     for (let i = 0; i < list.length; i++) {
       const inst = list[i]!;
       const si = SHAPE_INDEX.get(inst.shape) ?? NARROW;
-      const mesh = getModelMesh(MODEL_SHAPES[si]!);
+      const mesh = meshOf(SHAPES[si]!);
       const L = inst.lengthM > 0 ? inst.lengthM : 30;
       const ratio = inst.spanM > 0 ? inst.spanM / L / mesh.spanRatio : 1;
       const xs = Math.min(1.8, Math.max(0.55, ratio));
@@ -932,7 +1031,8 @@ export function installModels(
         const my2 = 1.05 + (0.6 * lenPx) / (H * 0.5);
         if (Math.abs(cx) > mx2 * cw || Math.abs(cy) > my2 * cw) continue;
       } else if (Math.abs(cx) > 2.5 * cw || Math.abs(cy) > 2.5 * cw) continue;
-      const lod = globe || lenPx < lodPx * 0.36 ? 2 : lenPx < lodPx ? 1 : 0;
+      const lp = si >= N_AIRCRAFT_SHAPES ? lodPx * EXTRA_LOD_SCALE : lodPx;
+      const lod = globe || lenPx < lp * 0.36 ? 2 : lenPx < lp ? 1 : 0;
 
       gid[kept] = si * 3 + lod;
       const o = kept++ * IF;
@@ -1067,9 +1167,9 @@ export function installModels(
       }
 
       const groups: { s: ShapeGpu; first: number; n: number }[] = [];
-      for (let gi = 0; gi < NG; gi++) {
+      for (let gi = 0; gi < counts.length; gi++) {
         const n = counts[gi]!;
-        if (n > 0) groups.push({ s: shapeGpu(g, MODEL_SHAPES[Math.floor(gi / 3)]!, gi % 3), first: starts[gi]!, n });
+        if (n > 0) groups.push({ s: shapeGpu(g, SHAPES[Math.floor(gi / 3)]!, gi % 3), first: starts[gi]!, n });
         drawn += n;
       }
 

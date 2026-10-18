@@ -1,11 +1,13 @@
 // Flight building blocks (FR24-style): airline logo, alliance badge, status chip and
 // the big route block with scheduled / actual / estimated times.
+import { ChevronRight } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useState } from 'react';
 import { PlaneIcon } from '@/components/icons';
 import { airlineHue } from '@/data/airlines';
-import { airlineIcon, airlineLogo, useMediaTable } from '@/data/media';
-import { LogoTile, logoCredit } from './MakerLogo';
+import { airlineIcon, airlineLogo, makerLogo, useMediaTable } from '@/data/media';
+import type { TypeSpec } from '@/data/sim/typeSpecs';
+import { LogoTile, logoCredit, MakerLogo } from './MakerLogo';
 import type { FlightInfo, FlightStatus } from '@/data/world';
 import { cn } from '@/lib/cn';
 import { fmtDistance, fmtHmUTC } from '@/lib/format';
@@ -70,6 +72,86 @@ export function AirlineLogo({
       title={logoCredit(label, logo)}
       onError={() => setFailed((s) => new Set(s).add(logo.src))}
     />
+  );
+}
+
+/** Marketing names that the variant string leaves out. */
+const NICKNAME: Record<string, string> = { B788: 'Dreamliner', B789: 'Dreamliner', B78X: 'Dreamliner' };
+
+/** Full model name, e.g. "Airbus A350-900", "Boeing 787-9 Dreamliner", "ATR 72-600". */
+export function modelName(spec: Pick<TypeSpec, 'code' | 'maker' | 'model'>): string {
+  const base = spec.maker === 'Various' || spec.model.toLowerCase().startsWith(spec.maker.toLowerCase()) ? spec.model : `${spec.maker} ${spec.model}`;
+  const nick = NICKNAME[spec.code];
+  return nick ? `${base} ${nick}` : base;
+}
+
+/** "AIRBUS A-320neo" (ICAO doc style) → "Airbus A-320neo" for types without a spec. */
+const titleCase = (s: string) => s.replace(/\b([A-Z])([A-Z]+)\b/g, (_, a: string, b: string) => a + b.toLowerCase());
+
+/**
+ * The aircraft at a glance (flight pane header): manufacturer logo, full model name, type
+ * code, registration and engines. Opens the aircraft-type page.
+ */
+export function AircraftModelCard({
+  code,
+  spec,
+  description,
+  registration,
+  onOpen,
+}: {
+  code: string | undefined;
+  spec: TypeSpec | undefined;
+  description?: string | undefined;
+  registration?: string | undefined;
+  onOpen?: (() => void) | undefined;
+}) {
+  const media = useMediaTable();
+  if (!code && !description) return null;
+  const name = spec ? modelName(spec) : titleCase(description ?? code ?? '');
+  const hasLogo = !!spec && !!makerLogo(media.data, spec.maker);
+  // "CFM CFM56-5B" → "CFM56-5B" (the maker is in the designation).
+  const engineName = spec?.engines.name.replace(/^(\S+) (?=\1)/i, '');
+  const engines = spec && spec.engines.count > 0 && engineName && engineName !== '—' ? `${spec.engines.count}× ${engineName}` : undefined;
+  const facts = [code, registration, engines].filter(Boolean);
+  const body = (
+    <>
+      <span className="grid h-10 w-[88px] shrink-0 place-items-center" aria-hidden={!hasLogo}>
+        {hasLogo ? (
+          <MakerLogo maker={spec.maker} size={26} maxWidth={88} />
+        ) : (
+          <span className="grid size-10 place-items-center rounded-[12px] bg-[var(--line)] text-fg-2">
+            <PlaneIcon size={20} style={{ transform: 'rotate(45deg)' }} />
+          </span>
+        )}
+      </span>
+      <span className="h-8 w-px shrink-0 bg-[var(--line)]" aria-hidden="true" />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[14.5px] font-semibold leading-tight tracking-[-0.01em] text-fg" title={name}>
+          {name}
+        </span>
+        <span className="tnum mt-0.5 block truncate text-[11.5px] text-fg-3">
+          {facts.map((f, i) => (
+            <span key={i}>
+              {i > 0 && <span aria-hidden="true"> · </span>}
+              <span className={i < 2 ? 'font-medium text-fg-2' : undefined}>{f}</span>
+            </span>
+          ))}
+        </span>
+      </span>
+    </>
+  );
+  const cls = 'glass-2 flex w-full items-center gap-3 rounded-[18px] py-2.5 pl-2.5 pr-3 text-left';
+  if (!onOpen) return <div className={cls}>{body}</div>;
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      title={`Open the ${name} type page`}
+      className={`${cls} group transition-[border-color,transform] duration-150 hover:border-[var(--line-strong)] focus-visible:shadow-[var(--focus)] active:scale-[0.99]`}
+    >
+      {body}
+      <ChevronRight size={16} className="shrink-0 text-fg-3 transition-transform group-hover:translate-x-0.5 group-hover:text-fg-2" aria-hidden="true" />
+    </button>
   );
 }
 

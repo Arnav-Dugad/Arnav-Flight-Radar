@@ -85,3 +85,19 @@ procedures (headings, no fixes) are left out, and CIFP has no holding records, s
 holds are included. `src/data/sim/usProcedures.ts` picks a SID or STAR for a runway and
 direction of flight. Procedure names, fixes and positions are real; the flights flying them are
 simulated. Reference data for the simulation only, not for navigation.
+
+## US published airways (FAA CIFP)
+
+`npm run data:airways` (`scripts/build-airways.mjs`) builds `public/data/sim/airways-us.json`
+(about 490 KB, fetched lazily by the simulator worker) from the en-route airway records
+(ARINC 424 section ER) of the same CIFP zip, so no extra download is made when the procedures
+build has already cached the cycle. It holds every airway FAA codes in the CIFP — Victor and
+T routes (low), Jet and Q routes (high), and the Alaska colored and oceanic/Gulf routes
+(A, B, G, R, L, M, Y, Z…) — covering CONUS, Alaska, Hawaii and the US-controlled oceanic
+airspace: a fix table (ident and position, plus kind and name for VOR/NDB navaids, positions
+rounded to 4 decimals) and one fix-index list per continuous airway segment with its altitude
+band, minimum and maximum altitudes and any one-way legs. `src/data/sim/usAirways.ts` builds a
+graph from it and finds an airway route (A* with a small penalty per airway change) from the
+fix where a flight leaves its SID to the fix where it joins its STAR. Airway names, fixes and
+positions are real; the routes are chosen by the simulator, not filed flight plans. Reference
+data for the simulation only, not for navigation.

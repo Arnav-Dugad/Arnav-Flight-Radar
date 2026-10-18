@@ -65,6 +65,52 @@ export const LIGHT_BEAM = 6;
 export const LIGHT_LOGO = 7;
 export const LIGHT_STRIDE = 8;
 
+// Ground-service vehicles (vehicleMeshes.ts) share the pipeline and add materials, moving-part
+// kinds and light types of their own. The renderer (models3d.ts) interprets them as follows:
+/** Matte black tyres / rubber bumpers. */
+export const MAT_RUBBER = 6;
+/** Dark satin grey chassis, frames, scissor arms. */
+export const MAT_CHASSIS = 7;
+/** Amber beacon lens (glows, flashes with the rotating reflector). */
+export const MAT_AMBER = 8;
+/** Red tail-light lens. */
+export const MAT_RED = 9;
+/** White headlamp lens (glows at night). */
+export const MAT_LAMP = 10;
+/** Lifted body: rises by `slide` (axis.w, model units) × the lift fraction; the fractional part of the kind is a forward slide (model units) applied once the body clears the cab. */
+export const PART_LIFT = 4;
+/** Scissor arm hinged at its fixed bottom pivot: |axis| = arm length, kind fraction = sin(stowed angle), axis.w = full lift. */
+export const PART_SCISSOR = 5;
+/** Scissor arm hinged at its top pivot, which rides up with the lifted body. */
+export const PART_SCISSOR_TOP = 6;
+/** Rigid swing (boom): rotates about the unit axis through the pivot by lift fraction × axis.w radians. */
+export const PART_SWING = 7;
+/** Rotating amber beacon (flashes as the reflector sweeps past the viewer). */
+export const LIGHT_AMBER = 8;
+/** Vehicle headlamp (forward facing, mostly at night). */
+export const LIGHT_HEAD = 9;
+/** Red tail lamp (rear facing). */
+export const LIGHT_REAR = 10;
+/** De-icing spray particle (animated along the jet; seed in the light's 7th float). */
+export const LIGHT_SPRAY = 11;
+/** Work floodlight (night only, while the boom is raised). */
+export const LIGHT_WORK = 12;
+
+/** Ground-service vehicle shapes (meshes in vehicleMeshes.ts). */
+export type VehicleShape =
+  | 'veh-tug'
+  | 'veh-baggage'
+  | 'veh-uld'
+  | 'veh-belt'
+  | 'veh-cloader'
+  | 'veh-catering'
+  | 'veh-fuel'
+  | 'veh-hydrant'
+  | 'veh-stairs'
+  | 'veh-stairs-hi'
+  | 'veh-deice'
+  | 'veh-bus';
+
 /** Fragment-shader light spill anchors in model units; w = radius (0 = absent). */
 export interface LightAnchors {
   navL: [number, number, number, number];
@@ -75,7 +121,7 @@ export interface LightAnchors {
 }
 
 export interface ModelMesh {
-  shape: ModelShape;
+  shape: ModelShape | VehicleShape;
   /** Level of detail: 0 full, 1 medium, 2 low (no gear / flap geometry; lights are identical). */
   lod: number;
   positions: Float32Array;

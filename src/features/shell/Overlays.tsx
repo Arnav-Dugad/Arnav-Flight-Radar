@@ -1,6 +1,6 @@
 import { LogOut, Orbit, Shuffle, Undo2, Volume2, VolumeX, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { classifyAircraft } from '@shared/classify';
 import { AircraftGlyph, BrandMark, FollowIcon, MeasureIcon } from '@/components/icons';
 import { GlassButton, IconButton } from '@/components/ui/Glass';
@@ -18,6 +18,9 @@ import { traffic } from '@/state/traffic';
 import { useUI } from '@/state/ui';
 import { simNow } from '@/data/world';
 import { LiveStatus } from './LiveStatus';
+
+// Flight display for the chase view, fetched the first time the chase view starts.
+const ChaseHud = lazy(() => import('./ChaseHud').then((m) => ({ default: m.ChaseHud })));
 
 const SOUND_PREF = 'arnav:followSound';
 
@@ -306,13 +309,26 @@ export function TourBadge() {
 export function TopNotices() {
   const mobile = useIsMobile();
   return (
-    <div
-      className={`pointer-events-none absolute z-30 flex flex-col gap-2 ${
-        // Phones: keep clear of the map-control column on the right.
-        mobile ? 'left-3 right-[64px] top-[68px] items-start [&>*]:max-w-full' : 'left-1/2 top-[84px] -translate-x-1/2 items-center'
-      }`}
-    >
-      <FollowBanner />
-    </div>
+    <>
+      <ChaseHudMount />
+      <div
+        className={`pointer-events-none absolute z-30 flex flex-col gap-2 ${
+          // Phones: keep clear of the map-control column on the right.
+          mobile ? 'left-3 right-[64px] top-[68px] items-start [&>*]:max-w-full' : 'left-1/2 top-[84px] -translate-x-1/2 items-center'
+        }`}
+      >
+        <FollowBanner />
+      </div>
+    </>
   );
+}
+
+/** Mounts the glass flight display only while following in the chase view. */
+function ChaseHudMount() {
+  const on = useUI((s) => s.following && s.chase && !!s.selectedId);
+  return on ? (
+    <Suspense fallback={null}>
+      <ChaseHud />
+    </Suspense>
+  ) : null;
 }

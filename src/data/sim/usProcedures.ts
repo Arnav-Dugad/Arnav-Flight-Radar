@@ -174,3 +174,27 @@ export function pickStar(
   const fixes = joinFixes(best.t, runwayPart(best.p, rw));
   return { name: best.p.name, rwys: best.p.rwys, fixes, transition: fixes[0]?.ident };
 }
+
+/**
+ * Every published procedure of one kind serving a runway, one representative track each
+ * (the runway transition joined with the first en-route transition), for diagrams.
+ */
+export function listProcedures(data: ProceduresData, airport: string, runway: string, kind: 'sid' | 'star'): ProcTrack[] {
+  const apt = airportOf(data, airport);
+  if (!apt) return [];
+  const rw = normalizeRunway(runway);
+  const out: ProcTrack[] = [];
+  for (const p of kind === 'sid' ? apt.sids : apt.stars) {
+    if (!serves(p, rw)) continue;
+    const track = p.tracks[0];
+    if (!track?.length) continue;
+    const rwt = runwayPart(p, rw);
+    const fixes = kind === 'sid' ? joinFixes(rwt, track) : joinFixes(track, rwt);
+    if (fixes.length < 2) continue;
+    const tr: ProcTrack = { name: p.name, rwys: p.rwys, fixes };
+    const t = kind === 'sid' ? fixes[fixes.length - 1] : fixes[0];
+    if (t) tr.transition = t.ident;
+    out.push(tr);
+  }
+  return out.slice(0, 24);
+}

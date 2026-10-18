@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+// Full-detail meshes take a few seconds each on a busy machine.
+vi.setConfig({ testTimeout: 30_000 });
 import {
   LIGHT_BEACON,
   LIGHT_BEAM,

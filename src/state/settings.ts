@@ -58,6 +58,9 @@ export interface Settings {
   showForecastMap: boolean; // large airports coloured by the worst hour in their TAF
   show3dBuildings: boolean; // extruded buildings (OpenStreetMap) when the map is tilted
   show3dModels: boolean; // true-scale 3D aircraft models when zoomed in close
+  showContrails: boolean; // condensation trails behind simulated jets cruising in cold air
+  showSurfaceMarkings: boolean; // runway / taxiway markings, signs and stand lines when zoomed in on an airport
+  groundRadar: boolean; // surface-movement-radar view of the airport in view with every aircraft's taxi clearance
   labelContent: LabelContent; // what aircraft labels show
   path3dColor: TrailColorMode;
   path3dOpacity: number; // 0.15 – 0.9
@@ -110,6 +113,9 @@ export const DEFAULT_SETTINGS: Settings = {
   showForecastMap: false,
   show3dBuildings: true,
   show3dModels: true,
+  showContrails: true,
+  showSurfaceMarkings: true,
+  groundRadar: false,
   labelContent: 'flight',
   path3dColor: 'altitude',
   path3dOpacity: 0.45,

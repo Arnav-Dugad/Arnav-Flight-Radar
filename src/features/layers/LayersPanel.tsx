@@ -182,10 +182,28 @@ export function LayersPanel() {
             onChange={(v) => s.set('show3dBuildings', v)}
           />
           <Toggle
+            label="Airport surface markings"
+            description="Runway and taxiway markings, holding points, airfield signs and stand lead-in lines when zoomed in on an airport (zoom 13+). Drawn from OurAirports runways and OpenStreetMap taxiways — static scenery, not live."
+            checked={s.showSurfaceMarkings}
+            onChange={(v) => s.set('showSurfaceMarkings', v)}
+          />
+          <Toggle
+            label="Ground radar"
+            description="A surface-movement-radar view of the airport you are zoomed in on (zoom 12+): dark surface map, every simulated aircraft on the ground as a target with its callsign, type and current taxi clearance."
+            checked={s.groundRadar}
+            onChange={(v) => s.set('groundRadar', v)}
+          />
+          <Toggle
             label="3D aircraft"
             description="True-scale 3D models of each aircraft when you zoom in close or fly the 3D chase view."
             checked={s.show3dModels}
             onChange={(v) => s.set('show3dModels', v)}
+          />
+          <Toggle
+            label="Contrails"
+            description="Condensation trails behind simulated jets cruising above about FL260 in air colder than about −40 °C. They spread and fade over a minute or two; how long they last varies with the simulated upper-air humidity. A visual effect of the simulation, from zoom 5.5."
+            checked={s.showContrails}
+            onChange={(v) => s.set('showContrails', v)}
           />
           <Toggle
             label="Day & night"

@@ -31,6 +31,37 @@ export interface Toast {
   action?: { label: string; run: () => void };
 }
 
+/** A destination of the airport-panel route map ([lon, lat] like GeoJSON). */
+export interface AirportOverlayDest {
+  ident: string;
+  code: string;
+  name: string;
+  lon: number;
+  lat: number;
+  perWeek: number;
+}
+
+/** A point of a procedure drawn from the airport panel. */
+export interface AirportOverlayFix {
+  ident: string;
+  lon: number;
+  lat: number;
+  /** Altitude constraint label, e.g. "↑5000" or "FL110". */
+  alt?: string;
+}
+
+/**
+ * What the airport panel asks the map to draw (src/map/airportRoutesOverlay.ts): the
+ * simulated route network from an airport, or one departure/arrival procedure.
+ */
+export type AirportOverlay = (
+  | { kind: 'routes'; airport: string; origin: [number, number]; dests: AirportOverlayDest[]; focus?: string | null }
+  | { kind: 'procedure'; airport: string; origin: [number, number]; name: string; proc: 'sid' | 'star'; fixes: AirportOverlayFix[]; published: boolean }
+) & {
+  /** The map frames the overlay whenever this token changes (not on every data refresh). */
+  fit?: string;
+};
+
 interface UIState {
   panel: PanelId | null;
   /** Panel to return to when the aircraft/airport detail closes. */
@@ -63,6 +94,8 @@ interface UIState {
   toasts: Toast[];
   cursor: { lat: number; lon: number } | null;
   styleLoading: boolean;
+  /** Route network or procedure the airport panel draws on the map (null = nothing). */
+  airportOverlay: AirportOverlay | null;
 
   openPanel: (p: PanelId | null) => void;
   togglePanel: (p: PanelId) => void;
@@ -88,6 +121,7 @@ interface UIState {
   dismissToast: (id: number) => void;
   setCursor: (c: UIState['cursor']) => void;
   setStyleLoading: (on: boolean) => void;
+  setAirportOverlay: (o: AirportOverlay | null) => void;
 }
 
 let toastId = 0;
@@ -117,6 +151,7 @@ export const useUI = create<UIState>()((set, get) => ({
   toasts: [],
   cursor: null,
   styleLoading: false,
+  airportOverlay: null,
 
   openPanel: (p) =>
     set((s) => ({
@@ -194,6 +229,7 @@ export const useUI = create<UIState>()((set, get) => ({
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
   setCursor: (cursor) => set({ cursor }),
   setStyleLoading: (styleLoading) => set({ styleLoading }),
+  setAirportOverlay: (airportOverlay) => set({ airportOverlay }),
 }));
 
 export const ui = () => useUI.getState();

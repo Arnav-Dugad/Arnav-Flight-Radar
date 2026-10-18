@@ -1,17 +1,15 @@
 // Airport operations for the simulated world: runway in use, hourly movements,
-// arrivals / departures boards, aircraft on the ground and the departure queue.
+// aircraft on the ground and the departure queue (boards: AirportBoards.tsx, lazy).
 import { useState } from 'react';
 import type { AirportDetail } from '@shared/types';
 import { RunwayIcon } from '@/components/icons';
-import { simBoard, simDepartureQueue, simMovementsByHour, simNow, simRunwayInUse, simStands, type BoardRow } from '@/data/world';
+import { simDepartureQueue, simMovementsByHour, simNow, simRunwayInUse, simStands } from '@/data/world';
 import { cn } from '@/lib/cn';
 import { fmtHmUTC } from '@/lib/format';
 import { useNow, useTrafficVersion } from '@/lib/hooks';
-import { fmtHmIn, tzAbbrev, useTimeZone } from '@/lib/tz';
-import { focusAircraft } from '@/map/controller';
+import { fmtHmIn, useTimeZone } from '@/lib/tz';
 import { traffic } from '@/state/traffic';
 import { useUI } from '@/state/ui';
-import { AirlineLogo, STATUS_TEXT } from '@/features/aircraft/FlightParts';
 
 // ---------------------------------------------------------------- runway in use
 
@@ -122,117 +120,6 @@ export function HourlyMovements({ a }: { a: AirportDetail }) {
   const hourly = simMovementsByHour(a.ident, 6);
   if (!hourly) return null;
   return <MovementChart buckets={hourly} binMin={60} title="Movements per hour" note="Local time. Faded bars are the hours ahead (simulated schedule)." nowT={Math.floor(simNow() / 3_600_000) * 3_600_000} tz={tz} />;
-}
-
-// ---------------------------------------------------------------- boards
-
-const COMPASS: Record<string, string> = { north: 'N', south: 'S', east: 'E', west: 'W', central: 'C', international: 'I', domestic: 'D', main: 'M' };
-
-/** Board-style terminal code: 'Terminal 5' → 'T5', 'Terminal 2E' → 'T2E', 'North Terminal' → 'N', 'Terminal A' → 'A'. */
-function terminalCode(name: string): string {
-  const n = name.trim();
-  const num = /^(?:terminal|term\.?|t)\s*(\d+[a-z]?)$/i.exec(n);
-  if (num) return `T${num[1]!.toUpperCase()}`;
-  const letter = /^(?:terminal|concourse)\s+([a-z])$/i.exec(n);
-  if (letter) return letter[1]!.toUpperCase();
-  const side = /^(\w+)\s+terminal$/i.exec(n);
-  if (side && COMPASS[side[1]!.toLowerCase()]) return COMPASS[side[1]!.toLowerCase()]!;
-  if (n.length <= 4) return n.toUpperCase();
-  const initials = n
-    .split(/[\s-]+/)
-    .filter((w) => /^[A-Za-z0-9]/.test(w))
-    .map((w) => (/^\d/.test(w) ? w : w[0]!.toUpperCase()))
-    .join('');
-  return initials.slice(0, 4) || n.slice(0, 3).toUpperCase();
-}
-
-function BoardRows({ rows, dep, tz }: { rows: BoardRow[]; dep: boolean; tz: string | null }) {
-  const select = useUI((s) => s.select);
-  if (!rows.length) return <p className="glass-2 rounded-[14px] px-3.5 py-3 text-[12px] text-fg-3">No {dep ? 'departures' : 'arrivals'} in this window.</p>;
-  return (
-    <ul className="glass-2 divide-y divide-[var(--line)] overflow-hidden rounded-[16px]">
-      {rows.map((r) => {
-        const live = !!traffic.get(r.id);
-        const late = r.delayMin > 5;
-        return (
-          <li key={`${r.id}-${r.scheduled}`}>
-            <button
-              type="button"
-              disabled={!live}
-              onClick={() => {
-                select(r.id);
-                focusAircraft(r.id, 10);
-              }}
-              className="flex w-full items-center gap-2.5 px-3 py-2 text-left enabled:hover:bg-[var(--line)] disabled:cursor-default"
-            >
-              <div className="tnum w-[50px] shrink-0">
-                <div className="text-[13px] font-semibold text-fg">{fmtHmIn(r.scheduled, tz)}</div>
-                <div className={cn('text-[10.5px]', r.status === 'Canceled' ? 'text-[#ff8a9a] line-through' : late ? 'text-[#ffb547]' : 'text-fg-3')}>{fmtHmIn(r.actual ?? r.estimated, tz)}</div>
-              </div>
-              <AirlineLogo icao={r.airlineIcao} code={r.airlineIata ?? r.flight.slice(0, 2)} size={26} name={r.airline} wide />
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-[12.5px] font-semibold text-fg">
-                  {r.other.iata ?? r.other.ident} <span className="font-normal text-fg-2">{r.other.city ?? r.other.name}</span>
-                </div>
-                <div className="tnum truncate text-[10.5px] text-fg-3">
-                  {r.flightIata ?? r.flight} · {r.type}
-                  {r.gate || r.terminal ? (
-                    <span className="xs:hidden">
-                      {r.terminal ? ` · ${terminalCode(r.terminal)}` : ''}
-                      {r.gate ? ` · Stand ${r.gate}` : ''}
-                    </span>
-                  ) : null}
-                  {r.codeshares.length ? ` · also ${r.codeshares.join(', ')}` : ''}
-                </div>
-                {r.divertedTo && (
-                  <div className="text-[10.5px] text-[#ff8a9a]">
-                    Diverted to {r.divertedTo.iata ?? r.divertedTo.ident} ({r.divertedTo.city ?? r.divertedTo.name})
-                  </div>
-                )}
-              </div>
-              {(r.terminal || r.gate) && (
-                <div
-                  className="tnum hidden w-[30px] shrink-0 text-center leading-tight xs:block"
-                  title={[r.terminal, r.gate && `Stand ${r.gate}`].filter(Boolean).join(' · ')}
-                  aria-label={[r.terminal, r.gate && `stand ${r.gate}`].filter(Boolean).join(', ')}
-                >
-                  <div className="truncate text-[12px] font-semibold text-fg">{r.terminal ? terminalCode(r.terminal) : '—'}</div>
-                  {r.gate && <div className="truncate text-[10px] text-fg-3">{r.gate}</div>}
-                </div>
-              )}
-              <span className={cn('w-[60px] shrink-0 break-words text-right text-[11px] font-semibold leading-tight', STATUS_TEXT[r.status])}>
-                {r.status}
-                {late && r.status !== 'Arrived' && r.status !== 'Landed' && r.status !== 'Canceled' && <span className="block text-[10px] font-normal text-[#ffb547]">+{r.delayMin} min</span>}
-              </span>
-            </button>
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
-
-export function BoardTab({ a, kind }: { a: AirportDetail; kind: 'arrivals' | 'departures' }) {
-  useNow(5000);
-  const tz = useTimeZone(a.lat, a.lon);
-  const board = simBoard(a.ident, { pastMin: 45, aheadMin: 180 });
-  const [showAll, setShowAll] = useState(false);
-  if (!board) return null;
-  const rows = board[kind];
-  return (
-    <div className="space-y-3">
-      <BoardRows rows={showAll ? rows : rows.slice(0, 40)} dep={kind === 'departures'} tz={tz} />
-      {rows.length > 40 && !showAll && (
-        <button type="button" onClick={() => setShowAll(true)} className="w-full rounded-[12px] py-2 text-[12px] font-medium text-[var(--accent)] hover:bg-[var(--line)]">
-          Show all {rows.length} {kind}
-        </button>
-      )}
-      <p className="text-[11px] leading-snug text-fg-3">
-        Simulated schedule: real airlines and airports, invented flights, codeshares and times. Local time ({tzAbbrev(simNow(), tz)}), then the estimated or actual time. Terminal
-        (e.g. T5) above the stand; stands and terminals from OpenStreetMap where mapped.
-      </p>
-    </div>
-  );
 }
 
 // ---------------------------------------------------------------- on the ground

@@ -23,14 +23,7 @@ const apCode = (a: { iata?: string; ident: string }) => a.iata ?? a.ident;
 export function EmergencyBanner({ e }: { e: Emergency }) {
   const medical = e.kind === 'medical';
   const squawk = e.squawk ?? (medical ? undefined : '7700');
-  const what =
-    e.kind === 'engine'
-      ? 'MAYDAY — engine failure'
-      : e.kind === 'pressurisation'
-        ? 'MAYDAY — loss of cabin pressure'
-        : e.kind === 'birdstrike'
-          ? `${squawk ? 'MAYDAY' : 'PAN PAN'} — bird strike, returning`
-          : 'PAN PAN — medical';
+  const what = e.kind === 'engine' ? 'MAYDAY — engine failure' : e.kind === 'pressurisation' ? 'MAYDAY — loss of cabin pressure' : e.kind === 'birdstrike' ? `${squawk ? 'MAYDAY' : 'PAN PAN'} — bird strike, returning` : 'PAN PAN — medical';
   return (
     <div role="alert" className="mx-5 mb-3 flex items-start gap-2.5 rounded-[14px] bg-[rgba(255,93,115,0.16)] px-3.5 py-2.5 ring-1 ring-[rgba(255,93,115,0.45)]">
       <TriangleAlert size={16} className="mt-px shrink-0 text-[#ff8a9a]" aria-hidden="true" />
@@ -83,10 +76,7 @@ function WeekStrip({ days }: { days: RouteDays }) {
         return (
           <span
             key={d}
-            className={cn(
-              'flex h-5 w-7 items-center justify-center rounded-[6px] text-[10px] font-semibold',
-              on ? 'bg-[color-mix(in_srgb,var(--accent)_22%,transparent)] text-[var(--accent)]' : 'bg-[var(--line)] text-fg-3 opacity-60',
-            )}
+            className={cn('flex h-5 w-7 items-center justify-center rounded-[6px] text-[10px] font-semibold', on ? 'bg-[color-mix(in_srgb,var(--accent)_22%,transparent)] text-[var(--accent)]' : 'bg-[var(--line)] text-fg-3 opacity-60')}
           >
             {WEEKDAYS[d]!.slice(0, 2)}
           </span>
@@ -107,10 +97,7 @@ function Rotation({ legs }: { legs: FlightInfo['rotation'] }) {
             {l.state === 'next' ? '⇢' : '→'}
           </span>
           <span
-            className={cn(
-              'tnum rounded-[6px] px-1 font-semibold',
-              l.state === 'now' ? 'bg-[color-mix(in_srgb,var(--accent)_18%,transparent)] text-[var(--accent)]' : l.state === 'next' ? 'italic text-fg-3' : 'text-fg-2',
-            )}
+            className={cn('tnum rounded-[6px] px-1 font-semibold', l.state === 'now' ? 'bg-[color-mix(in_srgb,var(--accent)_18%,transparent)] text-[var(--accent)]' : l.state === 'next' ? 'italic text-fg-3' : 'text-fg-2')}
             title={l.flight ? `${l.flight}${l.state === 'next' ? ' (planned)' : ''}` : 'Planned next leg'}
           >
             {apCode(l.to)}
@@ -151,17 +138,16 @@ export function FlightPlan({ info }: { info: FlightInfo }) {
   const arrStand = standText(info.terminalTo, info.gateTo, false);
   const delays = [
     info.crewDelayMin > 0 && `Crew duty limit: waited ${info.crewDelayMin >= 120 ? `${Math.round(info.crewDelayMin / 60)} h` : `${info.crewDelayMin} min`} for a fresh crew`,
-    info.gateHoldMin > 0 && `Gate hold ${info.gateHoldMin} min`, info.deiceMin > 0 && `De-icing ${info.deiceMin} min`, info.holdMin > 0 && `Holding ${info.holdMin} min`].filter(
-    Boolean,
-  ) as string[];
+    info.gateHoldMin > 0 && `Gate hold ${info.gateHoldMin} min`,
+    info.deiceMin > 0 && `De-icing ${info.deiceMin} min`,
+    info.holdMin > 0 && `Holding ${info.holdMin} min`,
+  ].filter(Boolean) as string[];
   const wake = WAKE[info.wake];
   return (
     <section aria-label="Flight plan" className="glass-2 rounded-[16px] px-3.5 pb-1 pt-3">
       <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
         <span className="eyebrow">Flight plan</span>
-        {info.kind !== 'scheduled' && (
-          <span className="rounded-full bg-[color-mix(in_srgb,var(--accent)_14%,transparent)] px-2 py-0.5 text-[10.5px] font-semibold text-[var(--accent)]">{legKindLabel(info.kind)}</span>
-        )}
+        {info.kind !== 'scheduled' && <span className="rounded-full bg-[color-mix(in_srgb,var(--accent)_14%,transparent)] px-2 py-0.5 text-[10.5px] font-semibold text-[var(--accent)]">{legKindLabel(info.kind)}</span>}
       </div>
       <dl className="mt-1.5">
         {nonAirline && info.operator && (
@@ -169,6 +155,23 @@ export function FlightPlan({ info }: { info: FlightInfo }) {
             {info.operator.name}
             <Sub>
               Callsign “{info.operator.tel}” · {info.operator.country}
+            </Sub>
+          </Item>
+        )}
+        {info.operatedBy && (
+          <Item label="Operated by">
+            {info.operatedBy.name}
+            <Sub>
+              Wet lease (ACMI): the lessor's aircraft and crew fly this {info.airline?.name ?? 'airline'} flight · {info.operatedBy.icao}
+            </Sub>
+          </Item>
+        )}
+        {info.maintenance && (
+          <Item label="Maintenance">
+            {info.maintenance.check} at {apCode(info.from)}
+            <Sub>
+              Out of service {utcHm(info.maintenance.from)}–{utcHm(info.maintenance.until)} UTC
+              {info.maintenance.until - info.maintenance.from > 36 * 3_600_000 ? ` (${Math.round((info.maintenance.until - info.maintenance.from) / 86_400_000)} days in the hangar)` : ''}
             </Sub>
           </Item>
         )}
@@ -191,6 +194,20 @@ export function FlightPlan({ info }: { info: FlightInfo }) {
           <Item label="Oceanic" mono>
             {otsLabel(r.nat.system)} {r.nat.letter}: <span className="font-mono text-[12px]">{r.nat.text}</span> · FL
             {r.nat.fl} · M{r.nat.mach.toFixed(2).replace(/^0/, '')}
+          </Item>
+        )}
+        {r?.airways && (
+          <Item label="Airways">
+            Real published US airways
+            <Sub>{r.airways} · not for navigation</Sub>
+          </Item>
+        )}
+        {info.etops && (
+          <Item label="ETOPS">
+            ETOPS {info.etops.minutes} min
+            <Sub>
+              Up to {info.etops.maxMin} min from an adequate airport (one engine, {info.etops.speedKt} kt) · alternates {info.etops.alternates.map((a) => a.iata ?? a.ident).join(' · ')}
+            </Sub>
           </Item>
         )}
         {r?.avoids && r.avoids.length > 0 && (
@@ -258,4 +275,9 @@ export function FlightPlan({ info }: { info: FlightInfo }) {
       </p>
     </section>
   );
+}
+
+/** "HH:MM" in UTC. */
+function utcHm(ms: number): string {
+  return new Date(ms).toISOString().slice(11, 16);
 }

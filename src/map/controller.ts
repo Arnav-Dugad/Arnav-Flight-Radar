@@ -18,7 +18,7 @@ import { bindOpsOverlays, installOpsOverlays } from './opsOverlays';
 import { bindWorldOverlays, installWorldOverlays, resetWorldOverlays } from './worldOverlays';
 import { bindAirport3d, installAirport3d } from './airport3d';
 import { bindMeasure, bindRadar, bindRings, bindWeather, installMeasure, installRadar, installRings, installWeather, refreshWeather } from './overlays';
-import { cameraFlags, viewOffset, viewPadding } from './camera';
+import { cameraFlags, chaseHooks, viewOffset, viewPadding } from './camera';
 import { buildStyle, TERRAIN_SOURCE } from './styles';
 
 setWorkerUrl(workerUrl);
@@ -141,6 +141,27 @@ export function createMap(container: HTMLElement): MlMap {
     cleanups.push(bindOpsOverlays(m));
     cleanups.push(bindWorldOverlays(m));
     cleanups.push(bindAirport3d(m));
+    void import('./airportRoutesOverlay').then((o) => (map === m ? cleanups.push(o.bindAirportRoutesOverlay(m)) : undefined));
+    // Runway/taxiway markings, signs and stand lines: their own chunk, fetched the first time the map is zoomed in close.
+    const loadSurface = (): boolean => {
+      if (m.getZoom() < 12) return false;
+      m.off('zoomend', loadSurface);
+      void import('./airportSurface').then((o) => (map === m ? cleanups.push(o.bindAirportSurface(m)) : undefined));
+      return true;
+    };
+    if (!loadSurface()) m.on('zoomend', loadSurface);
+    // Ground radar mode: its own chunk, fetched the first time the mode is switched on.
+    const loadGroundRadar = (): boolean => {
+      if (!getSettings().groundRadar) return false;
+      void import('./groundRadar').then((o) => (map === m ? cleanups.push(o.bindGroundRadar(m)) : undefined));
+      return true;
+    };
+    if (!loadGroundRadar()) {
+      const un = useSettings.subscribe((s, p) => {
+        if (s.groundRadar && !p.groundRadar && loadGroundRadar()) un();
+      });
+      cleanups.push(un);
+    }
     cleanups.push(bindTouch(m));
     cleanups.push(bindUrlSync(m));
     cleanups.push(bindAutoRotate(m));
@@ -251,6 +272,7 @@ export function fitBounds(w: number, s: number, e: number, n: number) {
 }
 
 export function zoomBy(delta: number) {
+  if (chaseHooks.zoomBy?.(delta)) return; // chase view: changes the camera distance instead
   map?.easeTo({ zoom: map.getZoom() + delta, duration: motionMs(300) });
 }
 
@@ -288,17 +310,25 @@ export function startFollow(id: string, opts: { chase?: boolean } = {}) {
   const t = traffic.get(id);
   if (!t || !map) return;
   const s = getSettings();
+  const u = ui();
+  // "Return to aircraft" after pausing the chase view resumes the chase view.
+  const chase = opts.chase ?? (u.chase && u.following && u.followPaused && u.selectedId === id);
+  if (chase) {
+    // The flight-sim chase camera (./chaseView, loaded on demand) flies itself in from here.
+    u.setFollowing(true);
+    useUI.setState({ chase: true });
+    return;
+  }
   const pos = traffic.displayPosition(t);
-  const chase = !!opts.chase;
   ui().setFollowing(true);
-  useUI.setState({ chase });
+  useUI.setState({ chase: false }); // leaving the chase view hands back a ground-centred camera
   ui().setFollowPaused(true); // pause until the camera lands
   map.flyTo({
     padding: viewPadding(),
     center: [pos.lon, pos.lat],
-    zoom: chase ? (t.ac.onGround ? 16 : 12.6) : s.followZoom,
-    pitch: chase ? 74 : s.followPitch,
-    bearing: chase || s.cameraMode === 'heading-up' ? (pos.trk ?? 0) : map.getBearing(),
+    zoom: s.followZoom,
+    pitch: s.followPitch,
+    bearing: s.cameraMode === 'heading-up' ? (pos.trk ?? 0) : map.getBearing(),
     duration: motionMs(1600),
     essential: false,
   });
@@ -308,8 +338,24 @@ export function startFollow(id: string, opts: { chase?: boolean } = {}) {
 }
 
 export function stopFollow() {
+  const wasChase = ui().chase && ui().following;
   ui().setFollowing(false);
   if (!map) return;
+  const t = wasChase ? traffic.get(ui().selectedId) : undefined;
+  if (t) {
+    // Leaving the chase view: climb out to an overview above the aircraft.
+    const pos = traffic.displayPosition(t);
+    map.easeTo({
+      center: [pos.lon, pos.lat],
+      zoom: 11,
+      pitch: 50,
+      offset: viewOffset(),
+      padding: { top: 0, bottom: 0, left: 0, right: 0 },
+      duration: motionMs(1600),
+      essential: false,
+    });
+    return;
+  }
   // Drop the follow padding without moving what is on screen.
   const c = map.getCanvas();
   const visualCentre = map.unproject([c.clientWidth / 2, c.clientHeight / 2]);

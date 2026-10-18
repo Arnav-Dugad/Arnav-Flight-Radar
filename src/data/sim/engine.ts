@@ -35,7 +35,11 @@ import { daylight, hajjWeight, leisureOf, localHour, localWeekday, operatesOn, r
 import { AIR_AMBULANCE, DELIVERY_CENTRES, GLIDER_REG, GLIDER_TYPES, HEMS, MIL_MISSION, MILITARY, OFFSHORE, SHUTTLES, TOW_TYPES, type MilOperator, type MilRole } from './special';
 import { SCHENGEN, terminalFor } from './terminals';
 import { specOf } from './typeSpecs';
-import { pickSid, pickStar, type ProceduresData, type ProcTrack } from './usProcedures';
+import { ALTERNATING as ALTERNATING_IDENTS, curfewEnd, segregatedPair } from './runwayConfig';
+import { fillet, pushbackPath, routeOnGraph } from './taxiGeo';
+import { acmiFor, etopsFor, maintenanceDue, type AcmiOperator, type EtopsAirport, type EtopsInfo } from './opsRules';
+import { airwayString, routeViaAirways, type AirwayLeg, type AirwaysData } from './usAirways';
+import { listProcedures, pickSid, pickStar, type ProceduresData, type ProcTrack } from './usProcedures';
 
 export { ALL_ALLIANCES } from './airlines';
 
@@ -81,7 +85,7 @@ export function hash(s: string): number {
 
 // ---------------------------------------------------------------- airports
 
-type Pt = [number, number];
+export type Pt = [number, number];
 
 export interface SimRunway {
   ident: string;
@@ -140,7 +144,11 @@ export interface SimAirport {
   scheduled: boolean;
   runways: SimRunway[]; // landing directions
   strips: Strip[];
-  inUse: SimRunway; // runway direction in use (into the wind)
+  inUse: SimRunway; // runway direction in use for arrivals (into the wind)
+  /** Departure runway when the airport runs segregated parallels; otherwise the arrival runway is used. */
+  inUseDep?: SimRunway;
+  /** Surface wind direction the runway choice is based on. */
+  windDir?: number;
   /** Where the runway choice came from. */
   inUseBasis: 'simulated' | 'metar';
   stands?: Stand[]; // OpenStreetMap parking positions / gates
@@ -211,6 +219,8 @@ export interface Seg {
   ease?: 'accel' | 'decel';
   /** Fixed nose direction (push-back, holding short, lined up). */
   nose?: number;
+  /** Moving tail-first (a push-back along a curved path). */
+  reverse?: boolean;
   /** Wind on this segment (direction it blows FROM, speed) and its along-track component. */
   wind?: { dir: number; kt: number; comp: number };
 }
@@ -301,6 +311,8 @@ export interface RouteInfo {
   nat?: { system: OtsSystem; letter: string; text: string; fl: number; mach: number; entry: number; exit: number };
   /** Detour around closed airspace or volcanic ash (zone names). */
   avoids?: string[];
+  /** Flown on real published airways (source and cycle, e.g. "FAA CIFP 2610"). */
+  airways?: string;
   /** Flight-plan style route string ("DET2F DET DCT REM DCT LAM LAM1Z"). */
   text: string;
 }
@@ -322,6 +334,8 @@ export interface Emergency {
 
 export interface Leg {
   kind: LegKind;
+  /** The aircraft was out of service for maintenance before this flight. */
+  maint?: { check: string; from: number; until: number };
   flight: string; // ICAO callsign
   flightIata?: string;
   codeshares: string[];
@@ -408,6 +422,10 @@ export interface Airframe {
   seq: number;
   /** When the current crew's duty period began (sim ms). */
   dutyStart?: number;
+  /** Wet-leased (ACMI): the operator flying this aircraft for the airline, with its crew. */
+  acmi?: AcmiOperator;
+  /** Day number of the last maintenance check started. */
+  maintDay?: number;
 }
 
 export interface SimState {
@@ -500,6 +518,29 @@ function slice(pts: Pt[], cum: number[], d0: number, d1: number): Pt[] {
   for (let i = 1; i < pts.length - 1; i++) if (cum[i]! > d0 && cum[i]! < d1) out.push(pts[i]!);
   out.push(along(pts, cum, d1));
   return out;
+}
+
+/** Distance along a polyline (NM) of the point on it nearest to `p` (flat approximation). */
+function nearestAlong(pts: Pt[], cum: number[], p: Pt): number {
+  const k = Math.cos((p[0] * Math.PI) / 180);
+  let best = Infinity;
+  let at = 0;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i]!;
+    const b = pts[i + 1]!;
+    const ax = (a[1] - p[1]) * k;
+    const ay = a[0] - p[0];
+    const dx = (b[1] - a[1]) * k;
+    const dy = b[0] - a[0];
+    const l2 = dx * dx + dy * dy;
+    const t = l2 > 0 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / l2)) : 0;
+    const d = (ax + dx * t) ** 2 + (ay + dy * t) ** 2;
+    if (d < best) {
+      best = d;
+      at = cum[i]! + (cum[i + 1]! - cum[i]!) * t;
+    }
+  }
+  return at;
 }
 
 /**
@@ -630,6 +671,11 @@ class Builder {
   line(phase: Phase, a: Pt, b: Pt, alt0: number, alt1: number, spd0: number, spd1: number, dur?: number, extra: Partial<Seg> = {}) {
     this.push({ phase, kind: 'line', a, b, alt0, alt1, spd0, spd1, ...extra }, dur ?? segDuration(Math.max(0.01, distanceNm(a[0], a[1], b[0], b[1])), Math.max(1, (spd0 + spd1) / 2)));
   }
+  /** The last segment is flown tail-first (push-back): the nose faces against the motion. */
+  reverseLast() {
+    const s = this.segs[this.segs.length - 1];
+    if (s) s.reverse = true;
+  }
   wait(phase: Phase, pt: Pt, dur: number, nose?: number, alt = ground) {
     const s: Omit<Seg, 't0' | 't1'> = { phase, kind: 'line', a: pt, b: pt, alt0: alt, alt1: alt, spd0: 0, spd1: 0 };
     if (nose !== undefined) s.nose = nose;
@@ -749,6 +795,7 @@ export class World {
         strips,
         inUse,
         inUseBasis: 'simulated',
+        windDir: wind,
       };
       if (a.iata) sa.iata = a.iata;
       if (a.city) sa.city = a.city;
@@ -813,12 +860,78 @@ export class World {
     this.usProcs = d;
   }
 
+  usAwys: AirwaysData | null = null;
+  /** Real US airways (FAA CIFP, public domain) for domestic US routes. */
+  setUsAirways(d: AirwaysData) {
+    this.usAwys = d;
+  }
+
   /** A published FAA procedure as the simulator's procedure shape. */
   private published(tr: ProcTrack | null, kind: 'sid' | 'star'): Procedure | undefined {
     if (!tr || tr.fixes.length < 2) return undefined;
-    const fixes: Fix[] = tr.fixes.map((f) => ({ ident: f.ident, lat: f.lat, lon: f.lon, real: true }));
+    const fixes: Fix[] = tr.fixes.map((f) => {
+      const x: Fix = { ident: f.ident, lat: f.lat, lon: f.lon, real: true };
+      if (f.altMin !== undefined) x.altMin = f.altMin;
+      if (f.altMax !== undefined) x.altMax = f.altMax;
+      return x;
+    });
     const fix = kind === 'sid' ? fixes[fixes.length - 1]! : fixes[0]!;
     return { name: tr.name, fix, fixes, published: `FAA CIFP ${this.usProcs?.cycle ?? ''}`.trim() };
+  }
+
+  /**
+   * Departure and arrival procedures for the runways in use: the published FAA ones at US
+   * airports, otherwise the simulator's procedure-style ones (one per direction).
+   */
+  airportProcedures(a: SimAirport, t: number): { arrRunway: string; depRunway: string; sids: Procedure[]; stars: Procedure[]; published: boolean } {
+    this.runwaysAt(a, t);
+    const arr = a.inUse.ident;
+    const dep = (a.inUseDep ?? a.inUse).ident;
+    if (this.usProcs && a.country === 'US') {
+      const sids = listProcedures(this.usProcs, a.ident, dep, 'sid').map((tr) => this.published(tr, 'sid')).filter((p): p is Procedure => !!p);
+      const stars = listProcedures(this.usProcs, a.ident, arr, 'star').map((tr) => this.published(tr, 'star')).filter((p): p is Procedure => !!p);
+      if (sids.length || stars.length) return { arrRunway: arr, depRunway: dep, sids, stars, published: true };
+    }
+    const sids: Procedure[] = [];
+    const stars: Procedure[] = [];
+    for (let c = 0; c < 360; c += 45) {
+      const p = sidFor(this.nav, a, dep, c);
+      if (!sids.some((x) => x.name === p.name)) sids.push(p);
+    }
+    for (let q = 0; q < 360; q += 90) {
+      const p = starFor(this.nav, a, arr, q);
+      if (!stars.some((x) => x.name === p.name)) stars.push(p);
+    }
+    return { arrRunway: arr, depRunway: dep, sids, stars, published: false };
+  }
+
+  private adequate: EtopsAirport[] | null = null;
+  private etopsCache = new WeakMap<Leg, EtopsInfo | null>();
+
+  /**
+   * ETOPS for a twin-engine flight: the diversion time it needs and its en-route alternates
+   * (adequate airports: large, with a runway of at least ~7,500 ft). Null for 3/4-engine
+   * aircraft and for routes that never go beyond 60 minutes from an adequate airport.
+   */
+  etops(af: Airframe): EtopsInfo | null {
+    const leg = af.leg;
+    if (this.etopsCache.has(leg)) return this.etopsCache.get(leg)!;
+    let out: EtopsInfo | null = null;
+    const spec = specOf(af.type.code);
+    if (spec?.engines.count === 2 && spec.engines.kind === 'jet' && distanceNm(leg.from.lat, leg.from.lon, leg.to.lat, leg.to.lon) > 400) {
+      this.adequate ??= [...this.airports.values()]
+        .filter((a) => a.large && !a.site && a.runways.some((r) => r.lengthNm >= 1.23))
+        .map((a) => ({ ident: a.ident, name: a.name, lat: a.lat, lon: a.lon, ...(a.iata ? { iata: a.iata } : {}) }));
+      const pts: [number, number][] = [];
+      for (const s of leg.segs) {
+        if (Number.isNaN(s.alt0)) continue;
+        if (s.kind === 'path' && s.pts) for (const p of s.pts) pts.push(p);
+        else pts.push(s.a, s.b);
+      }
+      out = etopsFor(pts, this.adequate, af.type.cls === 'wide' ? 410 : 380);
+    }
+    this.etopsCache.set(leg, out);
+    return out;
   }
 
   /** Real navaids (OurAirports) used for procedure-style routes. */
@@ -831,23 +944,71 @@ export class World {
     this.ground.set(ident, g);
     const a = this.airports.get(ident);
     if (!a) return;
-    // Re-route taxi movements that have not started yet (timing is kept).
+    // Movements planned before the network was known were straight lines: put them on the
+    // taxiway centre lines (timing kept). A taxi already under way is split at "now" so the
+    // aircraft continues from where it is; departures are re-planned to the holding point
+    // and line up through the entry taxiway.
+    const same = (p: Pt, q: Pt) => p === q || (p[0] === q[0] && p[1] === q[1]);
     for (const af of this.airframes) {
       const leg = af.leg;
-      if (leg.from.ident !== ident && leg.to.ident !== ident) continue;
-      for (const s of leg.segs) {
-        if (s.phase !== 'taxi' || s.t0 <= now || distanceNm(s.a[0], s.a[1], s.b[0], s.b[1]) < 0.15) continue;
+      if (leg.from !== a && leg.to !== a) continue;
+      const turn = af.type.cls === 'wide' ? 0.024 : 0.016;
+      for (let i = 0; i < leg.segs.length; i++) {
+        const s = leg.segs[i]!;
+        if (s.phase !== 'taxi' || s.kind !== 'line' || s.t1 <= now || distanceNm(s.a[0], s.a[1], s.b[0], s.b[1]) < 0.15) continue;
         const out = s.t0 < leg.tTakeoff;
-        if ((out ? leg.from : leg.to).ident !== ident) continue;
-        const plan = this.taxiPlan(a, s.a, s.b, out ? 'out' : 'in', out ? leg.from.inUse.ident : leg.to.inUse.ident);
-        if (!plan) continue;
-        s.kind = 'path';
-        s.pts = plan.pts;
-        s.cum = plan.cum;
-        const kt = plan.cum[plan.cum.length - 1]! / Math.max(1e-6, (s.t1 - s.t0) / H);
-        s.spd0 = s.spd1 = Math.min(25, kt);
-        const info: TaxiInfo = { via: plan.via, crossings: plan.crossings.map((c) => c.runway), runway: out ? leg.from.inUse.ident : leg.to.inUse.ident };
-        if (plan.hold) info.hold = plan.hold;
+        if ((out ? leg.from : leg.to) !== a) continue;
+        const rwy = out ? (leg.taxiOut?.runway ?? (a.inUseDep ?? a.inUse).ident) : (leg.taxiIn?.runway ?? a.inUse.ident);
+        const started = s.t0 <= now;
+        const f = started ? (now - s.t0) / Math.max(1, s.t1 - s.t0) : 0;
+        const from: Pt = started ? [s.a[0] + (s.b[0] - s.a[0]) * f, s.a[1] + (s.b[1] - s.a[1]) * f] : s.a;
+        const rw = out ? a.runways.find((r) => r.ident === rwy) : undefined;
+        const entry = rw ? this.runwayEntry(a, rw) : null;
+        const plan = this.taxiPlan(a, from, entry?.entry ?? s.b, out ? 'out' : 'in', rwy, turn);
+        if (!plan || plan.pts.length < 2) continue;
+        const total = plan.cum[plan.cum.length - 1]!;
+        let pts = plan.pts;
+        let upTo = total;
+        if (entry) {
+          upTo = Math.max(0, total - 0.05);
+          if (entry.hold) {
+            const h = nearestAlong(plan.pts, plan.cum, entry.hold.pt);
+            if (h > total - 0.15 && h < total - 0.01) upTo = h;
+            else delete entry.hold;
+          }
+          pts = slice(plan.pts, plan.cum, 0, upTo);
+          // Holding-point waits move to the new holding point; the line-up follows the entry.
+          const oldEnd = s.b;
+          const newEnd = pts[pts.length - 1]!;
+          const thr: Pt = [rw!.lat, rw!.lon];
+          for (let j = i + 1; j < leg.segs.length; j++) {
+            const n = leg.segs[j]!;
+            if (n.phase !== 'taxi') break;
+            if (same(n.a, oldEnd) && same(n.b, oldEnd)) {
+              n.a = n.b = newEnd;
+            } else if (same(n.a, oldEnd)) {
+              const lp = fillet([...slice(plan.pts, plan.cum, upTo, total), entry.lineup, ...(same(entry.lineup, thr) ? [] : [thr])], turn);
+              n.kind = 'path';
+              n.a = lp[0]!;
+              n.pts = lp;
+              n.cum = cumulative(lp);
+              n.b = lp[lp.length - 1]!;
+              break;
+            }
+          }
+        }
+        const cum = cumulative(pts);
+        const t0 = started ? now : s.t0;
+        const kt = Math.min(25, cum[cum.length - 1]! / Math.max(1e-6, (s.t1 - t0) / H));
+        const seg: Seg = { ...s, kind: 'path', a: pts[0]!, b: pts[pts.length - 1]!, pts, cum, t0, spd0: kt, spd1: kt };
+        if (started) {
+          // Keep the part already driven; continue on the network from here.
+          leg.segs.splice(i, 1, { ...s, b: from, t1: now }, seg);
+          i++;
+        } else leg.segs[i] = seg;
+        const info: TaxiInfo = { via: plan.via, crossings: plan.crossings.filter((c) => c.s < upTo).map((c) => c.runway), runway: rwy };
+        if (entry?.hold) info.hold = entry.hold.ref;
+        else if (plan.hold) info.hold = plan.hold;
         if (out) leg.taxiOut = info;
         else leg.taxiIn = { ...info, ...(leg.taxiIn?.exit ? { exit: leg.taxiIn.exit } : {}) };
       }
@@ -864,9 +1025,40 @@ export class World {
     if (!a) return;
     a.weather = w;
     if (a.runways.length && w.windDir !== undefined && (w.windKt ?? 0) >= 3) {
-      a.inUse = bestRunway(a.runways, w.windDir);
+      a.windDir = w.windDir;
       a.inUseBasis = 'metar';
+      this.rwyAt.delete(a.ident);
+      this.runwaysAt(a, w.observedAt ?? this.lastNow);
     }
+  }
+
+  private rwyAt = new Map<string, number>();
+  private lastNow = 0;
+  /** Airports whose runway use changes with the time of day (alternation). */
+  private alternating = new Set<SimAirport>();
+
+  /**
+   * Arrival and departure runways at time `t`: into the wind, segregated on independent
+   * parallels (with Heathrow-style alternation). Pure: does not change the airport.
+   */
+  runwaysFor(a: SimAirport, t: number): { arr: SimRunway; dep: SimRunway; segregated: boolean } {
+    if (!a.runways.length || a.windDir === undefined) return { arr: a.inUse, dep: a.inUseDep ?? a.inUse, segregated: !!a.inUseDep };
+    const base = bestRunway(a.runways, a.windDir);
+    const pair = a.large ? segregatedPair(a.runways, base, a.ident, t, a.lon) : undefined;
+    return pair ? { ...pair, segregated: true } : { arr: base, dep: base, segregated: false };
+  }
+
+  /** Sets the airport's runways in use for "now" (what boards, radio and the map show). */
+  runwaysAt(a: SimAirport, t: number) {
+    if (!a.runways.length || a.windDir === undefined) return;
+    const bucket = Math.floor(t / (5 * MIN));
+    if (this.rwyAt.get(a.ident) === bucket) return;
+    this.rwyAt.set(a.ident, bucket);
+    const r = this.runwaysFor(a, t);
+    a.inUse = r.arr;
+    if (r.segregated) a.inUseDep = r.dep;
+    else delete a.inUseDep;
+    if (r.segregated && ALTERNATING_IDENTS.has(a.ident)) this.alternating.add(a);
   }
 
   /** Real forecast (TAF): hourly capacity factors used for slots further ahead. */
@@ -958,6 +1150,13 @@ export class World {
         const hub = this.rng.pick(hubs);
         const af = this.newAirframe(type, this.hexFor(al.country), this.regFor(al.reg), 'airline', this.squawkFor());
         af.airline = al;
+        const acmi = acmiFor(al.icao, type.code, type.cls, now, hajjWeight(now, 'OEJN', al.country), (hash(`${af.hex}acmi`) % 100_000) / 100_000);
+        if (acmi) {
+          // Wet lease: the lessor's aircraft, registration and crew; the airline's flight numbers.
+          af.acmi = acmi;
+          af.hex = this.hexFor(acmi.country);
+          af.reg = acmi.prefix + this.regFor(acmi.reg);
+        }
         af.turnMs = this.turnaround(af, now, hub);
         // A handful of brand-new aircraft are on their delivery flight from the factory.
         const centre = this.rng.next() < 0.0015 ? DELIVERY_CENTRES.find((c) => c.maker.test(type.code)) : undefined;
@@ -1453,7 +1652,7 @@ export class World {
     return Math.max(base, (wakeMs * lvp) / streams);
   }
 
-  private findSlot(list: Slot[], a: SimAirport, kind: 'arr' | 'dep', t: number, w: Wake): { t: number; i: number } {
+  private findSlot(list: Slot[], a: SimAirport, kind: 'arr' | 'dep', t: number, w: Wake, planning = false): { t: number; i: number } {
     let cand = t;
     this.closuresFor(a, t);
     for (let guard = 0; guard < 600; guard++) {
@@ -1461,6 +1660,14 @@ export class World {
       if (closed) {
         cand = closed.to;
         continue;
+      }
+      // Night curfew: no scheduled departures, and arrivals are planned to land after it lifts.
+      if (kind === 'dep' || planning) {
+        const lift = curfewEnd(a.ident, cand, a.lon);
+        if (lift !== null) {
+          cand = lift;
+          continue;
+        }
       }
       let i = list.length;
       while (i > 0 && list[i - 1]!.t > cand) i--;
@@ -1481,7 +1688,7 @@ export class World {
 
   /** Earliest free slot at or after `t`, without reserving it. */
   private peekSlot(a: SimAirport, kind: 'arr' | 'dep', t: number, w: Wake = 'M'): number {
-    return this.findSlot(this.slots.get(`${a.ident}:${kind}`) ?? [], a, kind, t, w).t;
+    return this.findSlot(this.slots.get(`${a.ident}:${kind}`) ?? [], a, kind, t, w, true).t;
   }
 
   /** Earliest slot at or after `t` with capacity and wake separation; reserves it. */
@@ -1568,7 +1775,63 @@ export class World {
     return out;
   }
 
-  private taxiRoute(ident: string, from: Pt, to: Pt): { pts: Pt[]; nodes: number[] } | null {
+  private taxiRoute(ident: string, from: Pt, to: Pt, turnNm = 0.016): { pts: Pt[]; via: string[] } | null {
+    const g = this.ground.get(ident);
+    if (!g || g.nodes.length < 2) return null;
+    const r = routeOnGraph(g, from, to);
+    if (!r) return null;
+    return { pts: fillet(r.pts, turnNm), via: r.via };
+  }
+
+  /**
+   * Where a departure enters its runway: the taxiway node on the centre line nearest the
+   * threshold (a full-length departure), the line-up point on the centre line, and the
+   * runway holding position before it (OSM's named one when present).
+   */
+  private runwayEntry(a: SimAirport, rw: SimRunway): { entry: Pt; lineup: Pt; hold?: { pt: Pt; ref: string } } | null {
+    const g = this.ground.get(a.ident);
+    if (!g || g.nodes.length < 2) return null;
+    const thr: Pt = [rw.lat, rw.lon];
+    const k = Math.cos((rw.lat * Math.PI) / 180);
+    const h = (rw.hdg * Math.PI) / 180;
+    const ux = Math.sin(h);
+    const uy = Math.cos(h);
+    let best = Infinity;
+    let bi = -1;
+    for (let i = 0; i < g.nodes.length; i++) {
+      const n = g.nodes[i]!;
+      const x = (n[1] - rw.lon) * 60 * k;
+      const y = (n[0] - rw.lat) * 60;
+      const al = x * ux + y * uy;
+      const cross = Math.abs(x * uy - y * ux);
+      if (cross > 0.035 || al < -0.12 || al > Math.max(0.3, rw.lengthNm * 0.22)) continue;
+      // Prefer the entry closest to the threshold; nodes before it (a starter extension) win ties.
+      const score = Math.abs(al) + cross * 2;
+      if (score < best) {
+        best = score;
+        bi = i;
+      }
+    }
+    if (bi < 0) return null;
+    const n = g.nodes[bi]!;
+    const x = (n[1] - rw.lon) * 60 * k;
+    const y = (n[0] - rw.lat) * 60;
+    const al = Math.max(0, x * ux + y * uy);
+    const lineup = al < 0.02 ? thr : destination(thr[0], thr[1], rw.hdg, al);
+    const out: { entry: Pt; lineup: Pt; hold?: { pt: Pt; ref: string } } = { entry: n, lineup };
+    let bd = 0.13;
+    for (const hp of g.holds ?? []) {
+      const d = distanceNm(n[0], n[1], hp.pt[0], hp.pt[1]);
+      if (d < bd && d > 0.02) {
+        bd = d;
+        out.hold = hp;
+      }
+    }
+    return out;
+  }
+
+  /** The old vertex-to-vertex router (kept for graphs too small for edge attachment). */
+  private taxiRouteNodes(ident: string, from: Pt, to: Pt): { pts: Pt[]; nodes: number[] } | null {
     const g = this.ground.get(ident);
     if (!g || g.nodes.length < 2) return null;
     const nearest = (p: Pt) => {
@@ -1645,16 +1908,20 @@ export class World {
   }
 
   /** Taxi route with taxiway names, the holding point and every runway crossing. */
-  private taxiPlan(a: SimAirport, from: Pt, to: Pt, mode: 'out' | 'in', runway: string): TaxiPlan | null {
-    const r = this.taxiRoute(a.ident, from, to);
+  private taxiPlan(a: SimAirport, from: Pt, to: Pt, mode: 'out' | 'in', runway: string, turnNm = 0.016): TaxiPlan | null {
+    const r = this.taxiRoute(a.ident, from, to, turnNm) ?? this.taxiRouteNodes(a.ident, from, to);
     if (!r) return null;
     const g = this.ground.get(a.ident)!;
-    const via: string[] = [];
-    for (let i = 1; i < r.nodes.length; i++) {
-      const x = r.nodes[i - 1]!;
-      const y = r.nodes[i]!;
-      const nm = g.edgeNames?.get(x < y ? `${x}-${y}` : `${y}-${x}`);
-      if (nm && via[via.length - 1] !== nm) via.push(nm);
+    let via: string[];
+    if ('via' in r) via = r.via;
+    else {
+      via = [];
+      for (let i = 1; i < r.nodes.length; i++) {
+        const x = r.nodes[i - 1]!;
+        const y = r.nodes[i]!;
+        const nm = g.edgeNames?.get(x < y ? `${x}-${y}` : `${y}-${x}`);
+        if (nm && via[via.length - 1] !== nm) via.push(nm);
+      }
     }
     const cum = cumulative(r.pts);
     const plan: TaxiPlan = { pts: r.pts, cum, via: via.slice(0, 8), crossings: [] };
@@ -1673,7 +1940,8 @@ export class World {
     const k = Math.cos((a.lat * Math.PI) / 180);
     const P = (p: Pt): [number, number] => [(p[1] - a.lon) * 60 * k, (p[0] - a.lat) * 60];
     const total = cum[cum.length - 1]!;
-    const active = (name: string) => name.split('/').includes(runway) || name.split('/').includes(a.inUse.ident);
+    const act = [runway, a.inUse.ident, a.inUseDep?.ident];
+    const active = (name: string) => name.split('/').some((n) => act.includes(n));
     for (const st of a.strips) {
       const q0 = P(st.a);
       const q1 = P(st.b);
@@ -1691,8 +1959,12 @@ export class World {
   }
 
   /** Emits the taxi movement along a plan, stopping short of each runway crossing. */
-  private emitTaxi(b: Builder, plan: TaxiPlan, kt: number, upTo?: number) {
+  private emitTaxi(b: Builder, plan: TaxiPlan, kt: number, upTo?: number, ap?: SimAirport) {
     const end = upTo ?? plan.cum[plan.cum.length - 1]!;
+    // Low-visibility procedures: slower taxi and every runway crossing protected by a stop-bar
+    // that is switched off only once the runway is clear.
+    const lvp = !!ap && (ap.weather?.visSm ?? 10) < 0.75;
+    if (lvp) kt = Math.min(kt, 10);
     let s0 = 0;
     for (const c of plan.crossings) {
       if (c.s >= end) break;
@@ -1700,8 +1972,9 @@ export class World {
       if (stop - s0 > 0.01) b.path('taxi', slice(plan.pts, plan.cum, s0, stop), ground, ground, kt, kt);
       const here = along(plan.pts, plan.cum, stop);
       const ahead = along(plan.pts, plan.cum, Math.min(end, c.s + 0.05));
-      b.wait('taxi', here, (c.active ? this.rng.range(30, 110) : this.rng.range(6, 25)) * 1000, bearingDeg(here[0], here[1], ahead[0], ahead[1]));
-      b.ev('cross', { a: c.runway });
+      const wait = c.active ? this.rng.range(30, 110) : this.rng.range(6, 25);
+      b.wait('taxi', here, (lvp ? wait * 1.6 + 30 : wait) * 1000, bearingDeg(here[0], here[1], ahead[0], ahead[1]));
+      b.ev('cross', lvp ? { a: c.runway, b: 'stopbar' } : { a: c.runway });
       s0 = stop;
     }
     if (end - s0 > 0.005) b.path('taxi', slice(plan.pts, plan.cum, s0, end), ground, ground, kt, kt);
@@ -1906,7 +2179,8 @@ export class World {
     const usesSlots = (airline || af.role === 'mil') && !light;
 
     // ---- departure: clearance, push-back, taxi (crossings, de-icing), queue, take-off.
-    const dep = from.inUse;
+    this.runwaysAt(from, tOff);
+    const dep = from.inUseDep ?? from.inUse;
     const thr: Pt = [dep.lat, dep.lon];
     let groundDelay = 0;
     if (airline && !light && to.scheduled && from !== to) {
@@ -1916,8 +2190,15 @@ export class World {
     }
     const pushes = airline || (af.role === 'mil' && (t.cls === 'wide' || t.cls === 'narrow'));
     const nose = start.hdg ?? bearingDeg(start.pt[0], start.pt[1], from.lat, from.lon);
-    const pushed = pushes ? destination(start.pt[0], start.pt[1], nose + 180, t.cls === 'wide' ? 0.045 : 0.035) : start.pt;
-    const outPlan = light ? null : this.taxiPlan(from, pushed, thr, 'out', dep.ident);
+    // Strictly on the taxiways: the push-back ends on the taxilane centre line facing the
+    // route, the taxi ends at the holding point, the line-up follows the entry taxiway.
+    const turnNm = t.cls === 'wide' ? 0.024 : 0.016;
+    const rwEntry = light ? null : this.runwayEntry(from, dep);
+    const taxiTo: Pt = rwEntry?.entry ?? thr;
+    const gFrom = this.ground.get(from.ident);
+    const pushPath = pushes && gFrom ? pushbackPath(gFrom, start.pt, taxiTo, t.cls === 'wide' ? 0.04 : 0.03) : null;
+    const pushed = pushPath ? pushPath[pushPath.length - 1]! : pushes ? destination(start.pt[0], start.pt[1], nose + 180, t.cls === 'wide' ? 0.045 : 0.035) : start.pt;
+    const outPlan = light ? null : this.taxiPlan(from, pushed, taxiTo, 'out', dep.ident, turnNm);
     const taxiKt = t.cls === 'wide' ? 14 : light ? 12 : 16;
     const taxiNm = outPlan ? outPlan.cum[outPlan.cum.length - 1]! : Math.max(0.3, distanceNm(pushed[0], pushed[1], thr[0], thr[1]) * 1.35);
     const w0 = from.weather;
@@ -1933,15 +2214,37 @@ export class World {
     if (groundDelay > 0) b.ev('edct', { n: Math.round(groundDelay / MIN) }, tOff);
     if (gateHoldMs > 0) b.ev('gatehold', { n: Math.round(gateHoldMs / MIN) }, tOff + groundDelay);
     b.ev('pushback');
-    if (pushes) b.line('pushback', start.pt, pushed, ground, ground, 3, 3, 55_000, { nose });
+    if (pushPath && pushPath.length > 1) {
+      const pp = fillet(pushPath, 0.012);
+      const pushNm = cumulative(pp).at(-1)!;
+      b.path('pushback', pp, ground, ground, 3, 3, Math.max(40_000, Math.min(150_000, segDuration(pushNm, 2.6))));
+      b.reverseLast();
+    } else if (pushes) b.line('pushback', start.pt, pushed, ground, ground, 3, 3, 55_000, { nose });
     let holdPt: Pt;
-    if (outPlan && outPlan.pts.length > 3) {
+    let lineupPath: Pt[] | null = null;
+    if (outPlan && outPlan.pts.length > 3 && rwEntry) {
+      // Hold short at the OSM holding position (projected onto the route) or ~90 m before the runway.
+      const total = outPlan.cum[outPlan.cum.length - 1]!;
+      let upTo = Math.max(0, total - 0.05);
+      if (rwEntry.hold) {
+        const s = nearestAlong(outPlan.pts, outPlan.cum, rwEntry.hold.pt);
+        if (s > total - 0.15 && s < total - 0.01) upTo = s;
+        else delete rwEntry.hold;
+      }
+      holdPt = along(outPlan.pts, outPlan.cum, upTo);
+      lineupPath = [...slice(outPlan.pts, outPlan.cum, upTo, total), rwEntry.lineup];
+      taxiOut = { via: outPlan.via, crossings: outPlan.crossings.filter((c) => c.s < upTo).map((c) => c.runway), runway: dep.ident };
+      if (rwEntry.hold) taxiOut.hold = rwEntry.hold.ref;
+      else if (outPlan.hold) taxiOut.hold = outPlan.hold;
+      b.ev('taxi');
+      this.emitTaxi(b, outPlan, taxiKt, upTo, from);
+    } else if (outPlan && outPlan.pts.length > 3) {
       holdPt = outPlan.pts[outPlan.pts.length - 2]!;
       const upTo = outPlan.cum[outPlan.cum.length - 2]!;
       taxiOut = { via: outPlan.via, crossings: outPlan.crossings.filter((c) => c.s < upTo).map((c) => c.runway), runway: dep.ident };
       if (outPlan.hold) taxiOut.hold = outPlan.hold;
       b.ev('taxi');
-      this.emitTaxi(b, outPlan, taxiKt, upTo);
+      this.emitTaxi(b, outPlan, taxiKt, upTo, from);
     } else {
       holdPt = destination(thr[0], thr[1], dep.hdg + 90, light ? 0.04 : 0.07);
       taxiOut = { via: [], crossings: [], runway: dep.ident };
@@ -1958,16 +2261,18 @@ export class World {
     b.ev('holdshort', { a: taxiOut.hold ?? '' });
     b.wait('taxi', holdPt, slot - b.time - (light ? 30_000 : 35_000), bearingDeg(holdPt[0], holdPt[1], thr[0], thr[1]));
     b.ev('lineup');
-    b.line('taxi', holdPt, thr, ground, ground, 8, 4, 25_000);
-    b.wait('taxi', thr, light ? 5_000 : 10_000, dep.hdg);
+    const lu: Pt = lineupPath ? lineupPath[lineupPath.length - 1]! : thr;
+    if (lineupPath && lineupPath.length > 1) b.path('taxi', fillet(lineupPath, turnNm), ground, ground, 8, 4, 25_000);
+    else b.line('taxi', holdPt, thr, ground, ground, 8, 4, 25_000);
+    b.wait('taxi', lu, light ? 5_000 : 10_000, dep.hdg);
     b.ev('takeoff');
     const rollNm = light ? 0.25 : Math.min(dep.lengthNm * 0.6, t.cls === 'wide' ? 1.5 : 1.2);
-    const lift = destination(thr[0], thr[1], dep.hdg, rollNm);
+    const lift = destination(lu[0], lu[1], dep.hdg, rollNm);
     const vr = spec?.vrKt ?? (light ? 65 : t.cls === 'wide' ? 160 : 145);
-    b.line('takeoff', thr, lift, ground, ground, 0, vr, segDuration(rollNm, vr / 2), { ease: 'accel' });
+    b.line('takeoff', lu, lift, ground, ground, 0, vr, segDuration(rollNm, vr / 2), { ease: 'accel' });
 
     const climbOutNm = light ? 1.5 : 4;
-    const dFix = destination(thr[0], thr[1], dep.hdg, rollNm + climbOutNm);
+    const dFix = destination(lu[0], lu[1], dep.hdg, rollNm + climbOutNm);
     const climbOutAlt = from.elev + (light ? 800 : 2500);
     b.line('climb', lift, dFix, from.elev + 35, climbOutAlt, vr + 10, light ? 85 : 210, segDuration(climbOutNm, light ? 80 : 175));
     b.ev('departure');
@@ -1984,6 +2289,7 @@ export class World {
     // ---- route: departure procedure, en-route navaids, oceanic track, arrival procedure.
     const gcNm = distanceNm(from.lat, from.lon, to.lat, to.lon);
     const big = !light && gcNm > 90;
+    this.runwaysAt(to, tOff + segDuration(gcNm, tas) + 25 * MIN);
     const arrRwy = to.inUse;
     // Published FAA procedures at US airports; procedure-style ones elsewhere.
     const inbound = bearingDeg(to.lat, to.lon, from.lat, from.lon);
@@ -2002,6 +2308,7 @@ export class World {
     const chain: Pt[] = [...arc];
     if (sid?.fixes) chain.push(...sid.fixes.map((f) => [f.lat, f.lon] as Pt));
     else if (sid) chain.push(firstTarget);
+    let airwayLegs: AirwayLeg[] | null = null;
     if (!mission && star && sid) {
       const a: Fix = sid.fix;
       const z: Fix = star.fix;
@@ -2044,7 +2351,23 @@ export class World {
             return seq.every((f, i) => i === 0 || !crossedZones([seq[i - 1]!.lat, seq[i - 1]!.lon], [f.lat, f.lon], zones, opCountry).length);
           };
           if (!legsClear(via)) via = around.map((g, i) => ({ ident: fixName(`${g[0]}${g[1]}${i}`), lat: g[0], lon: g[1], real: false }));
-        } else via = enroute(this.nav, a, z);
+        } else {
+          // Domestic US flights file along the real published airways (jets on J and Q
+          // routes, turboprops on Victor and T routes); elsewhere navaid to navaid.
+          if (this.usAwys && from.country === 'US' && to.country === 'US' && gcNm > 250) {
+            const high = t.cls !== 'turboprop';
+            const legs = routeViaAirways(this.usAwys, a, z, { high }) ?? (high ? null : routeViaAirways(this.usAwys, a, z, { high: true }));
+            if (legs && legs.length >= 2) {
+              const list = legs.filter((l, i) => !(i === 0 && l.ident === a.ident) && !(i === legs.length - 1 && l.ident === z.ident));
+              const seq = [a, ...list, z];
+              if (seq.every((f, i) => i === 0 || !crossedZones([seq[i - 1]!.lat, seq[i - 1]!.lon], [f.lat, f.lon], zones, opCountry).length)) {
+                via = list;
+                airwayLegs = legs;
+              }
+            }
+          }
+          if (!airwayLegs) via = enroute(this.nav, a, z);
+        }
         chain.push(...via.map((f) => [f.lat, f.lon] as Pt));
       }
     }
@@ -2107,11 +2430,17 @@ export class World {
     cruiseFt = flown.cruiseFt;
 
     if (sid) {
-      const parts = [sid.name.replace(' ', ''), sid.fix.ident];
-      for (const f of via) parts.push('DCT', f.ident);
-      if (nat) parts.push(nat.track.system, nat.track.letter);
-      if (star) parts.push('DCT', star.fix.ident, star.name.replace(' ', ''));
+      const parts = [sid.name.replace(' ', '')];
+      if (airwayLegs && star) parts.push(airwayString(airwayLegs, { from: sid.fix.ident, to: star.fix.ident }));
+      else {
+        parts.push(sid.fix.ident);
+        for (const f of via) parts.push('DCT', f.ident);
+        if (nat) parts.push(nat.track.system, nat.track.letter);
+        if (star) parts.push('DCT', star.fix.ident);
+      }
+      if (star) parts.push(star.name.replace(' ', ''));
       route = { via, text: parts.join(' ') };
+      if (airwayLegs) route.airways = `FAA CIFP ${this.usAwys?.cycle ?? ''}`.trim();
       if (avoids?.length) route.avoids = avoids;
       route.sid = sid;
       if (star) route.star = star;
@@ -2222,9 +2551,16 @@ export class World {
     const vecDur = segDuration(vecLen, vecKt);
     const lvp = (dest.weather?.visSm ?? 10) < 0.75 || (dest.weather?.category === 'LIFR' && !light);
     const approach = light ? `visual ${arr.ident}` : lvp ? `ILS CAT III ${arr.ident}` : !dest.large && this.rng.next() < 0.35 ? `RNP ${arr.ident}` : dest.weather?.category === 'VFR' && !dest.large && this.rng.next() < 0.3 ? `visual ${arr.ident}` : `ILS ${arr.ident}`;
+    // Runway occupancy: on tightly spaced finals the aircraft ahead is sometimes slow to
+    // vacate, and Tower sends the follower around.
+    let occupied = false;
     if (usesSlots && !priority && !emergency && dest.scheduled) {
       const want = b.time + vecDur;
       const slotA = this.reserveSlot(dest, 'arr', want, wake);
+      const list = this.slots.get(`${dest.ident}:arr`);
+      const i = list ? list.findIndex((x) => x.t === slotA) : -1;
+      const gap = i > 0 ? slotA - list![i - 1]!.t : Infinity;
+      occupied = airline && !light && gap < 110_000 && this.rng.next() < 0.012;
       const delay = slotA - want;
       if (delay > 3 * MIN) {
         const laps = Math.max(1, Math.round(delay / (4 * MIN)));
@@ -2245,12 +2581,12 @@ export class World {
     const vapp = spec?.vappKt ?? (light ? 70 : t.cls === 'wide' ? 150 : 140);
     const dw = dest.weather;
     const goAround = airline && !light && !emergency && this.rng.next() < 0.004 + ((dw?.gustKt ?? 0) >= 30 ? 0.03 : 0) + (dw?.category === 'LIFR' ? 0.02 : 0) + (dw?.wx && /TS/.test(dw.wx) ? 0.02 : 0);
-    if (goAround) {
+    if (goAround || occupied) {
       const short = P(0.6, 0);
       b.ev('final', { a: arr.ident });
       b.line('approach', faf, short, fafAlt, dest.elev + 200, vapp + 15, vapp, segDuration(finalNm - 0.6, vapp + 7));
       const upwind = P(-4, 0);
-      b.ev('goaround', { a: arr.ident });
+      b.ev('goaround', occupied && !goAround ? { a: arr.ident, b: 'occupied' } : { a: arr.ident });
       b.line('goaround', short, upwind, dest.elev + 200, dest.elev + 3000, vapp + 10, 190, segDuration(4.6, 170));
       const side = this.rng.next() < 0.5 ? 1 : -1;
       const circuit = smooth([upwind, P(-6, 4 * side), P(4, 5 * side), P(turnOn + 3, 5 * side), P(turnOn, 0), faf], 3);
@@ -2267,11 +2603,11 @@ export class World {
     b.ev('vacate', ex?.name ? { a: ex.name } : {});
     const tOnGuess = b.time + 6 * MIN;
     const standTo = this.takeStand(dest, tOnGuess - 5 * MIN, tOnGuess + af.turnMs + 30 * MIN, af, from);
-    const inPlan = light ? null : this.taxiPlan(dest, stop, standTo.pt, 'in', arr.ident);
+    const inPlan = light ? null : this.taxiPlan(dest, stop, standTo.pt, 'in', arr.ident, t.cls === 'wide' ? 0.024 : 0.016);
     const taxiIn: TaxiInfo = { via: inPlan?.via ?? [], crossings: inPlan?.crossings.map((c) => c.runway) ?? [], runway: arr.ident };
     if (ex?.name) taxiIn.exit = ex.name;
     b.ev('taxiIn');
-    if (inPlan) this.emitTaxi(b, inPlan, taxiKt);
+    if (inPlan) this.emitTaxi(b, inPlan, taxiKt, undefined, dest);
     else b.line('taxi', stop, standTo.pt, ground, ground, taxiKt, taxiKt, segDuration(Math.max(0.3, distanceNm(stop[0], stop[1], standTo.pt[0], standTo.pt[1]) * 1.3), taxiKt));
     b.ev('onblock');
     if (route?.star && route.star.fix && !star) delete route.star;
@@ -2613,7 +2949,29 @@ export class World {
             af.dutyStart = tOff + crewDelay - 60 * MIN;
           }
         }
-        const leg = this.buildLeg(af, at, next, tOff + crewDelay, prev.standTo);
+        // Night curfews: the timetable avoids departing or arriving while one is in force.
+        let curfewShift = 0;
+        if (af.airline) {
+          const est = (distanceNm(at.lat, at.lon, next.lat, next.lon) / (af.type.kt * 0.88)) * H + 35 * MIN;
+          const t0 = tOff + crewDelay;
+          const depLift = curfewEnd(at.ident, t0, at.lon);
+          if (depLift !== null) curfewShift = depLift - t0 + this.rng.range(0, 120) * MIN;
+          const arrLift = curfewEnd(next.ident, t0 + curfewShift + est, next.lon);
+          if (arrLift !== null) curfewShift += arrLift - (t0 + curfewShift + est) + this.rng.range(5, 150) * MIN;
+          if (curfewShift > 12 * H) curfewShift = 0;
+        }
+        // Maintenance: an overnight A-check (or, rarely, a heavy C-check) at the home base.
+        let maint: { check: string; from: number; until: number } | undefined;
+        const day = Math.floor(tOff / 86_400_000);
+        if (af.airline && af.maintDay !== day) {
+          const due = maintenanceDue((hash(`${af.hex}m${day}`) % 100_000) / 100_000, localHour(tOff, at.lon), af.airline.hubs.includes(at.ident));
+          if (due) {
+            af.maintDay = day;
+            maint = { check: due.check, from: tOff, until: tOff + due.ms };
+          }
+        }
+        const leg = this.buildLeg(af, at, next, tOff + crewDelay + curfewShift + (maint ? maint.until - maint.from : 0), prev.standTo);
+        if (maint && !leg.canceled) leg.maint = maint;
         if (crewDelay > 0 && !leg.canceled) {
           leg.crewDelayMs = crewDelay;
           leg.std = round5(leg.std - crewDelay);
@@ -2674,6 +3032,7 @@ export class World {
 
   /** Advance every airframe so that its current leg covers `now`. */
   advance(now: number) {
+    this.lastNow = now;
     for (const af of this.airframes) {
       let guard = 0;
       while (now >= af.leg.tOn + af.leg.turnAfter && guard++ < 20) {
@@ -2749,6 +3108,7 @@ export class World {
       trk = leg.from.inUse.hdg;
     } else trk = leg.stand.hdg ?? (leg.from.inUse.hdg + 90) % 360;
     if (s.nose !== undefined) trk = s.nose;
+    else if (s.reverse && moving) trk = (trk + 180) % 360;
     const onGround = Number.isNaN(s.alt0);
     let gs = s.spd0 + (s.spd1 - s.spd0) * f;
     if (s.kind === 'path' && (s.phase === 'holding' || s.phase === 'orbit' || s.phase === 'soaring')) gs = (s.cum!.at(-1)! / Math.max(1e-6, (s.t1 - s.t0) / H)) * (0.97 + 0.03 * Math.sin(f * 40));

@@ -3,6 +3,20 @@ import { ui } from '@/state/ui';
 
 export const cameraFlags = { autoRotating: false };
 
+/**
+ * Hooks installed by the chase camera (src/map/chaseView.ts, loaded on demand) so code in the
+ * main bundle can talk to it without importing it.
+ */
+export const chaseHooks: {
+  /** Handles a zoom-button press while chasing (changes the camera distance). True = handled. */
+  zoomBy?: (delta: number) => boolean;
+  /** Puts the camera back behind the aircraft after the user orbited it. */
+  reset?: () => void;
+} = {};
+
+/** Read-only chase camera state for the HUD (polled every frame, so no store needed). */
+export const chaseState = { active: false, orbited: false };
+
 /** Pixels hidden by open panels: side panel on desktop, bottom sheet on mobile. */
 export function viewPadding(): { top: number; bottom: number; left: number; right: number } {
   const u = ui();

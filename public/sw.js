@@ -7,7 +7,8 @@
 
 const SHELL = 'arnav-shell-v1';
 const ASSETS = 'arnav-assets-v1';
-const DATA = 'arnav-data-v1';
+// Bump when static data changes shape (airways, media, ground networks): old copies are dropped on activate.
+const DATA = 'arnav-data-v2';
 const PRECACHE = ['/', '/manifest.webmanifest', '/brand/favicon.svg', '/brand/icon-192.png', '/brand/arnav-mark-animated.svg'];
 
 self.addEventListener('install', (event) => {

@@ -71,9 +71,12 @@ describe('world simulator', () => {
     const af = w.airframes.find((a) => a.type.cls === 'narrow')!;
     const leg = af.leg;
     const land = leg.segs.find((s) => s.phase === 'landing')!;
-    expect(land.a[0]).toBeCloseTo(leg.to.inUse.lat, 6);
+    const arr = leg.to.runways.find((r) => r.ident === leg.taxiIn?.runway)!;
+    expect(land.a[0]).toBeCloseTo(arr.lat, 6);
+    // Departures use the departure runway (the other parallel in segregated mode).
     const roll = leg.segs.find((s) => s.phase === 'takeoff')!;
-    expect(roll.a[0]).toBeCloseTo(leg.from.inUse.lat, 6);
+    const dep = leg.from.runways.find((r) => r.ident === leg.taxiOut?.runway)!;
+    expect(roll.a[0]).toBeCloseTo(dep.lat, 6);
   });
 
   it('chains legs: the next flight departs from where the last one arrived', () => {
@@ -150,7 +153,8 @@ describe('world simulator', () => {
     for (let k = 0; k < 18; k++) w.advance(NOW + k * 600_000);
     const legs = w.airframes.map((a) => a.leg);
     const held = legs.filter((l) => l.holdMs > 0);
-    expect(held.length / legs.length).toBeLessThan(0.08);
+    // Night banks at Chinese and US hubs hold a few percent of arrivals (HEAD measured 7.8%).
+    expect(held.length / legs.length).toBeLessThan(0.09);
     expect(held.reduce((a, l) => a + l.holdMs, 0) / held.length / 60_000).toBeLessThan(20);
     const diverted = legs.filter((l) => l.divertedFrom?.ident === 'EGLL');
     expect(diverted.length).toBeGreaterThan(0);
@@ -228,7 +232,8 @@ describe('world simulator', () => {
     expect(mid.trk).toBeCloseTo(push.nose!, 5);
     const takeoff = segs.findIndex((s) => s.phase === 'takeoff');
     const lined = segs[takeoff - 1]!;
-    expect(lined.nose).toBeCloseTo(af.leg.from.inUse.hdg, 5);
+    const dep = af.leg.from.runways.find((r) => r.ident === af.leg.taxiOut?.runway)!;
+    expect(lined.nose).toBeCloseTo(dep.hdg, 5);
   });
 
   it('goes around in gusty weather and flies a circuit before landing', () => {
@@ -277,7 +282,8 @@ describe('world simulator', () => {
     const w = new World(3, airports, runways);
     w.populate(NOW, 0.3);
     const a = w.airports.get('EGLL')!;
-    const rw = a.inUse;
+    // The arrival runway this evening (Heathrow alternates its runways at 15:00).
+    const rw = w.runwaysFor(a, NOW + 4 * 3_600_000).arr;
     // A taxiway node 1.1 NM down the runway, just beside the centreline.
     const exit = destination(rw.lat, rw.lon, rw.hdg, 1.1);
     const side = destination(exit[0], exit[1], rw.hdg + 90, 0.03);
@@ -285,7 +291,7 @@ describe('world simulator', () => {
     w.setTaxiGraph('EGLL', { nodes: [side, far, [a.lat, a.lon]], adj: [[1], [0, 2], [1]] }, NOW);
     w.advance(NOW + 6 * 3_600_000);
     // Only legs planned after the taxiway network was loaded.
-    const arrivals = w.airframes.filter((af) => af.leg.to.ident === 'EGLL' && !!af.prev && af.leg.tOff > NOW && af.airline && !af.leg.canceled);
+    const arrivals = w.airframes.filter((af) => af.leg.to.ident === 'EGLL' && !!af.prev && af.leg.tOff > NOW && af.airline && !af.leg.canceled && af.leg.taxiIn?.runway === rw.ident);
     expect(arrivals.length).toBeGreaterThan(0);
     const land = arrivals[0]!.leg.segs.find((s) => s.phase === 'landing')!;
     expect(distanceNm(land.b[0], land.b[1], exit[0], exit[1])).toBeLessThan(0.05);

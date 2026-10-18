@@ -47,8 +47,15 @@ export interface MediaTable {
 
 let table: Promise<MediaTable> | null = null;
 
+/**
+ * Bump when media.json changes shape or gains tables: the service worker answers /data/*
+ * stale-while-revalidate, so a new URL is what makes returning visitors get the new table
+ * (and the maker logos) on their next load rather than the one after.
+ */
+const MEDIA_VERSION = 3;
+
 export function loadMedia(): Promise<MediaTable> {
-  table ??= fetch('/data/media.json')
+  table ??= fetch(`/data/media.json?v=${MEDIA_VERSION}`)
     .then((r) => {
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return r.json() as Promise<MediaTable>;
@@ -60,9 +67,12 @@ export function loadMedia(): Promise<MediaTable> {
   return table;
 }
 
-/** Logos are self-hosted (copied at build time); photos load from Wikimedia's thumbnail hosts. */
-const ok = (u: string) => {
-  if (/^\/media\/logos\/(icons\/)?[A-Z0-9]{3}\.(png|jpg)$/.test(u) || /^\/media\/makers\/[a-z0-9-]+\.(png|jpg)$/.test(u)) return true;
+/**
+ * Logos are self-hosted (copied at build time, `?v=<content hash>` so replaced files get
+ * new URLs); photos load from Wikimedia's thumbnail hosts.
+ */
+export const mediaUrlOk = (u: string) => {
+  if (/^\/media\/(logos\/(icons\/)?[A-Z0-9]{3}|makers\/[a-z0-9-]+)\.(png|jpg)(\?v=[0-9a-f]{6,16})?$/.test(u)) return true;
   try {
     const url = new URL(u);
     return url.protocol === 'https:' && (url.hostname === 'upload.wikimedia.org' || url.hostname === 'thumb.wikimedia.org');
@@ -72,7 +82,7 @@ const ok = (u: string) => {
 };
 
 function item(r: Row | undefined, tone?: LogoTone): MediaItem | undefined {
-  if (!r || !ok(r[0])) return undefined;
+  if (!r || !mediaUrlOk(r[0])) return undefined;
   const m: MediaItem = {
     src: r[0],
     page: commonsPage(r[1]),

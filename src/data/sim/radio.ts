@@ -248,6 +248,12 @@ export function transcript(ctx: RadioContext): RadioLine[] {
   };
   const rwy = (r: string) => `runway ${r}`;
   const takeoff = (a: SimAirport) => (us(a) ? 'cleared for takeoff' : 'cleared for take-off');
+  /** Departure runway: the one the flight taxied to (segregated parallels use a separate one). */
+  const depRwy = leg.taxiOut?.runway ?? (from.inUseDep ?? from.inUse).ident;
+  /** "London Departure 120.4" — the station and frequency a controller hands a flight to. */
+  const onFreq = (st: string, f: string | undefined) => `${st}${f ? ` ${f}` : ''}`;
+  /** Pilot read-back of a frequency change: "Departure 120.4" (just the facility, like real crews). */
+  const readFreq = (st: string, f: string | undefined) => `${st.replace(/^.* (Delivery|Clearance|Ground|Tower|Approach|Departure|Director)$/, '$1')}${f ? ` ${f}` : ''}`;
   let sector = '';
   let lastFreq: string | undefined;
   const sid = leg.route?.sid?.name;
@@ -307,7 +313,7 @@ export function transcript(ctx: RadioContext): RadioLine[] {
         const [st, f] = fac(from, 'gnd');
         const t = leg.taxiOut;
         const via = t?.via.length ? ` via ${t.via.join(', ')}` : '';
-        const target = t?.hold ? `holding point ${t.hold} ${rwy(from.inUse.ident)}` : us(from) ? rwy(from.inUse.ident) : `holding point ${rwy(from.inUse.ident)}`;
+        const target = t?.hold ? `holding point ${t.hold} ${rwy(depRwy)}` : us(from) ? rwy(depRwy) : `holding point ${rwy(depRwy)}`;
         const cross = t?.crossings.length ? `, cross ${t.crossings.map((c) => `runway ${c.split('/')[0]}`).join(' and ')}` : '';
         say(e, 'pilot', st, f, `${cs}, request taxi.`, -10_000);
         say(e, 'atc', st, f, `${cs}, taxi to ${target}${via}${us(from) ? cross : ''}, ${qnh(from)}.`);
@@ -329,28 +335,30 @@ export function transcript(ctx: RadioContext): RadioLine[] {
       case 'holdshort': {
         if (heli) break;
         const [st, f] = fac(from, 'twr');
-        say(e, 'pilot', st, f, `${st}, ${cs}, ${e.a ? `holding point ${e.a}` : `holding short ${rwy(from.inUse.ident)}`}, ready for departure.`);
+        say(e, 'pilot', st, f, `${st}, ${cs}, ${e.a ? `holding point ${e.a}` : `holding short ${rwy(depRwy)}`}, ready for departure.`);
         say(e, 'atc', st, f, `${cs}, hold position.`, 8_000);
         break;
       }
       case 'lineup': {
         const [st, f] = fac(from, 'twr');
-        say(e, 'atc', st, f, `${cs}, ${us(from) ? `${rwy(from.inUse.ident)}, line up and wait` : `line up and wait ${rwy(from.inUse.ident)}`}.`);
-        say(e, 'pilot', st, f, `Line up and wait ${rwy(from.inUse.ident)}, ${cs}.`, 5_000);
+        say(e, 'atc', st, f, `${cs}, ${us(from) ? `${rwy(depRwy)}, line up and wait` : `line up and wait ${rwy(depRwy)}`}.`);
+        say(e, 'pilot', st, f, `Line up and wait ${rwy(depRwy)}, ${cs}.`, 5_000);
         break;
       }
       case 'takeoff': {
         if (heli) break;
         const [st, f] = fac(from, 'twr');
-        say(e, 'atc', st, f, `${cs}, ${windText(from)}, ${rwy(from.inUse.ident)}, ${takeoff(from)}.`, -6_000);
-        say(e, 'pilot', st, f, `${us(from) ? 'Cleared for takeoff' : 'Cleared for take-off'} ${rwy(from.inUse.ident)}, ${cs}.`, -2_000);
+        say(e, 'atc', st, f, `${cs}, ${windText(from)}, ${rwy(depRwy)}, ${takeoff(from)}.`, -6_000);
+        say(e, 'pilot', st, f, `${us(from) ? 'Cleared for takeoff' : 'Cleared for take-off'} ${rwy(depRwy)}, ${cs}.`, -2_000);
         break;
       }
       case 'departure': {
         if (ctx.ga || heli) break;
+        // Hand-off: Tower → Departure once airborne; the crew reads back on the tower frequency.
         const [st, f] = fac(from, 'twr');
         const [dst, df] = fac(from, 'dep');
-        say(e, 'atc', st, f, `${cs}, contact ${dst}${df ? ` ${df}` : ''}.`);
+        say(e, 'atc', st, f, `${cs}, contact ${onFreq(dst, df)}${us(from) ? '' : ', good day'}.`);
+        say(e, 'pilot', st, f, `${readFreq(dst, df)}, ${cs}.`, 4_000);
         say(e, 'pilot', dst, df, `${dst}, ${cs}, passing ${Math.round((from.elev + 2500) / 100) * 100} feet climbing ${us(from) ? '5,000' : 'altitude 5,000 feet'}${sid ? `, ${sid}` : ''}.`, 15_000);
         lastFreq = df;
         break;
@@ -366,10 +374,14 @@ export function transcript(ctx: RadioContext): RadioLine[] {
         const next = sectorAt(e.lat, e.lon, ctx.countryAt(e.lat, e.lon));
         if (next === sector) break;
         const nf = sectorFreq(next);
-        if (sector) say(e, 'atc', sector, lastFreq, `${cs}, contact ${next} ${nf}.`);
-        else {
+        if (sector) {
+          say(e, 'atc', sector, lastFreq, `${cs}, contact ${next} ${nf}.`);
+          say(e, 'pilot', sector, lastFreq, `${next} ${nf}, ${cs}.`, 4_000);
+        } else {
+          // Hand-off: Departure → the first area control centre.
           const [dst, df] = fac(from, 'dep');
           say(e, 'atc', dst, df, `${cs}, contact ${next} ${nf}.`);
+          say(e, 'pilot', dst, df, `${next} ${nf}, ${cs}.`, 4_000);
         }
         say(e, 'pilot', next, nf, `${next}, ${cs}, ${level(e.n ?? 350)}.`, 10_000);
         if (next.includes('Oceanic')) say(e, 'atc', next, nf, `${cs}, ${next.replace(' Oceanic', '')} Oceanic, identified, maintain Mach ${leg.route?.nat?.mach.toFixed(2).replace('0.', 'decimal ') ?? 'decimal eight two'}, report entering the next sector.`, 25_000);
@@ -422,6 +434,11 @@ export function transcript(ctx: RadioContext): RadioLine[] {
       }
       case 'star': {
         const [ast, af] = fac(to, 'app');
+        if (sector) {
+          // Hand-off: area control → Approach before the arrival.
+          say(e, 'atc', sector, lastFreq, `${cs}, contact ${onFreq(ast, af)}.`, -6.4 * 60_000);
+          say(e, 'pilot', sector, lastFreq, `${readFreq(ast, af)}, ${cs}.`, -6.3 * 60_000);
+        }
         say(e, 'pilot', ast, af, `${ast}, ${cs}, ${star ? `${star} arrival, ` : ''}descending.`, -6 * 60_000);
         say(e, 'atc', ast, af, `${cs}, ${ast}, ${qnh(to)}.`, -5.6 * 60_000);
         lastFreq = af;
@@ -447,15 +464,31 @@ export function transcript(ctx: RadioContext): RadioLine[] {
         const [st, f] = fac(to, 'twr');
         const appr = leg.approach ?? `ILS ${to.inUse.ident}`;
         const kind = appr.startsWith('visual') ? 'visual approach' : `${appr.replace(/\s+\S+$/, '')} approach`;
-        say(e, 'atc', ast, af, `${cs}, cleared ${kind} ${rwy(e.a ?? to.inUse.ident)}, contact ${st}${f ? ` ${f}` : ''}.`, -2.5 * 60_000);
-        say(e, 'pilot', st, f, `${st}, ${cs}, established ${kind.replace(' approach', '')} ${rwy(e.a ?? to.inUse.ident)}.`, -2 * 60_000);
-        say(e, 'atc', st, f, `${cs}, ${windText(to)}, ${rwy(e.a ?? to.inUse.ident)}, cleared to land.`, -90_000);
+        // Hand-off: Approach → Tower on final; the crew reads back on the approach frequency.
+        const r = rwy(e.a ?? to.inUse.ident);
+        say(e, 'atc', ast, af, `${cs}, cleared ${kind} ${r}, contact ${onFreq(st, f)}.`, -2.5 * 60_000);
+        say(e, 'pilot', ast, af, `Cleared ${kind} ${r}, ${readFreq(st, f)}, ${cs}.`, -2.5 * 60_000 + 5_000);
+        say(e, 'pilot', st, f, `${st}, ${cs}, established ${kind.replace(' approach', '')} ${r}.`, -2 * 60_000);
+        say(e, 'atc', st, f, `${cs}, ${windText(to)}, ${r}, cleared to land.`, -90_000);
         break;
       }
       case 'goaround': {
         const [st, f] = fac(to, 'twr');
-        say(e, 'pilot', st, f, `${cs}, going around.`);
-        say(e, 'atc', st, f, `${cs}, roger, climb 3,000 feet, runway heading, contact Approach.`, 6_000);
+        const [ast, af] = fac(to, 'app');
+        const r = rwy(e.a ?? to.inUse.ident);
+        if (e.b === 'occupied') {
+          // The runway is not clear: Tower initiates the go-around.
+          say(e, 'atc', st, f, `${cs}, go around, I say again, go around, traffic on the runway.`, -3_000);
+          say(e, 'pilot', st, f, `Going around, ${cs}.`, 1_000);
+        } else {
+          say(e, 'pilot', st, f, `${cs}, going around.`);
+          say(e, 'atc', st, f, `${cs}, roger.`, 3_000);
+        }
+        say(e, 'atc', st, f, `${cs}, climb 3,000 feet, runway heading, contact ${onFreq(ast, af)}.`, 8_000);
+        say(e, 'pilot', st, f, `Climb 3,000 feet, runway heading, ${readFreq(ast, af)}, ${cs}.`, 13_000);
+        say(e, 'pilot', ast, af, `${ast}, ${cs}, go-around ${r}, climbing 3,000 feet, runway heading.`, 30_000);
+        say(e, 'atc', ast, af, `${cs}, ${ast}, identified, maintain 3,000 feet, vectors for another approach ${r}.`, 38_000);
+        lastFreq = af;
         break;
       }
       case 'circuit': {

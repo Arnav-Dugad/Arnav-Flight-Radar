@@ -4,6 +4,11 @@
 //   npm run data:media                 (one-off / occasional; the output is committed)
 //   node scripts/build-media.mjs --logos-only   (logos, icons and maker logos only; keeps
 //                                                the type and livery photos already in media.json)
+//   node scripts/build-media.mjs --only=AIC,UAE,Airbus   (just those airline / maker keys:
+//                                                curated files + icon crops; everything else kept)
+//
+// Curated corrections (LOGO_FILES, NO_LOGO, ICON_CROPS, MAKER_FILES, NO_MAKER,
+// TONE_OVERRIDES below) were checked by eye on a dark + light contact sheet.
 //
 // Afterwards run `node scripts/build-media-types.mjs`: it adds the extra type photos
 // (military, helicopters, gliders…) that this script does not resolve.
@@ -30,6 +35,7 @@
 // Requests are paced to ≤ ~3 per second with an identifying User-Agent.
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inflateSync } from 'node:zlib';
@@ -37,9 +43,83 @@ import { inflateSync } from 'node:zlib';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const UA = { 'User-Agent': 'ArnavFlightRadar-build/1.0 (https://github.com/Arnav-Dugad/Arnav-Flight-Radar)' };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const LOGOS_ONLY = process.argv.includes('--logos-only');
+/**
+ * `--only=AIC,UAE,Airbus` refreshes just those airline / maker keys (curated overrides,
+ * icon crops) and keeps every other row of media.json; no Wikidata queries, a handful
+ * of Commons requests. Tones of all stored logos are re-analysed locally either way.
+ */
+const ONLY = process.argv
+  .find((a) => a.startsWith('--only='))
+  ?.slice(7)
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+const LOGOS_ONLY = process.argv.includes('--logos-only') || !!ONLY;
 const MEDIA_PATH = join(ROOT, 'public/data/media.json');
 const previous = existsSync(MEDIA_PATH) ? JSON.parse(readFileSync(MEDIA_PATH, 'utf8')) : {};
+if (ONLY && !previous.logos) throw new Error('--only needs an existing public/data/media.json');
+const wanted = (key) => !ONLY || ONLY.includes(key);
+
+// ------------------------------------------------------------- curated corrections
+// Checked by eye on a contact sheet (dark + light UI). Commons files only; the licence
+// and author are read from Commons like every other row.
+
+/** Airline wordmarks that Wikidata lacks, has wrong (another holder of the code) or outdated. */
+const LOGO_FILES = {
+  SDG: 'Star Air India logo.png', // Wikidata/search found Star Air (Denmark)
+  GOA: 'Fly91.png', // transparent vector-quality wordmark instead of a square social-media JPG
+  UAE: 'Emirates logo.svg', // the calligraphy + wordmark (the "banner" file is a red tail block)
+  OMS: 'SalamAir.png',
+  IYE: 'Yemenia-Airlines-logo.gif',
+  IRC: 'Aseman Airlines logo.jpg',
+  SYR: 'SYRIAN AIRLINES NEW TEXT.png', // 2025 "Syrian Airlines" wordmark
+  RXI: 'Riyadh Air Logo.svg', // English version (the Arabic-first file is unreadable when small)
+};
+/** No current free logo on Commons (only an outdated brand): show the code chip instead. */
+const NO_LOGO = new Set([
+  'LLR', // Alliance Air: Commons only has the pre-2017 "Air India Regional" marks
+]);
+/**
+ * Square icons cut from the airline's own wordmark (its emblem / tail mark), where
+ * Wikidata has no separate icon file. `part` picks the emblem at that end; `gap` is the
+ * minimum clear gap (fraction of the width) that separates it from the lettering.
+ */
+const ICON_CROPS = {
+  AIC: { part: 'right', near: [200, 165, 110] }, // the gold Vista window (overlaps the last "A")
+  AKJ: { part: 'left' },
+  SEJ: { box: [0, 0, 0.295, 1] }, // the spice dots
+  GOA: { part: 'left' },
+  UAE: { box: [0.28, 0, 0.73, 0.7] }, // calligraphy above "Emirates"
+  RXI: { part: 'left' },
+  OMA: { part: 'right' }, // khanjar
+  OMS: { part: 'left', gap: 0.015 },
+  IAW: { part: 'top', gap: 0.01 }, // green bird
+  IRM: { box: [0, 0, 0.3, 1] },
+  THY: { part: 'left' }, // red roundel with the wild goose
+  SXS: { part: 'left' },
+  FHY: { part: 'left', near: [0, 64, 160] }, // blue bird (its tail runs under the "F")
+  MSR: { part: 'right', gap: 0.01 }, // Horus
+  NIA: { part: 'left' },
+};
+/** Tones the pixel analysis gets wrong (dark green / navy parts too dim on the dark UI). */
+const TONE_OVERRIDES = {
+  logos: { SVA: 'dark', SDG: 'dark' },
+  // Coloured marks with black lettering ("Cessna", "Helicopter") that vanishes on the dark UI.
+  makers: { Cessna: 'dark', Bell: 'dark' },
+};
+/** Manufacturer logos to use instead of what the Wikidata lookup finds. */
+const MAKER_FILES = {
+  Dassault: 'Dassault Aviation logo.svg', // the JPG was grey-on-grey
+  'Lockheed Martin': 'Lockheed Martin logo (2).svg', // current mark, not the 2011–2022 one
+  'De Havilland Canada': 'Logo text De Havilland Aircraft of Canada.png',
+  Eurofighter: 'Eurofighter logo.jpg',
+  'Textron Aviation': 'Textron Aviation logo 2018.svg',
+};
+/** Wrong organisation or unreadable: better no logo. */
+const NO_MAKER = new Set([
+  'Comac', // the only "COMAC" logos on Commons belong to Belgian / Dutch youth organisations
+  'Robin', // white-on-light-grey JPG, unreadable at any size
+]);
 
 /** Optional: sharp (when installed) re-encodes PNGs much smaller. */
 let sharp = null;
@@ -176,11 +256,18 @@ const lin = (v) => {
   return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
 };
 const LIN = Array.from({ length: 256 }, (_, i) => lin(i));
+/** WCAG contrast ratio of two relative luminances. */
+const contrast = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+// Relative luminance of the darkest / lightest panel backgrounds the logos sit on.
+const DARK_UI_L = 0.008;
+const LIGHT_UI_L = 0.92;
 
 /**
- * How a logo sits on a background: 'opaque' (draws its own background), 'dark' (mostly
- * dark ink on transparency — invisible on dark UI), 'light' (mostly white ink on
- * transparency — invisible on light UI), or undefined (colourful, fine on both).
+ * How a logo sits on a background: 'opaque' (draws its own background), 'dark' (much of
+ * the ink is too dark to read on the dark UI — navy, black, dark grey), 'light' (mostly
+ * white / pale ink that vanishes on the light UI), or undefined (fine on both).
+ * Judged by WCAG contrast against the panel colours, not by raw lightness, so navy
+ * wordmarks (Airbus, IndiGo, Schempp-Hirth) count as dark too.
  */
 function logoTone(buf, ext) {
   if (ext !== 'png') return 'opaque';
@@ -202,14 +289,90 @@ function logoTone(buf, ext) {
     }
     const L = 0.2126 * LIN[rgba[i * 4]] + 0.7152 * LIN[rgba[i * 4 + 1]] + 0.0722 * LIN[rgba[i * 4 + 2]];
     ink += a;
-    if (L < 0.06) dark += a;
-    else if (L > 0.72) light += a;
+    if (contrast(L, DARK_UI_L) < 2.5) dark += a;
+    else if (contrast(L, LIGHT_UI_L) < 1.6) light += a;
   }
   if (transparent / n < 0.04) return 'opaque';
   if (!ink) return undefined;
-  if (dark / ink >= 0.5) return 'dark';
-  if (light / ink >= 0.6) return 'light';
+  if (dark / ink >= 0.35) return 'dark';
+  if (light / ink >= 0.5) return 'light';
   return undefined;
+}
+
+/**
+ * Square icon cut from a wordmark: the emblem at one end ('left' / 'right' / 'top') —
+ * the first or last run of ink separated from the rest by a clear gap — or a fixed box
+ * ([x0, y0, x1, y1] as fractions), optionally only the ink `near` one colour.
+ * Trimmed, padded to a square and scaled to `size`.
+ * Needs sharp. Returns null when nothing sensible is found.
+ */
+async function cropIcon(buf, spec, size = 120) {
+  if (!sharp) return null;
+  const { data, info } = await sharp(buf).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const { width: w, height: h } = info;
+  const px = (x, y) => (y * w + x) * 4;
+  // `near: [r, g, b]` keeps only ink of about that colour (an emblem overlapping the lettering).
+  if (spec.near) {
+    const [r, g, b] = spec.near;
+    for (let o = 0; o < data.length; o += 4) if (Math.abs(data[o] - r) + Math.abs(data[o + 1] - g) + Math.abs(data[o + 2] - b) > 200) data[o + 3] = 0;
+    buf = await sharp(data, { raw: { width: w, height: h, channels: 4 } }).png().toBuffer();
+  }
+  // Background: transparent, or the corner colour of an opaque image.
+  const c0 = px(0, 0);
+  const opaqueBg = data[c0 + 3] > 200 ? [data[c0], data[c0 + 1], data[c0 + 2]] : null;
+  const isInk = (x, y) => {
+    const o = px(x, y);
+    if (data[o + 3] < 60) return false;
+    if (!opaqueBg) return true;
+    return Math.abs(data[o] - opaqueBg[0]) + Math.abs(data[o + 1] - opaqueBg[1]) + Math.abs(data[o + 2] - opaqueBg[2]) > 90;
+  };
+  let box;
+  if (Array.isArray(spec.box)) {
+    box = [Math.round(spec.box[0] * w), Math.round(spec.box[1] * h), Math.round(spec.box[2] * w), Math.round(spec.box[3] * h)];
+  } else {
+    const horizontal = spec.part !== 'top' && spec.part !== 'bottom';
+    const len = horizontal ? w : h;
+    const other = horizontal ? h : w;
+    const prof = new Array(len).fill(0);
+    for (let i = 0; i < len; i++) for (let j = 0; j < other; j++) if (horizontal ? isInk(i, j) : isInk(j, i)) prof[i]++;
+    // Runs of ink, merging gaps narrower than `gap` (fraction of the length).
+    const minGap = Math.max(2, Math.round(len * (spec.gap ?? 0.03)));
+    const runs = [];
+    for (let i = 0; i < len; i++) {
+      if (!prof[i]) continue;
+      const last = runs.at(-1);
+      if (last && i - last[1] <= minGap) last[1] = i;
+      else runs.push([i, i]);
+    }
+    if (!runs.length || (runs.length < 2 && !spec.near)) return null;
+    const run = spec.part === 'left' || spec.part === 'top' ? runs[0] : runs.at(-1);
+    box = horizontal ? [run[0], 0, run[1] + 1, h] : [0, run[0], w, run[1] + 1];
+  }
+  // Tight bounding box of the ink inside the box.
+  let [x0, y0, x1, y1] = [Infinity, Infinity, -1, -1];
+  for (let y = box[1]; y < box[3]; y++)
+    for (let x = box[0]; x < box[2]; x++)
+      if (isInk(x, y)) {
+        x0 = Math.min(x0, x);
+        y0 = Math.min(y0, y);
+        x1 = Math.max(x1, x);
+        y1 = Math.max(y1, y);
+      }
+  if (x1 < 0 || x1 - x0 < 8 || y1 - y0 < 8) return null;
+  const cw = x1 - x0 + 1;
+  const ch = y1 - y0 + 1;
+  if (Math.max(cw, ch) / Math.min(cw, ch) > 3.2) return null; // not an emblem
+  const side = Math.round(Math.max(cw, ch) * 1.12);
+  const bg = opaqueBg ? { r: opaqueBg[0], g: opaqueBg[1], b: opaqueBg[2], alpha: 1 } : { r: 0, g: 0, b: 0, alpha: 0 };
+  // Two passes: sharp would otherwise resize before extending.
+  const square = await sharp(buf)
+    .ensureAlpha()
+    .extract({ left: x0, top: y0, width: cw, height: ch })
+    .extend({ left: Math.floor((side - cw) / 2), right: Math.ceil((side - cw) / 2), top: Math.floor((side - ch) / 2), bottom: Math.ceil((side - ch) / 2), background: bg })
+    .png()
+    .toBuffer();
+  const out = await sharp(square).resize(size, size, { fit: 'contain', background: bg }).png().toBuffer();
+  return optimise(out, 'png');
 }
 
 /** Smaller PNG with the same look (palette-quantised when sharp is available). */
@@ -287,7 +450,7 @@ const titleNames = (title, name) => {
   return words(name).some((w) => t.split(' ').includes(w) || squashed.includes(w)) || (norm(name) !== '' && squashed.includes(norm(name).replace(/ /g, '')));
 };
 
-console.log('media: querying Wikidata for airline logos and icons…');
+console.log(ONLY ? `media: refreshing ${ONLY.join(', ') || '(tones only)'}…` : 'media: querying Wikidata for airline logos and icons…');
 const fleetName = new Map(fleetAirlines.map((a) => [a.icao, a.name]));
 /** Best file per ICAO for a Wikidata image property (or two). */
 async function airlineImages(props) {
@@ -322,11 +485,28 @@ async function airlineImages(props) {
   }
   return best;
 }
-const bestLogo = await airlineImages(['P154']);
-await sleep(1500);
-const bestIcon = await airlineImages(['P2910', 'P8972']);
-for (const [icao, v] of bestIcon) if (bestLogo.get(icao)?.file === v.file) bestIcon.delete(icao); // same file as the wordmark
-console.log(`media: ${bestLogo.size} airline logos, ${bestIcon.size} icons on Wikidata`);
+const prevFile = (row) => row?.[1]?.replace(/^File:/, '');
+let bestLogo;
+let bestIcon;
+if (ONLY) {
+  // Only the listed airlines, from the curated table or the file they already use.
+  bestLogo = new Map();
+  bestIcon = new Map();
+  for (const icao of ONLY) {
+    const file = LOGO_FILES[icao] ?? prevFile(previous.logos[icao]);
+    if (file && /^[A-Z0-9]{3}$/.test(icao)) bestLogo.set(icao, { file, sl: 0, svg: /\.svg$/i.test(file) });
+    const icon = previous.icons?.[icao];
+    if (icon && !icon[3]?.includes('(detail of the logo)')) bestIcon.set(icao, { file: prevFile(icon) });
+  }
+} else {
+  bestLogo = await airlineImages(['P154']);
+  await sleep(1500);
+  bestIcon = await airlineImages(['P2910', 'P8972']);
+  for (const [icao, v] of bestIcon) if (bestLogo.get(icao)?.file === v.file) bestIcon.delete(icao); // same file as the wordmark
+  console.log(`media: ${bestLogo.size} airline logos, ${bestIcon.size} icons on Wikidata`);
+  for (const [icao, file] of Object.entries(LOGO_FILES)) bestLogo.set(icao, { file, sl: 0, svg: /\.svg$/i.test(file) });
+}
+for (const icao of NO_LOGO) bestLogo.delete(icao);
 
 // ------------------------------------------------------------- 2. aircraft types
 
@@ -433,20 +613,21 @@ const EXCLUDE =
     ' ',
   );
 
-console.log('media: Commons categories for simulated airlines…');
-const catRows = await sparql(`SELECT ?icao ?cat ?label WHERE { VALUES ?icao { ${fleetAirlines.map((a) => `"${a.icao}"`).join(' ')} } ?a wdt:P230 ?icao ; wdt:P373 ?cat .
-  FILTER NOT EXISTS { ?a wdt:P576 ?d } OPTIONAL { ?a rdfs:label ?label FILTER(lang(?label) = 'en') } }`);
-// Only the item that is the simulated airline (another current holder of the code is skipped).
-const airlineCat = new Map(
-  catRows.results.bindings.filter((b) => sameName(fleetName.get(b.icao.value) ?? '', b.label?.value ?? b.cat.value)).map((b) => [b.icao.value, b.cat.value]),
-);
+const airlineCat = new Map();
+if (!ONLY) {
+  console.log('media: Commons categories for simulated airlines…');
+  const catRows = await sparql(`SELECT ?icao ?cat ?label WHERE { VALUES ?icao { ${fleetAirlines.map((a) => `"${a.icao}"`).join(' ')} } ?a wdt:P230 ?icao ; wdt:P373 ?cat .
+    FILTER NOT EXISTS { ?a wdt:P576 ?d } OPTIONAL { ?a rdfs:label ?label FILTER(lang(?label) = 'en') } }`);
+  // Only the item that is the simulated airline (another current holder of the code is skipped).
+  for (const b of catRows.results.bindings) if (sameName(fleetName.get(b.icao.value) ?? '', b.label?.value ?? b.cat.value)) airlineCat.set(b.icao.value, b.cat.value);
+}
 
 // Logos missing from Wikidata (no P154): look in the airline's own Commons category for a
 // file titled "…logo…" (vector preferred); failing that, a Commons-wide search for a file
 // named "<airline name> logo". Only for airlines flown in the simulation.
 let foundLogos = 0;
 for (const al of fleetAirlines) {
-  if (bestLogo.has(al.icao)) continue;
+  if (ONLY || bestLogo.has(al.icao) || NO_LOGO.has(al.icao)) continue;
   const cat = airlineCat.get(al.icao);
   try {
     let pick;
@@ -509,7 +690,7 @@ const specConsts = new Map([...specSrc.matchAll(/^const ([A-Z0-9_]+) = '([^']+)'
 const makers = new Set(
   [...specSrc.matchAll(/^\s*\['[A-Z0-9]+',\s*(?:'([^']+)'|([A-Z0-9_]+)),/gm)].map((m) => m[1] ?? specConsts.get(m[2])).filter((m) => m && m !== 'Various'),
 );
-for (const m of ['Comac', 'Textron Aviation', 'Mitsubishi Aircraft', 'AgustaWestland', 'DG Flugzeugbau', 'Daher', 'Bell', 'Robinson']) makers.add(m);
+for (const m of ['Textron Aviation', 'Mitsubishi Aircraft', 'AgustaWestland', 'DG Flugzeugbau', 'Daher', 'Bell', 'Robinson', 'Eurofighter']) makers.add(m);
 /** Wikidata items for maker names that are ambiguous as labels (verified QIDs). */
 const MAKER_ITEMS = {
   Airbus: 'Q67',
@@ -552,9 +733,14 @@ const MAKER_LABELS = {
   Bell: ['Bell Textron', 'Bell Helicopter'],
   Robinson: ['Robinson Helicopter Company'],
 };
-console.log(`media: maker logos for ${[...makers].join(', ')}…`);
 const makerLogo = new Map(); // maker → file title
-{
+if (ONLY) {
+  for (const m of ONLY) {
+    const file = MAKER_FILES[m] ?? prevFile(previous.makers?.[m]);
+    if (file && !NO_MAKER.has(m) && !/^[A-Z0-9]{3}$/.test(m)) makerLogo.set(m, file);
+  }
+} else {
+  console.log(`media: maker logos for ${[...makers].join(', ')}…`);
   const ids = Object.values(MAKER_ITEMS)
     .map((q) => `wd:${q}`)
     .join(' ');
@@ -598,6 +784,8 @@ const makerLogo = new Map(); // maker → file title
     }
     if (!makerLogo.has(m)) console.log(`  ${m}: no logo found`);
   }
+  for (const [m, file] of Object.entries(MAKER_FILES)) makerLogo.set(m, file);
+  for (const m of NO_MAKER) makerLogo.delete(m);
 }
 
 // ------------------------------------------------------------- 5. file metadata
@@ -677,47 +865,104 @@ async function fetchAll(entries, dir, urlDir, widths, limits, kind, old = {}) {
       if (++n % 50 === 0) console.log(`  ${kind}: ${n}/${entries.length}`);
     } catch (e) {
       console.warn(`  ${kind} failed`, key, e.message);
-      if (old[key] && existsSync(join(ROOT, 'public', old[key][0]))) table[key] = old[key];
+      if (old[key] && existsSync(join(ROOT, 'public', filePart(old[key][0])))) table[key] = old[key];
     }
   }
   return table;
 }
 
 const slugOf = (s) => norm(s).replace(/ /g, '-');
-const logos = await fetchAll(
-  [...bestLogo].map(([icao, v]) => [icao, v.file, icao]),
-  LOGO_DIR,
-  '/media/logos',
-  [500, 330],
-  [40_000, 60_000],
-  'logos',
+/** A stored URL without its `?v=` cache-buster. */
+const filePart = (u) => u.split('?')[0];
+// With --only, the fetched rows are merged over the previous tables.
+const merged = (fresh, old = {}) => (ONLY ? { ...old, ...fresh } : fresh);
+const logos = merged(
+  await fetchAll(
+    [...bestLogo].map(([icao, v]) => [icao, v.file, icao]),
+    LOGO_DIR,
+    '/media/logos',
+    [500, 330],
+    [40_000, 60_000],
+    'logos',
+    previous.logos,
+  ),
   previous.logos,
 );
-const icons = await fetchAll(
-  [...bestIcon].map(([icao, v]) => [icao, v.file, icao]),
-  ICON_DIR,
-  '/media/logos/icons',
-  [120],
-  [24_000],
-  'icons',
+const icons = merged(
+  await fetchAll(
+    [...bestIcon].map(([icao, v]) => [icao, v.file, icao]),
+    ICON_DIR,
+    '/media/logos/icons',
+    [120],
+    [24_000],
+    'icons',
+    previous.icons,
+  ),
   previous.icons,
 );
-const makerTable = await fetchAll(
-  [...makerLogo].map(([m, f]) => [m, f, slugOf(m)]),
-  MAKER_DIR,
-  '/media/makers',
-  [500, 330],
-  [40_000, 60_000],
-  'makers',
+const makerTable = merged(
+  await fetchAll(
+    [...makerLogo].map(([m, f]) => [m, f, slugOf(m)]),
+    MAKER_DIR,
+    '/media/makers',
+    [500, 330],
+    [40_000, 60_000],
+    'makers',
+    previous.makers,
+  ),
   previous.makers,
 );
-// Tones of rows kept from a previous run.
+for (const k of NO_LOGO) delete logos[k];
+for (const k of NO_MAKER) delete makerTable[k];
+
+// Square icons cut from the wordmark's emblem (airlines without an icon file).
+for (const [icao, spec] of Object.entries(ICON_CROPS)) {
+  if (!wanted(icao) || bestIcon.has(icao) || !bestLogo.has(icao)) continue;
+  const info = logoInfo.get(bestLogo.get(icao).file);
+  if (!info) continue;
+  try {
+    // A larger rendering than the wordmark copy, so the emblem keeps its detail.
+    let src;
+    for (const url of [info.thumb.replace(/\/\d+px-([^/]+)$/, '/960px-$1'), info.thumb]) {
+      await sleep(350);
+      const res = await fetch(url, { headers: UA });
+      if (res.ok) {
+        src = Buffer.from(await res.arrayBuffer());
+        break;
+      }
+    }
+    const buf = src && (await cropIcon(src, spec));
+    if (!buf) {
+      console.warn('  icon crop: no emblem found', icao);
+      delete icons[icao];
+      continue;
+    }
+    writeFileSync(join(ICON_DIR, `${icao}.png`), buf);
+    icons[icao] = ['/media/logos/icons/' + `${icao}.png`, info.title, info.license, `${info.artist ? `${info.artist} ` : ''}(detail of the logo)`];
+    sizes.push(buf.length);
+  } catch (e) {
+    console.warn('  icon crop failed', icao, e.message);
+  }
+}
+
+// Tones of every stored logo, re-analysed from the files on disk (cheap, no network), and a
+// content hash in each URL (`?v=…`): the service worker serves /media/* stale-while-
+// revalidate, so a replaced logo must get a new URL to show up on the next visit.
 for (const [kind, table] of [
   ['logos', logos],
   ['icons', icons],
   ['makers', makerTable],
 ]) {
-  for (const k of Object.keys(table)) if (!(k in tones[kind]) && previous.tones?.[kind]?.[k]) tones[kind][k] = previous.tones[kind][k];
+  for (const [k, r] of Object.entries(table)) {
+    const f = join(ROOT, 'public', filePart(r[0]));
+    if (!existsSync(f)) continue;
+    const buf = readFileSync(f);
+    table[k] = [`${filePart(r[0])}?v=${createHash('sha1').update(buf).digest('hex').slice(0, 8)}`, ...r.slice(1)];
+    const tone = logoTone(buf, /\.png$/i.test(f) ? 'png' : 'jpg');
+    if (tone) tones[kind][k] = tone;
+    else delete tones[kind][k];
+  }
+  for (const [k, tone] of Object.entries(TONE_OVERRIDES[kind] ?? {})) if (table[k]) tones[kind][k] = tone;
 }
 
 // Remove files no row points at any more (e.g. a logo that changed from .jpg to .png).
@@ -726,7 +971,7 @@ for (const [dir, urlDir, table] of [
   [ICON_DIR, '/media/logos/icons', icons],
   [MAKER_DIR, '/media/makers', makerTable],
 ]) {
-  const used = new Set(Object.values(table).map((r) => r[0]));
+  const used = new Set(Object.values(table).map((r) => filePart(r[0])));
   for (const f of readdirSync(dir, { withFileTypes: true })) if (f.isFile() && !used.has(`${urlDir}/${f.name}`)) unlinkSync(join(dir, f.name));
 }
 

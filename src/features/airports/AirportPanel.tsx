@@ -23,14 +23,35 @@ import { MetarCard, TafCard, WeatherAttribution } from '@/features/weather/Weath
 import { simNow, useSim } from '@/data/world';
 import { webcamsFor } from '@/data/webcams';
 import { ApproachExplorer } from './Approach';
-import { BoardTab, GroundTab, HourlyMovements, RunwayInUseCard } from './AirportOps';
+import { GroundTab, HourlyMovements, RunwayInUseCard } from './AirportOps';
 import { SkyTimesCard } from './SkyTimes';
 
 // The delays tab (charts and the TAF impact model) loads the first time it is opened.
 const AirportDelays = lazy(() => import('./AirportDelays').then((m) => ({ default: m.AirportDelays })));
 const AirportRadio = lazy(() => import('./AirportRadio').then((m) => ({ default: m.AirportRadio })));
+// Operations strip, boards, route network and procedures are lazy chunks too (initial JS budget).
+const AirportOpsStrip = lazy(() => import('./AirportOpsStrip').then((m) => ({ default: m.AirportOpsStrip })));
+const BoardTab = lazy(() => import('./AirportBoards').then((m) => ({ default: m.BoardTab })));
+const AirportRoutes = lazy(() => import('./AirportRoutes').then((m) => ({ default: m.AirportRoutes })));
+const AirportProcedures = lazy(() => import('./AirportProcedures').then((m) => ({ default: m.AirportProcedures })));
 
-type Tab = 'overview' | 'arrivals' | 'departures' | 'ground' | 'radio' | 'delays' | 'weather' | 'runways';
+type Tab = 'overview' | 'arrivals' | 'departures' | 'routes' | 'ground' | 'radio' | 'delays' | 'weather' | 'runways';
+
+const TabFallback = () => (
+  <div className="space-y-2.5" aria-busy="true">
+    <div className="skeleton h-12 rounded-[14px]" aria-hidden="true" />
+    <div className="skeleton h-40 rounded-[16px]" aria-hidden="true" />
+  </div>
+);
+
+/** Operations strip (lazy); the plain runway-in-use card stands in while it loads. */
+function OpsStrip({ a }: { a: AirportDetail }) {
+  return (
+    <Suspense fallback={<RunwayInUseCard a={a} />}>
+      <AirportOpsStrip a={a} />
+    </Suspense>
+  );
+}
 
 export function AirportPanel() {
   useSim((s) => s.rev); // re-render when the simulation worker answers
@@ -195,6 +216,7 @@ function AirportBody({ a }: { a: AirportDetail }) {
             { id: 'overview', label: 'Overview' },
             { id: 'arrivals', label: 'Arrivals' },
             { id: 'departures', label: 'Departures' },
+            { id: 'routes', label: 'Routes' },
             { id: 'ground', label: 'Ground' },
             { id: 'radio', label: 'Radio' },
             { id: 'delays', label: 'Delays' },
@@ -206,7 +228,7 @@ function AirportBody({ a }: { a: AirportDetail }) {
 
       {tab === 'overview' && (
         <div className="space-y-4">
-          <RunwayInUseCard a={a} />
+          <OpsStrip a={a} />
           <HourlyMovements a={a} />
           <SkyTimesCard lat={a.lat} lon={a.lon} tz={tz} now={simNow()} />
           <Rows>
@@ -275,8 +297,16 @@ function AirportBody({ a }: { a: AirportDetail }) {
       )}
 
       {tab === 'runways' && <Runways a={a} />}
-      {tab === 'arrivals' && <BoardTab a={a} kind="arrivals" />}
-      {tab === 'departures' && <BoardTab a={a} kind="departures" />}
+      {(tab === 'arrivals' || tab === 'departures') && (
+        <Suspense fallback={<TabFallback />}>
+          <BoardTab key={tab} a={a} kind={tab} />
+        </Suspense>
+      )}
+      {tab === 'routes' && (
+        <Suspense fallback={<TabFallback />}>
+          <AirportRoutes key={a.ident} a={a} />
+        </Suspense>
+      )}
       {tab === 'ground' && <GroundTab a={a} />}
       {tab === 'radio' && (
         <Suspense fallback={<div className="skeleton h-40 rounded-[16px]" aria-hidden="true" />}>
@@ -299,8 +329,11 @@ function Runways({ a }: { a: AirportDetail }) {
   if (!a.runways.length) return <EmptyState icon={<RunwayIcon />} title="No runway data" body="OurAirports has no runway records for this airfield." />;
   return (
     <div className="space-y-3">
-      <RunwayInUseCard a={a} />
+      <OpsStrip a={a} />
       <RunwayDiagram a={a} />
+      <Suspense fallback={<div className="skeleton h-28 rounded-[16px]" aria-hidden="true" />}>
+        <AirportProcedures key={a.ident} a={a} />
+      </Suspense>
       <ApproachExplorer a={a} />
       {a.runways.map((r, i) => (
         <div key={i} className="glass-2 rounded-[16px] px-3.5 py-3">

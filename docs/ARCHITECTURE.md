@@ -65,6 +65,11 @@ flights, or on a North Atlantic track → descent → arrival procedure (holding
 the airport is saturated) → radar vectors → final (ILS, CAT III in low visibility, RNP or visual)
 → landing → named runway exit → taxi in → turnaround.
 
+**Runway configuration.** `runwayConfig.ts`: the runway into the wind, segregated mode on
+independent parallels (arrivals and departures on different runways; Heathrow alternates at 15:00),
+and night curfews (no scheduled take-offs; timetables shifted to arrive after the curfew lifts).
+`World.runwaysFor(airport, t)` is pure; `runwaysAt` sets what the page shows for "now".
+
 **Runway capacity.** Each runway stream has a capacity from the airport's size, cut by the METAR
 now and by the TAF for later hours (`setForecast`), and every pair of movements keeps ICAO wake
 separation (Super/Heavy/Medium/Light). Long departure queues become gate holds; saturated
@@ -98,9 +103,22 @@ airports in view (each station at most every 20 minutes), then TAFs for the 30 b
 METAR sets the runway in use, the capacity, de-icing (temperature and weather), and the odds of
 go-arounds, diversions and cancellations.
 
-**Ground.** Stands and terminals come from OpenStreetMap at ~220 airports. When you zoom in near
+**Ground.** Stands and terminals come from OpenStreetMap at ~340 airports. When you zoom in near
 such an airport, or select a flight to or from one, its taxiway network with names and holding
-positions (`ground/<ICAO>.json`) is loaded, and later taxi movements follow it.
+positions (`ground/<ICAO>.json`) is loaded, and later taxi movements follow it. `taxiGeo.ts` keeps
+them strictly on the centre lines: stands, runway exits and holding points join the network at the
+nearest point on an edge (not the nearest vertex), only the largest connected part of the network is
+used, corners are filleted (capped so the nose wheel stays within ~14 m), push-backs end on the
+taxilane facing the route, and departures hold short at the real holding position and line up through
+the entry taxiway. Movements planned before the network loaded are re-planned — a taxi already under
+way is split at "now". Networks load from zoom 9.5 (up to three airports in view).
+
+**Operations rules.** `opsRules.ts`: overnight A-checks and rare C-checks at the home base, wet-lease
+(ACMI) operators flying for airlines in summer and for Hajj, and ETOPS analysis of twin-engine routes
+(rule time from the farthest point from an adequate airport, and the en-route alternates).
+
+**Airways.** Domestic US routes use the real published airways (FAA CIFP en-route records,
+`usAirways.ts`, A* search with an airway-change penalty); elsewhere navaid to navaid.
 
 **Trails** are computed from the simulated path (`World.trail`); no position reports are stored.
 

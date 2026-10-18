@@ -1,9 +1,10 @@
 // Airport scanner: every simulated flight's calls on one of the airport's frequencies
-// (delivery, ground, tower or approach), interleaved like a real scanner, with an optional
-// "Listen" mode that reads new calls aloud through the Web Speech API. Nothing here is a
-// recording: the phraseology is generated from the simulated flights.
+// (delivery, ground, tower, departure or approach), interleaved like a real scanner, with
+// hand-offs between them and an optional "Listen" mode that reads new calls aloud through
+// the Web Speech API. Nothing here is a recording: the phraseology is generated from the
+// simulated flights.
 import { useQuery } from '@tanstack/react-query';
-import { ArrowDown, Radio, Square, Volume2, VolumeX } from 'lucide-react';
+import { ArrowDown, ArrowRightLeft, Radio, Square, Volume2, VolumeX } from 'lucide-react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { AirportDetail, Frequency } from '@shared/types';
@@ -19,6 +20,39 @@ export const SCANNER_KINDS: { id: ScannerKind; label: string }[] = [
   { id: 'twr', label: 'Tower' },
   { id: 'app', label: 'Approach' },
 ];
+
+/** Scanner channels: Departure and Approach are separate facilities (both answered by the worker's 'app' query). */
+export type RadioChannel = ScannerKind | 'dep';
+export const RADIO_CHANNELS: { id: RadioChannel; label: string; short: string }[] = [
+  { id: 'del', label: 'Delivery', short: 'Del' },
+  { id: 'gnd', label: 'Ground', short: 'Gnd' },
+  { id: 'twr', label: 'Tower', short: 'Twr' },
+  { id: 'dep', label: 'Departure', short: 'Dep' },
+  { id: 'app', label: 'Approach', short: 'App' },
+];
+const FACILITY: Record<RadioChannel, string> = { del: 'Delivery|Clearance', gnd: 'Ground', twr: 'Tower', dep: 'Departure', app: 'Approach' };
+const queryKind = (c: RadioChannel): ScannerKind => (c === 'dep' ? 'app' : c);
+
+/** Channel a station belongs to ("Heathrow Tower" → 'twr', "London Departure" → 'dep'). */
+export function channelOfStation(station: string): RadioChannel | undefined {
+  return RADIO_CHANNELS.find((c) => new RegExp(` (${FACILITY[c.id]})$`).test(station))?.id;
+}
+
+/** The published frequency of a channel: Departure falls back to Approach, as the simulated radio does. */
+export function channelFreq(list: Frequency[], ch: RadioChannel): number | undefined {
+  const find = (re: RegExp) => list.find((f) => re.test(f.type.trim()))?.mhz;
+  if (ch === 'dep') return find(/^DEP/i) ?? find(/^(APP|ARR|TMA|RADAR|DIR)/i);
+  if (ch === 'app') return find(/^(APP|ARR|TMA|RADAR|DIR)/i) ?? find(/^DEP/i);
+  return publishedFreq(list, ch);
+}
+
+/** "contact London Departure 120.4" → the facility a call hands the flight to, if it is one of this airport's channels. */
+export function handoffOf(text: string): { station: string; channel: RadioChannel } | undefined {
+  const m = /\bcontact ([A-Z][\w' .-]*? (?:Delivery|Clearance|Ground|Tower|Departure|Approach))\b/.exec(text);
+  if (!m) return undefined;
+  const channel = channelOfStation(m[1]!);
+  return channel ? { station: m[1]!, channel } : undefined;
+}
 
 const FREQ_TYPE: Record<ScannerKind, RegExp> = {
   del: /^(DEL|CLD|CLNC|CLR|CD)/i,
@@ -54,16 +88,22 @@ function pickVoices(): { atc?: SpeechSynthesisVoice; pilot?: SpeechSynthesisVoic
 }
 
 export function AirportRadio({ a }: { a: AirportDetail }) {
-  const [kind, setKind] = useState<ScannerKind>('twr');
+  const [kind, setKind] = useState<RadioChannel>('twr');
   const reduce = useReducedMotion();
   const q = useQuery({
-    queryKey: ['airport-radio', a.ident, kind],
-    queryFn: async () => (await simAirportRadio(a.ident, kind, 20)) ?? null,
+    queryKey: ['airport-radio', a.ident, queryKind(kind)],
+    queryFn: async () => (await simAirportRadio(a.ident, queryKind(kind), 20)) ?? null,
     refetchInterval: 4000,
     staleTime: 3000,
+    select: (d) => {
+      if (!d || (kind !== 'dep' && kind !== 'app')) return d;
+      // The worker answers Approach and Departure together: split them into their own channels.
+      const station = kind === 'dep' ? d.station.replace(/ Approach$/, ' Departure') : d.station;
+      return { ...d, station, lines: d.lines.filter((l) => l.station === station) };
+    },
   });
   const lines = useMemo(() => q.data?.lines ?? [], [q.data]);
-  const freq = q.data?.freq ?? publishedFreq(a.frequencies, kind);
+  const freq = kind === 'dep' ? (channelFreq(a.frequencies, 'dep') ?? q.data?.freq) : (q.data?.freq ?? channelFreq(a.frequencies, kind));
   const speech = hasSpeech();
   const [listening, setListening] = useState(false);
   const [muted, setMuted] = useState(false);
@@ -218,16 +258,17 @@ export function AirportRadio({ a }: { a: AirportDetail }) {
       </div>
 
       {/* frequency selector */}
-      <div role="radiogroup" aria-label="Frequency" className="glass-2 grid grid-cols-4 gap-0.5 rounded-[14px] p-0.5">
-        {SCANNER_KINDS.map((k) => {
+      <div role="radiogroup" aria-label="Frequency" className="glass-2 grid grid-cols-5 gap-0.5 rounded-[14px] p-0.5">
+        {RADIO_CHANNELS.map((k) => {
           const on = k.id === kind;
-          const f = on ? freq : publishedFreq(a.frequencies, k.id);
+          const f = on ? freq : channelFreq(a.frequencies, k.id);
           return (
             <button
               key={k.id}
               type="button"
               role="radio"
               aria-checked={on}
+              aria-label={`${k.label}${f ? ` ${f.toFixed(3).replace(/0$/, '')}` : ''}`}
               onClick={() => setKind(k.id)}
               className={cn(
                 'relative min-w-0 rounded-[12px] px-1 py-1.5 text-center transition-colors',
@@ -241,7 +282,10 @@ export function AirportRadio({ a }: { a: AirportDetail }) {
                   transition={{ type: 'spring', stiffness: 500, damping: 38 }}
                 />
               )}
-              <span className="relative block truncate text-[12px] font-semibold">{k.label}</span>
+              <span className="relative block truncate text-[12px] font-semibold">
+                <span className="hidden min-[440px]:inline">{k.label}</span>
+                <span className="min-[440px]:hidden">{k.short}</span>
+              </span>
               <span className={cn('tnum relative block truncate text-[10px]', on ? 'text-[var(--accent)]' : 'text-fg-3')}>{f ? f.toFixed(3).replace(/0$/, '') : '—'}</span>
             </button>
           );
@@ -251,7 +295,7 @@ export function AirportRadio({ a }: { a: AirportDetail }) {
       <div className="flex items-baseline justify-between gap-2 px-0.5">
         <div className="min-w-0">
           <div className="eyebrow">Tuned to</div>
-          <div className="truncate text-[13px] font-semibold text-fg">{q.data?.station ?? SCANNER_KINDS.find((k) => k.id === kind)!.label}</div>
+          <div className="truncate text-[13px] font-semibold text-fg">{q.data?.station ?? RADIO_CHANNELS.find((k) => k.id === kind)!.label}</div>
         </div>
         <div className="shrink-0 text-right">
           <div className="tnum text-[13px] font-semibold text-fg">{freq ? fmtMhz(freq) : 'No published frequency'}</div>
@@ -287,6 +331,7 @@ export function AirportRadio({ a }: { a: AirportDetail }) {
               {lines.map((l, i) => {
                 const atc = l.who === 'atc';
                 const newest = i === lines.length - 1;
+                const hand = atc ? handoffOf(l.text) : undefined;
                 return (
                   <motion.div
                     key={lineKey(l)}
@@ -298,6 +343,9 @@ export function AirportRadio({ a }: { a: AirportDetail }) {
                   >
                     <div className={cn('mb-1 flex max-w-full flex-wrap items-center gap-x-1.5 gap-y-0.5 px-1 text-[10.5px]', atc ? '' : 'flex-row-reverse')}>
                       <span className={cn('font-semibold', atc ? 'text-fg-2' : 'text-[var(--accent)]')}>{atc ? l.station.replace(/^.* (Delivery|Clearance|Ground|Tower|Approach|Departure)$/, '$1') : 'Pilot'}</span>
+                      {/go around, I say again/.test(l.text) && (
+                        <span className="rounded-[6px] bg-[rgba(255,181,71,0.16)] px-1.5 py-px text-[9.5px] font-bold uppercase tracking-[0.1em] text-[#ffc56e]">Go-around</span>
+                      )}
                       <button
                         type="button"
                         onClick={() => selectFlight(l.id)}
@@ -325,6 +373,16 @@ export function AirportRadio({ a }: { a: AirportDetail }) {
                     >
                       {l.text}
                     </p>
+                    {hand && hand.channel !== kind && (
+                      <button
+                        type="button"
+                        onClick={() => setKind(hand.channel)}
+                        title={`Follow the flight to ${hand.station}`}
+                        className="mt-1 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10.5px] font-semibold text-[var(--accent)] hover:bg-[color-mix(in_srgb,var(--accent)_14%,transparent)]"
+                      >
+                        <ArrowRightLeft size={11} aria-hidden="true" /> Hand-off to {RADIO_CHANNELS.find((c) => c.id === hand.channel)!.label}
+                      </button>
+                    )}
                   </motion.div>
                 );
               })}
@@ -348,7 +406,8 @@ export function AirportRadio({ a }: { a: AirportDetail }) {
       )}
 
       <p className="text-[11px] leading-relaxed text-fg-3">
-        Phraseology is illustrative and generated from simulated flights — not a recording. Airport frequencies are real published ones where known; en-route frequencies are invented. Times in UTC.
+        Phraseology is illustrative and generated from simulated flights — not a recording. Flights are handed off Tower → Departure after take-off and Approach → Tower on final. Airport
+        frequencies are real published ones where known (Departure uses the approach frequency when none is published); en-route frequencies are invented. Times in UTC.
         {speech ? ' Listen reads each new call aloud (controller and pilots in different voices).' : ''}
       </p>
     </div>

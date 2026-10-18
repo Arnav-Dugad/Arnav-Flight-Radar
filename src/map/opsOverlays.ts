@@ -1,8 +1,9 @@
 // Airport-operations overlays for the simulated world:
 //   • Stands — every OpenStreetMap stand at the airport in view, green when free and
 //     amber when an aircraft is parked on it (zoom ≥ 14).
-//   • Ground services — catering, fuel, stairs, baggage and push-back tugs around
-//     aircraft in their turnaround (zoom ≥ 15.5).
+//   • Ground services — catering, fuel, stairs, baggage, push-back tugs and de-icing trucks
+//     around aircraft in their turnaround (zoom ≥ 15.5). With 3D models on, true-scale 3D
+//     vehicles (vehicles3d.ts) take over from their zoom and these dots stop there.
 //   • Disruptions — airports coloured by a 0–5 disruption index (delays, holding,
 //     diversions, cancellations), like a flight tracker's disruption map.
 
@@ -55,7 +56,7 @@ export function installOpsOverlays(map: MlMap) {
       minzoom: 15.5,
       paint: {
         'circle-radius': ['interpolate', ['linear'], ['zoom'], 15.5, 2, 18, 4.5],
-        'circle-color': ['match', ['get', 'k'], 'fuel', '#ff8a5c', 'catering', '#c4b5fd', 'stairs', '#ffd166', 'tug', '#5ce1ff', '#9aa6b2'],
+        'circle-color': ['match', ['get', 'k'], 'fuel', '#ff8a5c', 'catering', '#c4b5fd', 'stairs', '#ffd166', 'tug', '#5ce1ff', 'deice', '#ff9f1c', 'baggage', '#7dd3a8', '#9aa6b2'],
         'circle-stroke-color': halo,
         'circle-stroke-width': 1,
       },
@@ -107,6 +108,27 @@ export function installOpsOverlays(map: MlMap) {
       paint: { 'text-color': DISRUPTION_COLOR as never, 'text-halo-color': halo, 'text-halo-width': 1.3 },
     });
   for (const id of ['disruption', 'disruption-label']) map.setLayoutProperty(id, 'visibility', vis);
+  applyVehicles3d(map);
+}
+
+// Zoom from which 3D service vehicles are drawn instead of the dots (null: 3D vehicles off).
+let vehicles3dZoom: number | null = null;
+
+function applyVehicles3d(map: MlMap) {
+  try {
+    if (map.getLayer('svc-dot')) map.setLayerZoomRange('svc-dot', 15.5, vehicles3dZoom ?? 24);
+    // the labels only start at 16.8, past the 3D vehicles' zoom: hide them while 3D is on
+    if (map.getLayer('svc-label')) map.setLayoutProperty('svc-label', 'visibility', vehicles3dZoom !== null && vehicles3dZoom <= 16.8 ? 'none' : 'visible');
+  } catch {
+    /* style not ready */
+  }
+}
+
+/** Called by the 3D models bridge: 3D vehicles are drawn from `minZoom` (null = not drawn). */
+export function setServiceVehicles3d(map: MlMap, minZoom: number | null) {
+  if (minZoom === vehicles3dZoom) return;
+  vehicles3dZoom = minZoom;
+  applyVehicles3d(map);
 }
 
 function renderGround(map: MlMap) {

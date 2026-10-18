@@ -3,8 +3,11 @@ import { classifyAircraft, CLASS_LABEL } from '@shared/classify';
 import { AircraftGlyph } from '@/components/icons';
 import { aircraftColor } from '@/lib/colors';
 import { fmtAltitude, fmtBearing, fmtSpeed } from '@/lib/format';
+import { makerLogo, useMediaTable } from '@/data/media';
+import { specOf } from '@/data/sim/typeSpecs';
 import { simFlight, useSim } from '@/data/world';
-import { AirlineLogo, STATUS_TEXT } from '@/features/aircraft/FlightParts';
+import { AirlineLogo, modelName, STATUS_TEXT } from '@/features/aircraft/FlightParts';
+import { MakerLogo } from '@/features/aircraft/MakerLogo';
 import { useMedia } from '@/lib/useMedia';
 import { useSettings } from '@/state/settings';
 import { traffic } from '@/state/traffic';
@@ -20,11 +23,14 @@ export function HoverCard() {
   const colorMode = useSettings((s) => s.colorMode);
   const palette = useSettings((s) => s.altitudePalette);
   const finePointer = useMedia('(hover: hover) and (pointer: fine)');
+  const media = useMediaTable();
   const t = id ? traffic.get(id) : undefined;
   const info = id ? simFlight(id) : undefined;
   const show = finePointer && !!t && !!point && id !== selected;
 
   const a = t?.ac;
+  const spec = a?.aircraftType ? specOf(a.aircraftType) : undefined;
+  const hasMakerLogo = !!makerLogo(media.data, spec?.maker);
   const alt = a ? (a.onGround ? 0 : (a.altitudeBarometric ?? a.altitudeGeometric)) : undefined;
   const vr = a?.verticalRate;
   const left = point ? Math.min(point.x + 18, window.innerWidth - 274) : 0;
@@ -52,7 +58,13 @@ export function HoverCard() {
             />
             <div className="min-w-0 flex-1">
               <div className="truncate text-[14px] font-semibold text-fg">{info?.flightIata ?? a.callsign ?? a.registration ?? a.icao24.toUpperCase()}</div>
-              <div className="truncate text-[11px] text-fg-3">{a.typeDescription ?? a.aircraftType ?? CLASS_LABEL[classifyAircraft(a)]}</div>
+              <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-fg-3">
+                <MakerLogo maker={spec?.maker} size={14} maxWidth={50} />
+                {/* Next to the maker's logo the variant alone reads best ("787-9"); full name in the tooltip. */}
+                <span className="truncate" title={spec ? modelName(spec) : undefined}>
+                  {spec ? (hasMakerLogo ? spec.model : modelName(spec)) : (a.typeDescription ?? a.aircraftType ?? CLASS_LABEL[classifyAircraft(a)])}
+                </span>
+              </div>
             </div>
             {info?.airline && <AirlineLogo icao={info.airline.icao} code={info.airline.iata} size={22} name={info.airline.name} wide />}
           </div>

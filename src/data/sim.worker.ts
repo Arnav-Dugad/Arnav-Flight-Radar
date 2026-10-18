@@ -36,6 +36,11 @@ const SYNC = [
   'simTaxiPath',
   'simZones',
   'simTrail',
+  'simAirportOps',
+  'simAirportRoutes',
+  'simAirportProcedures',
+  'simGroundTraffic',
+  'simEtops',
 ] as const;
 const ASYNC = ['simRadio', 'simLoad', 'simAirportRadio', 'simOceanicTracks', 'simSeason'] as const;
 export type SyncQuery = (typeof SYNC)[number];
