@@ -312,7 +312,23 @@ export function installLightning(map: MlMap) {
       maxzoom: 6,
       attribution: '<a href="https://earthdata.nasa.gov/gibs" target="_blank" rel="noopener">NASA GIBS</a> lightning climatology (LIS)',
     });
-  if (!map.getLayer('lightning')) map.addLayer({ id: 'lightning', type: 'raster', source: 'lightning', paint: { 'raster-opacity': 0.5, 'raster-saturation': 0.35, 'raster-contrast': 0.15, 'raster-fade-duration': 200 } }, beforeId(map));
+  // Coarse (≈0.1°) data: fade out as you zoom in, where it would only show blocks.
+  if (!map.getLayer('lightning'))
+    map.addLayer(
+      {
+        id: 'lightning',
+        type: 'raster',
+        source: 'lightning',
+        maxzoom: 7.5,
+        paint: {
+          'raster-opacity': ['interpolate', ['linear'], ['zoom'], 5.5, 0.5, 7.5, 0],
+          'raster-saturation': 0.35,
+          'raster-contrast': 0.15,
+          'raster-fade-duration': 200,
+        },
+      },
+      beforeId(map),
+    );
 }
 
 export function bindLightning(map: MlMap): () => void {

@@ -166,7 +166,7 @@ export function LayersPanel() {
                 <span>≥ 145 flashes/km²/yr</span>
               </div>
               <p className="text-fg-3">
-                Climatology, not live data. Imagery: NASA GIBS (LIS Very High Resolution Full Climatology), detail to zoom 6.{' '}
+                Climatology, not live data. Imagery: NASA GIBS (LIS Very High Resolution Full Climatology), coarse detail, so it fades out past zoom 6.{' '}
                 <a href="https://earthdata.nasa.gov/gibs" target="_blank" rel="noopener" className="text-[var(--accent)] hover:underline">
                   NASA Earthdata
                 </a>
