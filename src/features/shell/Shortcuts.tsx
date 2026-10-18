@@ -3,7 +3,9 @@ import { create } from 'zustand';
 import { Kbd } from '@/components/ui/Feedback';
 import { Modal } from '@/components/ui/Sheet';
 import { resetNorth, setProjection, startFollow, stopFollow, zoomBy } from '@/map/controller';
+import { useSettings } from '@/state/settings';
 import { useUI } from '@/state/ui';
+import { cycleAircraft } from './cycle';
 
 export const useShortcutsModal = create<{ open: boolean; setOpen: (o: boolean) => void }>()((set) => ({
   open: false,
@@ -17,6 +19,9 @@ const LIST: [string[], string][] = [
   [['/'], 'Search'],
   [['Esc'], 'Close / deselect / exit mode'],
   [['C'], 'Follow or stop following the selected aircraft'],
+  [['[', ']'], 'Previous / next aircraft in view'],
+  [['V'], 'Vertical profile'],
+  [['R'], 'Range rings'],
   [['F'], 'Filters'],
   [['L'], 'Map styles & layers'],
   [['A'], 'Analytics'],
@@ -97,6 +102,10 @@ export function useGlobalShortcuts() {
           if (ui.following && !ui.followPaused) stopFollow();
           else startFollow(ui.selectedId);
         },
+        '[': () => cycleAircraft(-1),
+        ']': () => cycleAircraft(1),
+        v: () => useSettings.getState().set('showProfile', !useSettings.getState().showProfile),
+        r: () => useSettings.getState().set('showRangeRings', !useSettings.getState().showRangeRings),
         '+': () => zoomBy(1),
         '=': () => zoomBy(1),
         '-': () => zoomBy(-1),

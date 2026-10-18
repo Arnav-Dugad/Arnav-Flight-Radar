@@ -23,6 +23,7 @@ export interface Toast {
   kind: 'info' | 'success' | 'warning' | 'error';
   title: string;
   body?: string;
+  action?: { label: string; run: () => void };
 }
 
 interface UIState {
@@ -31,6 +32,10 @@ interface UIState {
   previousPanel: PanelId | null;
   selectedId: string | null;
   hoveredId: string | null;
+  /** Screen position of the hovered aircraft (for the hover card). */
+  hoverPoint: { x: number; y: number } | null;
+  /** Polite screen-reader announcement. */
+  announcement: string;
   selectedAirport: string | null;
   following: boolean;
   followPaused: boolean;
@@ -50,6 +55,8 @@ interface UIState {
   togglePanel: (p: PanelId) => void;
   select: (id: string | null, opts?: { follow?: boolean }) => void;
   setHovered: (id: string | null) => void;
+  setHoverPoint: (p: { x: number; y: number } | null) => void;
+  announce: (msg: string) => void;
   selectAirport: (ident: string | null) => void;
   setFollowing: (on: boolean) => void;
   setFollowPaused: (on: boolean) => void;
@@ -74,6 +81,8 @@ export const useUI = create<UIState>()((set, get) => ({
   previousPanel: null,
   selectedId: null,
   hoveredId: null,
+  hoverPoint: null,
+  announcement: '',
   selectedAirport: null,
   following: false,
   followPaused: false,
@@ -114,6 +123,12 @@ export const useUI = create<UIState>()((set, get) => ({
     set({ selectedId: id, following: opts?.follow ?? (s.following && s.selectedId === id), followPaused: false, sheet: 'half' });
   },
   setHovered: (id) => set({ hoveredId: id }),
+  setHoverPoint: (hoverPoint) => set({ hoverPoint }),
+  announce: (msg) => {
+    // Clear first so repeating the same text is still announced.
+    set({ announcement: '' });
+    setTimeout(() => set({ announcement: msg }), 30);
+  },
   selectAirport: (ident) => {
     const s = get();
     if (ident === null) {
@@ -141,7 +156,7 @@ export const useUI = create<UIState>()((set, get) => ({
   toast: (t) => {
     const id = ++toastId;
     set((s) => ({ toasts: [...s.toasts.slice(-3), { ...t, id }] }));
-    setTimeout(() => get().dismissToast(id), t.kind === 'error' ? 7000 : 4500);
+    setTimeout(() => get().dismissToast(id), t.action ? 12000 : t.kind === 'error' ? 7000 : 4500);
   },
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
   setCursor: (cursor) => set({ cursor }),
