@@ -8,6 +8,7 @@ import { GlassButton, Section } from '@/components/ui/Glass';
 import { Panel } from '@/components/ui/Sheet';
 import { api } from '@/lib/api';
 import { useSelectedTrack } from '@/lib/hooks';
+import { traffic } from '@/state/traffic';
 import { useUI } from '@/state/ui';
 
 function Json({ value }: { value: unknown }) {
@@ -52,7 +53,7 @@ export function InspectorPanel() {
                 fetchedAt: t.fetchedAt,
                 lost: t.lost,
                 outsideRegion: t.outsideRegion,
-                trailPoints: t.trail.length,
+                trailPoints: traffic.trailOf(t).length,
                 firstSeenAtClient: t.firstSeenAt,
               }}
             />

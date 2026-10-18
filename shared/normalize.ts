@@ -143,6 +143,9 @@ export function normalizeAdsbfiRecord(raw: unknown, providerNow: number, receive
   if (squawk) ac.squawk = squawk;
   if (emergency) ac.emergency = emergency;
   if (dbFlags !== undefined && (dbFlags & 1) === 1) ac.military = true;
+  // readsb database flags: 4 = PIA (privacy ICAO address), 8 = LADD (FAA limited display).
+  if (dbFlags !== undefined && (dbFlags & 8) === 8) ac.privacy = 'ladd';
+  else if (dbFlags !== undefined && (dbFlags & 4) === 4) ac.privacy = 'pia';
   const dst = inRange(r.dst, 0, 1000);
   if (dst !== undefined) ac.distanceNm = round(dst, 2);
   if (Object.keys(ext).length > 0) ac.ext = ext;

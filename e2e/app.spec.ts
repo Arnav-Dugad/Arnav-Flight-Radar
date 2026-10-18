@@ -118,15 +118,38 @@ test.describe('desktop', () => {
     await ready(page);
     await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Discover' }).click();
     await page.getByRole('button', { name: /^Demo mode/ }).click();
-    const banner = page.getByRole('status').filter({ hasText: 'Simulated aircraft — not real flights' });
+    const banner = page.getByRole('status').filter({ hasText: /simulated world/i });
     await expect(banner).toBeVisible();
+    await expect(banner).toContainText(/airborne/, { timeout: 20_000 });
+    // Time-lapse control.
+    const speed = banner.getByRole('radiogroup', { name: 'Time-lapse speed' });
+    await speed.getByRole('radio', { name: '15×' }).click();
+    await expect(speed.getByRole('radio', { name: '15×' })).toHaveAttribute('aria-checked', 'true');
     await expect(page.getByRole('banner')).toContainText('Demo');
     await expect(page.getByRole('contentinfo')).toContainText('Simulated (demo)');
     await page.keyboard.press('a');
     await expect(page.getByRole('complementary', { name: 'Traffic analytics' })).toContainText('not real traffic statistics');
-    await banner.getByRole('button', { name: 'Exit demo' }).click();
+    await banner.getByRole('button', { name: 'Exit' }).click();
     await expect(banner).toHaveCount(0);
     await expect(page.getByRole('contentinfo')).not.toContainText('Simulated');
+  });
+
+  test('demo airports show a simulated board, runway in use and movement chart', async ({ page }) => {
+    await ready(page);
+    await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Discover' }).click();
+    await page.getByRole('button', { name: /^Demo mode/ }).click();
+    await expect(page.getByRole('status').filter({ hasText: /airborne/ })).toBeVisible({ timeout: 20_000 });
+    await page.keyboard.press('Control+k');
+    await page.getByRole('combobox').fill('LHR');
+    await expect(page.getByRole('option').first()).toContainText('Heathrow');
+    await page.keyboard.press('Enter');
+    const panel = page.getByRole('complementary', { name: 'Airport details' });
+    await panel.getByRole('tab', { name: 'Activity' }).click();
+    await expect(panel).toContainText('Runway in use (simulated)');
+    await expect(panel).toContainText('Movements per hour (simulated)');
+    await expect(panel.getByRole('tab', { name: /Arrivals \(\d+\)/ })).toBeVisible();
+    await panel.getByRole('tab', { name: /Departures \(\d+\)/ }).click();
+    await expect(panel).toContainText(/Simulated board \(demo mode\)/);
   });
 
   test('keyboard cycling selects aircraft and announces them', async ({ page }) => {

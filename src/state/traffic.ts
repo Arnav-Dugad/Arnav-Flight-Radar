@@ -90,6 +90,17 @@ class TrafficEngine {
   lostSec = 90;
   record = true;
   pinned = new Set<string>(); // selected / compared / followed: never auto-removed
+  /** Keep received positions as trails (off in demo mode, which supplies its own). */
+  storeTrails = true;
+  /** Optional trail source (demo mode: points sampled from the simulated path). */
+  trailProvider: ((t: Track) => TrailPoint[] | undefined) | null = null;
+  /** Simulated time-lapse factor (demo mode only); scales the plausibility check. */
+  speedScale = 1;
+
+  /** The trail to draw for a track. */
+  trailOf(t: Track): TrailPoint[] {
+    return this.trailProvider?.(t) ?? t.trail;
+  }
 
   subscribe = (fn: Listener) => {
     this.listeners.add(fn);
@@ -221,7 +232,7 @@ class TrafficEngine {
         fromTrk: ac.track,
         animStart: clientNow,
         animDur: 0,
-        trail: [point(ac)],
+        trail: this.storeTrails ? [point(ac)] : [],
         firstSeenAt: clientNow,
         lastPresentAt: clientNow,
         lost: false,
@@ -242,7 +253,7 @@ class TrafficEngine {
     const shown = this.displayPosition(prev, clientNow);
     const dtH = (ac.observedAt - prev.ac.observedAt) / 3_600_000;
     const jump = distanceNm(prev.ac.lat, prev.ac.lon, ac.lat, ac.lon);
-    const implausible = dtH > 0 && jump / dtH > MAX_PLAUSIBLE_KT && jump > 2;
+    const implausible = dtH > 0 && jump / dtH > MAX_PLAUSIBLE_KT * this.speedScale && jump > 2;
     const gap = ac.observedAt - prev.ac.observedAt > TRAIL_GAP_MS || implausible;
 
     prev.fromLat = shown.lat;
@@ -255,6 +266,7 @@ class TrafficEngine {
     prev.ageAtFetch = ageAtFetch;
     prev.fetchedAt = fetchedAt;
 
+    if (!this.storeTrails) return;
     const pt = point(ac);
     if (gap) pt.gap = true;
     prev.trail.push(pt);

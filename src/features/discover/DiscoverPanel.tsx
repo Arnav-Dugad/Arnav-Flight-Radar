@@ -24,7 +24,7 @@ import { HUBS } from '@/data/airports';
 import { startDemo, stopDemo, useDemo } from '@/data/demo';
 import { fmtAltitude, fmtSpeed } from '@/lib/format';
 import { useTrafficVersion } from '@/lib/hooks';
-import { focusAircraft, getMap, setProjection, startFollow } from '@/map/controller';
+import { focusAircraft, setProjection, startFollow } from '@/map/controller';
 import { startTour, stopTour, useTour } from '@/map/tour';
 import { useSettings } from '@/state/settings';
 import { traffic } from '@/state/traffic';
@@ -84,11 +84,11 @@ export function DiscoverPanel() {
     {
       key: 'demo',
       title: demo ? 'Exit demo mode' : 'Demo mode',
-      body: demo ? 'Return to live data.' : 'Clearly labelled simulated traffic for exploring the interface.',
+      body: demo ? 'Return to live data.' : 'A simulated world: real airlines, aircraft types and airports, with invented flights. Clearly labelled.',
       icon: <PlaneIcon />,
       run: () => {
         if (demo) stopDemo();
-        else if (getMap()) void startDemo(getMap()!);
+        else void startDemo();
         openPanel(null);
       },
     },

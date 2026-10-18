@@ -8,10 +8,45 @@ import { Panel } from '@/components/ui/Sheet';
 import { STYLE_IDS } from '@/lib/styleIds';
 import { cn } from '@/lib/cn';
 import { FLIGHT_CAT_COLOR, getRadarState, onRadarChange, onWeatherChange, weatherNotice } from '@/map/overlays';
+import { AIRSPACE_MIN_ZOOM, airspaceState, onAirspaceChange } from '@/map/extraOverlays';
 import { STYLE_META } from '@/map/styles';
 import { useSettings, type ColorMode } from '@/state/settings';
 import { useUI } from '@/state/ui';
 import { Legend } from './Legend';
+
+function AirspaceStatus() {
+  const st = useSyncExternalStore(onAirspaceChange, () => `${airspaceState.status}:${airspaceState.count}`);
+  const [status, count] = st.split(':');
+  const text =
+    status === 'zoom'
+      ? `Zoom in to level ${AIRSPACE_MIN_ZOOM} or closer to load airspace.`
+      : status === 'outside'
+        ? 'This view is outside the United States — FAA airspace only covers the US.'
+        : status === 'loading'
+          ? 'Loading airspace…'
+          : status === 'error'
+            ? 'FAA airspace service unavailable right now.'
+            : status === 'ok'
+              ? `${count} airspace sectors in view.`
+              : '';
+  return (
+    <div className="space-y-1.5 rounded-[12px] bg-[var(--line)] px-3 py-2.5 text-[11.5px] text-fg-2">
+      <div className="flex flex-wrap gap-3">
+        <span className="flex items-center gap-1.5">
+          <span className="h-0.5 w-4 bg-[#4f8dff]" /> Class B
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="h-0.5 w-4 bg-[#d65cff]" /> Class C
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="h-0.5 w-4 border-t-2 border-dashed border-[#5aa9ff]" /> Class D
+        </span>
+      </div>
+      {text && <p className="text-fg-3">{text}</p>}
+      <p className="text-fg-3">Source: FAA Aeronautical Data Delivery Service (public domain).</p>
+    </div>
+  );
+}
 
 export function LayersPanel() {
   const open = useUI((s) => s.panel === 'layers');
@@ -104,6 +139,46 @@ export function LayersPanel() {
               </p>
             </div>
           )}
+          <Toggle
+            label="Day & night"
+            description="Sunlit and dark sides of the Earth with civil, nautical and astronomical twilight. Computed from the clock (the simulated clock in demo mode)."
+            checked={s.showDayNight}
+            onChange={(v) => s.set('showDayNight', v)}
+          />
+          <Toggle
+            label="Controlled airspace (US)"
+            description="FAA Class B, C and D boundaries with ceiling/floor in hundreds of feet. United States only, from zoom 6. Not for navigation."
+            checked={s.showAirspace}
+            onChange={(v) => s.set('showAirspace', v)}
+          />
+          {s.showAirspace && <AirspaceStatus />}
+          <Toggle
+            label="Lightning climatology"
+            description="NASA's long-term average lightning flash rate (LIS satellite, 1998–2015). Shows where storms are common — NOT live strikes."
+            checked={s.showLightning}
+            onChange={(v) => s.set('showLightning', v)}
+          />
+          {s.showLightning && (
+            <div className="space-y-1.5 rounded-[12px] bg-[var(--line)] px-3 py-2.5 text-[11.5px] text-fg-2">
+              <div className="h-2 rounded-full" style={{ background: 'linear-gradient(90deg, rgb(142,133,166), rgb(157,96,181), rgb(196,51,172), rgb(212,2,82), rgb(227,75,64), rgb(242,190,133), rgb(252,251,207))' }} />
+              <div className="flex justify-between text-[10.5px] text-fg-3">
+                <span>0.1</span>
+                <span>≥ 145 flashes/km²/yr</span>
+              </div>
+              <p className="text-fg-3">
+                Climatology, not live data. Imagery: NASA GIBS (LIS Very High Resolution Full Climatology), detail to zoom 6.{' '}
+                <a href="https://earthdata.nasa.gov/gibs" target="_blank" rel="noopener" className="text-[var(--accent)] hover:underline">
+                  NASA Earthdata
+                </a>
+              </p>
+            </div>
+          )}
+          <Toggle
+            label="3D flight path"
+            description="When the map is tilted, the selected aircraft's path is drawn as a curtain at its true altitude."
+            checked={s.show3dPath}
+            onChange={(v) => s.set('show3dPath', v)}
+          />
           <Toggle
             label="Range rings"
             description="Distance rings around the selected aircraft or airport (or the map centre)."

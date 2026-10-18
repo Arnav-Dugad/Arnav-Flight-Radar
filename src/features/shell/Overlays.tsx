@@ -13,7 +13,7 @@ import { useTour } from '@/map/tour';
 import { useSettings } from '@/state/settings';
 import { traffic } from '@/state/traffic';
 import { useUI } from '@/state/ui';
-import { startDemo, stopDemo, useDemo } from '@/data/demo';
+import { DEMO_SPEEDS, demoNow, setDemoSpeed, startDemo, stopDemo, useDemo } from '@/data/demo';
 import { useFeed } from '@/data/feed';
 import { LiveStatus } from './LiveStatus';
 
@@ -255,7 +255,7 @@ export function CoverageNotice() {
                 </button>
               </p>
               <div className="mt-2.5 flex flex-wrap items-center gap-2">
-                <GlassButton size="sm" onClick={() => getMap() && void startDemo(getMap()!)}>
+                <GlassButton size="sm" onClick={() => void startDemo()}>
                   Explore with simulated demo traffic
                 </GlassButton>
                 <span className="text-[11px] text-fg-3">Clearly labelled; never mixed with live data.</span>
@@ -281,6 +281,16 @@ export function CoverageNotice() {
 /** Persistent, unmissable label while demo mode is on. */
 export function DemoBanner() {
   const demo = useDemo((s) => s.active);
+  const loading = useDemo((s) => s.loading);
+  const speed = useDemo((s) => s.speed);
+  const airborne = useDemo((s) => s.airborne);
+  const [, force] = useState(0);
+  useEffect(() => {
+    if (!demo) return;
+    const id = setInterval(() => force((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, [demo]);
+  const simTime = new Date(demoNow()).toISOString().slice(11, 16);
   return (
     <AnimatePresence>
       {demo && (
@@ -289,12 +299,31 @@ export function DemoBanner() {
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -10 }}
           role="status"
-          className="pointer-events-auto flex items-center gap-3 rounded-full border border-[rgba(167,139,250,0.45)] bg-[rgba(76,52,160,0.82)] py-1.5 pl-4 pr-1.5 text-[12.5px] text-white shadow-xl backdrop-blur-md"
+          className="pointer-events-auto flex max-w-[calc(100vw-24px)] items-center gap-2 rounded-full border border-[rgba(167,139,250,0.45)] bg-[rgba(76,52,160,0.84)] py-1.5 pl-3 pr-1.5 text-[12.5px] text-white shadow-xl backdrop-blur-md"
         >
           <span className="rounded-full bg-white/15 px-2 py-0.5 text-[10.5px] font-bold uppercase tracking-[0.14em]">Demo</span>
-          <span className="font-medium max-[420px]:hidden">Simulated aircraft — not real flights</span>
-          <button type="button" onClick={stopDemo} className="rounded-full bg-white px-3 py-1 text-[12px] font-semibold text-[#2c1d6b] hover:bg-white/90">
-            Exit demo
+          <span className="truncate font-medium max-[520px]:hidden">
+            {loading ? 'Building simulated world…' : `Simulated world · ${airborne.toLocaleString()} airborne`}
+          </span>
+          <span className="tnum rounded-full bg-black/20 px-2 py-0.5 text-[11px] text-white/85 max-[520px]:hidden" title="Simulated clock (UTC)">
+            {simTime}Z
+          </span>
+          <div role="radiogroup" aria-label="Time-lapse speed" className="flex rounded-full bg-black/20 p-0.5">
+            {DEMO_SPEEDS.map((v) => (
+              <button
+                key={v}
+                type="button"
+                role="radio"
+                aria-checked={speed === v}
+                onClick={() => setDemoSpeed(v)}
+                className={`tnum min-w-[30px] rounded-full px-1.5 py-0.5 text-[11px] font-semibold transition-colors ${speed === v ? 'bg-white text-[#2c1d6b]' : 'text-white/80 hover:text-white'}`}
+              >
+                {v}×
+              </button>
+            ))}
+          </div>
+          <button type="button" onClick={stopDemo} className="shrink-0 rounded-full bg-white px-3 py-1 text-[12px] font-semibold text-[#2c1d6b] hover:bg-white/90">
+            Exit
           </button>
         </motion.div>
       )}
@@ -306,7 +335,12 @@ export function DemoBanner() {
 export function TopNotices() {
   const mobile = useIsMobile();
   return (
-    <div className={`pointer-events-none absolute left-1/2 z-30 flex -translate-x-1/2 flex-col items-center gap-2 ${mobile ? 'top-[68px]' : 'top-[84px]'}`}>
+    <div
+      className={`pointer-events-none absolute z-30 flex flex-col gap-2 ${
+        // Phones: keep clear of the map-control column on the right.
+        mobile ? 'left-3 right-[64px] top-[68px] items-start [&>*]:max-w-full' : 'left-1/2 top-[84px] -translate-x-1/2 items-center'
+      }`}
+    >
       <DemoBanner />
       <FollowBanner />
       <CoverageNotice />

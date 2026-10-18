@@ -491,6 +491,24 @@ async function loadRadarFrame(): Promise<string | null> {
   return radarTiles;
 }
 
+/**
+ * Radar paint tuned per base map so echoes stay readable: lifted on dark maps,
+ * deepened on light ones, and boosted over busy satellite imagery.
+ */
+export function radarPaint(style: string): Record<string, number> {
+  switch (style) {
+    case 'arctic':
+    case 'minimal':
+      return { 'raster-opacity': 0.72, 'raster-contrast': 0.2, 'raster-saturation': 0.25, 'raster-brightness-max': 0.92 };
+    case 'satellite':
+      return { 'raster-opacity': 0.8, 'raster-contrast': 0.3, 'raster-saturation': 0.4, 'raster-brightness-min': 0.08 };
+    case 'terrain':
+      return { 'raster-opacity': 0.7, 'raster-contrast': 0.15, 'raster-saturation': 0.2 };
+    default:
+      return { 'raster-opacity': 0.62, 'raster-contrast': 0.08, 'raster-saturation': 0.1, 'raster-brightness-min': 0.04 };
+  }
+}
+
 export async function installRadar(map: MlMap) {
   if (!getSettings().showRadar) {
     if (map.getLayer('radar')) map.removeLayer('radar');
@@ -511,7 +529,7 @@ export async function installRadar(map: MlMap) {
     });
   if (!map.getLayer('radar')) {
     const before = ['coverage-fill', 'wx-station', 'apt-cluster', 'ac-heat'].find((l) => map.getLayer(l));
-    map.addLayer({ id: 'radar', type: 'raster', source: 'radar', paint: { 'raster-opacity': 0.62, 'raster-fade-duration': 300 } }, before);
+    map.addLayer({ id: 'radar', type: 'raster', source: 'radar', paint: { ...radarPaint(getSettings().mapStyle), 'raster-fade-duration': 300 } }, before);
   }
 }
 

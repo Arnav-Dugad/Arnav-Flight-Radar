@@ -23,7 +23,9 @@ import { useSettings } from '@/state/settings';
 import { traffic } from '@/state/traffic';
 import { useUI } from '@/state/ui';
 import { MetarCard, TafCard, WeatherAttribution } from '@/features/weather/WeatherCards';
+import { useDemo } from '@/data/demo';
 import { ApproachExplorer, ObservedMovements } from './Approach';
+import { DemoAirportOps, RunwayInUseCard } from './AirportOps';
 
 type Tab = 'overview' | 'weather' | 'runways' | 'activity';
 
@@ -245,9 +247,11 @@ function Runways({ a }: { a: AirportDetail }) {
   const unit = useSettings((s) => s.units.altitude);
   const toM = unit === 'm';
   const len = (ft?: number) => (ft === undefined ? undefined : toM ? `${Math.round(ft * 0.3048).toLocaleString()} m` : `${ft.toLocaleString()} ft`);
+  const demo = useDemo((s) => s.active);
   if (!a.runways.length) return <EmptyState icon={<RunwayIcon />} title="No runway data" body="OurAirports has no runway records for this airfield." />;
   return (
     <div className="space-y-3">
+      <RunwayInUseCard a={a} demo={demo} />
       <RunwayDiagram a={a} />
       <ApproachExplorer a={a} />
       {a.runways.map((r, i) => (
@@ -318,6 +322,11 @@ function RunwayDiagram({ a }: { a: AirportDetail }) {
 }
 
 function Activity({ a }: { a: AirportDetail }) {
+  const demo = useDemo((s) => s.active);
+  return demo ? <DemoAirportOps a={a} /> : <LiveActivity a={a} />;
+}
+
+function LiveActivity({ a }: { a: AirportDetail }) {
   useTrafficVersion();
   const units = useSettings((s) => s.units);
   const select = useUI((s) => s.select);
@@ -358,6 +367,7 @@ function Activity({ a }: { a: AirportDetail }) {
           </div>
         ))}
       </div>
+      <RunwayInUseCard a={a} demo={false} />
       <ObservedMovements a={a} />
       <p className="text-[11px] text-fg-3">
         Observed aircraft near the airport right now. These are live observations, not an arrivals/departures schedule — origins and destinations are not

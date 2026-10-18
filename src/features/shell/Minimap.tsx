@@ -112,9 +112,11 @@ export function Minimap() {
         <span className="flex items-center gap-1">
           <span className="h-1.5 w-2.5 rounded-sm bg-[#5ce1ff]" /> View
         </span>
-        <span className="flex items-center gap-1">
-          <span className="h-1.5 w-2.5 rounded-sm bg-[#ffb547]" /> Live area
-        </span>
+        {traffic.meta?.provider !== 'demo' && (
+          <span className="flex items-center gap-1">
+            <span className="h-1.5 w-2.5 rounded-sm bg-[#ffb547]" /> Live area
+          </span>
+        )}
       </div>
     </motion.div>
   );

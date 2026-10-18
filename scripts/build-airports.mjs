@@ -4,6 +4,8 @@
 //   public/data/airports/index.json        compact search/map index
 //   public/data/airports/detail/XX.json    runways + frequencies, sharded by ident prefix
 //   public/data/countries.json             names, airport centroids and bounding boxes
+//   public/data/airports/runways-major.json runway ends for major airports (demo simulator, approach geometry)
+//   public/data/airlines.json              airline names by ICAO code (OpenFlights, ODbL)
 import { existsSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,7 +17,7 @@ const BASE = 'https://davidmegginson.github.io/ourairports-data';
 const FILES = ['airports.csv', 'runways.csv', 'airport-frequencies.csv', 'countries.csv'];
 
 const force = process.argv.includes('--force');
-if (!force && existsSync(join(OUT, 'airports', 'index.json'))) {
+if (!force && existsSync(join(OUT, 'airports', 'runways-major.json')) && existsSync(join(OUT, 'airlines.json'))) {
   console.log('airports: dataset present (use --force to rebuild)');
   process.exit(0);
 }
@@ -228,4 +230,48 @@ writeFileSync(
 );
 for (const [k, s] of shards) writeFileSync(join(OUT, 'airports', 'detail', `${k}.json`), JSON.stringify(s));
 writeFileSync(join(OUT, 'countries.json'), JSON.stringify({ v: 1, generatedAt, countries: countryOut }));
+
+// Runway ends for major airports: [ident, [leIdent, leLat, leLon, leHdg, heIdent, heLat, heLon, heHdg, lengthFt][]]
+const toRad = (d) => (d * Math.PI) / 180;
+const brg = (a1, o1, a2, o2) => {
+  const y = Math.sin(toRad(o2 - o1)) * Math.cos(toRad(a2));
+  const x = Math.cos(toRad(a1)) * Math.sin(toRad(a2)) - Math.sin(toRad(a1)) * Math.cos(toRad(a2)) * Math.cos(toRad(o2 - o1));
+  return Math.round(((Math.atan2(y, x) * 180) / Math.PI + 360) % 360);
+};
+const majorIdents = new Set(majorRows.map((r) => r[0]));
+const runwaysMajor = {};
+for (const ident of majorIdents) {
+  const list = (rwByAirport.get(ident) ?? []).filter((r) => !r.closed && r.leLat !== undefined && r.heLat !== undefined && r.leLon !== undefined && r.heLon !== undefined);
+  if (!list.length) continue;
+  runwaysMajor[ident] = list.slice(0, 6).map((r) => [
+    r.leIdent ?? '',
+    r5(r.leLat),
+    r5(r.leLon),
+    r.leHeadingDegT ?? brg(r.leLat, r.leLon, r.heLat, r.heLon),
+    r.heIdent ?? '',
+    r5(r.heLat),
+    r5(r.heLon),
+    r.heHeadingDegT ?? brg(r.heLat, r.heLon, r.leLat, r.leLon),
+    r.lengthFt ?? 0,
+  ]);
+}
+writeFileSync(join(OUT, 'airports', 'runways-major.json'), JSON.stringify({ v: 1, generatedAt, source: 'OurAirports (public domain)', runways: runwaysMajor }));
+
+// Airline names by ICAO designator (OpenFlights airlines.dat, ODbL 1.0 — attribution required).
+const ofRes = await fetch('https://raw.githubusercontent.com/jpatokal/openflights/master/data/airlines.dat', { headers: { 'User-Agent': 'ArnavFlightRadar-build/1.0' } });
+if (!ofRes.ok) throw new Error(`airlines.dat: HTTP ${ofRes.status}`);
+const ofRows = parseCsv(`id,name,alias,iata,icao,callsign,country,active
+${await ofRes.text()}`);
+// OpenFlights writes missing values as a literal backslash-N.
+const nz = (v) => (v && v !== '\\N' && v !== '-' ? v.trim() : '');
+const airlines = {};
+for (const r of ofRows) {
+  const icao = nz(r.icao).toUpperCase();
+  if (!/^[A-Z]{3}$/.test(icao) || !nz(r.name)) continue;
+  const active = r.active === 'Y';
+  if (airlines[icao] && !active) continue; // prefer active entries for shared codes
+  airlines[icao] = [nz(r.name), nz(r.iata).toUpperCase(), nz(r.callsign), nz(r.country), active ? 1 : 0];
+}
+writeFileSync(join(OUT, 'airlines.json'), JSON.stringify({ v: 1, generatedAt, source: 'OpenFlights (ODbL 1.0)', airlines }));
+console.log(`airports: wrote runways for ${Object.keys(runwaysMajor).length} major airports, ${Object.keys(airlines).length} airlines`);
 console.log(`airports: wrote ${rows.length} index rows (${majorRows.length} major), ${shards.size} detail shards, ${countryOut.length} countries`);

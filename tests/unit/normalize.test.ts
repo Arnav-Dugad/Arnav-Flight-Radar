@@ -105,6 +105,13 @@ describe('normalizeAdsbfiRecord', () => {
     expect(normalizeAdsbfiRecord({ ...base, dbFlags: 8 }, NOW, NOW)!.military).toBeUndefined();
   });
 
+  it('carries LADD / PIA privacy flags from the database bits', () => {
+    expect(normalizeAdsbfiRecord({ ...base, dbFlags: 8 }, NOW, NOW)!.privacy).toBe('ladd');
+    expect(normalizeAdsbfiRecord({ ...base, dbFlags: 4 }, NOW, NOW)!.privacy).toBe('pia');
+    expect(normalizeAdsbfiRecord({ ...base, dbFlags: 12 }, NOW, NOW)!.privacy).toBe('ladd');
+    expect(normalizeAdsbfiRecord({ ...base, dbFlags: 1 }, NOW, NOW)!.privacy).toBeUndefined();
+  });
+
   it('marks old positions as stale', () => {
     expect(normalizeAdsbfiRecord({ ...base, seen_pos: 45 }, NOW, NOW)!.freshness).toBe('stale');
   });

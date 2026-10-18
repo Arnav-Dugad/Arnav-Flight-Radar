@@ -7,10 +7,10 @@ import { classifyAircraft } from '@shared/classify';
 import { formatLatLon, parseCoordinates } from '@shared/geo';
 import { classifyAircraftQuery, type AircraftQueryKind } from '@shared/query';
 import type { Aircraft, AirportIndexEntry, Country } from '@shared/types';
-import { AircraftGlyph, AirportIcon, GlobeIcon } from '@/components/icons';
+import { AircraftGlyph, AirportIcon, GlobeIcon, PlaneIcon } from '@/components/icons';
 import { Kbd, Spinner } from '@/components/ui/Feedback';
 import { HUBS, airportByCode, loadAllAirports, loadCountries, loadMajorAirports } from '@/data/airports';
-import { useDemo } from '@/data/demo';
+import { demoSearch, useDemo } from '@/data/demo';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { fmtAltitude } from '@/lib/format';
@@ -162,7 +162,23 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
       .sort((a, b) => Number(b.callsign?.startsWith(up) ?? false) - Number(a.callsign?.startsWith(up) ?? false))
       .slice(0, 6);
     const localIds = new Set(local.map((a) => a.id));
-    local.forEach((a) => out.push(aircraftResult(a, 'Aircraft in view', altUnit, () => goAircraft(a))));
+    local.forEach((a) => out.push(aircraftResult(a, demo ? 'Simulated aircraft' : 'Aircraft in view', altUnit, () => goAircraft(a))));
+
+    // Demo: simulated flights by IATA/ICAO flight number (e.g. "BA117", "UAE5").
+    if (demo) {
+      for (const r of demoSearch(query, 6)) {
+        const t = traffic.get(r.id);
+        if (!t || localIds.has(r.id)) continue;
+        out.push({
+          key: `demo-${r.id}`,
+          group: 'Simulated flights',
+          icon: <PlaneIcon size={17} />,
+          title: r.label,
+          sub: r.sub,
+          run: () => goAircraft(t.ac),
+        });
+      }
+    }
 
     // Airports
     if (airports) {
@@ -233,7 +249,7 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
       remote.list.filter((a) => !localIds.has(a.id)).forEach((a) => out.push(aircraftResult(a, 'Worldwide (adsb.fi)', altUnit, () => goAircraft(a))));
     }
     return out;
-  }, [q, recents, airports, countries, remote, altUnit, addRecent, goAirport, goAircraft, onClose, select, selectAirport]);
+  }, [q, demo, recents, airports, countries, remote, altUnit, addRecent, goAirport, goAircraft, onClose, select, selectAirport]);
 
   useEffect(() => setActive(0), [q]);
   useEffect(() => {

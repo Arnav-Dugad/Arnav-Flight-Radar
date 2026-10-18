@@ -25,14 +25,15 @@ const SRC = 'ac';
 const SRC_SEL = 'ac-sel';
 const SRC_SEL_TRAIL = 'ac-sel-trail';
 const SRC_TRAILS = 'ac-trails';
+const SRC_RIBBON = 'ac-sel-ribbon';
 
 const CLASSES = Object.keys(SILHOUETTES) as AircraftClass[];
 
 export const AIRCRAFT_LAYERS = [
   'ac-heat',
   'ac-trails',
+  'ac-sel-ribbon',
   'ac-sel-trail',
-  'ac-dots',
   'ac-emergency',
   'ac-icons',
   'ac-labels',
@@ -59,7 +60,8 @@ function sizeExpr(scale: number) {
   // Ground traffic is drawn smaller so busy aprons don't swamp airborne aircraft.
   // (MapLibre requires zoom to be the top-level interpolation; the per-feature case sits inside.)
   const stop = (v: number) => ['case', ['==', ['get', 'gnd'], 1], v * scale * 0.72, v * scale];
-  return ['interpolate', ['linear'], ['zoom'], 3, stop(0.42), 6, stop(0.6), 9, stop(0.82), 12, stop(1.05), 15, stop(1.35)];
+  // Icons are drawn at every zoom (never collapsing to invisible dots), just smaller far out.
+  return ['interpolate', ['linear'], ['zoom'], 0, stop(0.2), 2, stop(0.27), 3.5, stop(0.36), 6, stop(0.6), 9, stop(0.82), 12, stop(1.05), 15, stop(1.35)];
 }
 
 function labelMinZoom(density: string): number {
@@ -81,6 +83,7 @@ export function installAircraftLayers(map: MlMap) {
   if (!map.getSource(SRC_SEL)) map.addSource(SRC_SEL, { type: 'geojson', data: EMPTY });
   if (!map.getSource(SRC_SEL_TRAIL)) map.addSource(SRC_SEL_TRAIL, { type: 'geojson', data: EMPTY, lineMetrics: false });
   if (!map.getSource(SRC_TRAILS)) map.addSource(SRC_TRAILS, { type: 'geojson', data: EMPTY });
+  if (!map.getSource(SRC_RIBBON)) map.addSource(SRC_RIBBON, { type: 'geojson', data: EMPTY });
 
   const color = aircraftColorExpression(s.colorMode, s.altitudePalette);
 
@@ -117,6 +120,19 @@ export function installAircraftLayers(map: MlMap) {
     layout: { 'line-cap': 'round', 'line-join': 'round', visibility: s.showAllTrails ? 'visible' : 'none' },
     paint: { 'line-color': ['get', 'c'], 'line-width': 1.4, 'line-opacity': ['*', 0.55, ['get', 'o']] },
   });
+  // 3-D flight path: a translucent curtain from the ground up to the flown altitude.
+  add('ac-sel-ribbon', {
+    type: 'fill-extrusion',
+    source: SRC_RIBBON,
+    layout: { visibility: s.show3dPath ? 'visible' : 'none' },
+    paint: {
+      'fill-extrusion-color': ['get', 'c'],
+      'fill-extrusion-height': ['get', 'h'],
+      'fill-extrusion-base': 0,
+      'fill-extrusion-opacity': 0.42,
+      'fill-extrusion-vertical-gradient': true,
+    },
+  });
   add('ac-sel-trail', {
     type: 'line',
     source: SRC_SEL_TRAIL,
@@ -126,18 +142,6 @@ export function installAircraftLayers(map: MlMap) {
       'line-width': ['interpolate', ['linear'], ['zoom'], 4, 2, 10, 3.2, 14, 4.5],
       'line-opacity': ['get', 'o'],
       'line-blur': 0.3,
-    },
-  });
-  add('ac-dots', {
-    type: 'circle',
-    source: SRC,
-    maxzoom: 4.6,
-    paint: {
-      'circle-color': color,
-      'circle-radius': ['interpolate', ['linear'], ['zoom'], 1, 1.4, 4.6, 2.8],
-      'circle-opacity': ['case', ['==', ['get', 'dim'], 1], 0.15, ['==', ['get', 'st'], 'live'], 0.95, 0.45],
-      'circle-stroke-color': halo,
-      'circle-stroke-width': 0.6,
     },
   });
   add('ac-emergency', {
@@ -154,7 +158,6 @@ export function installAircraftLayers(map: MlMap) {
   add('ac-icons', {
     type: 'symbol',
     source: SRC,
-    minzoom: 4.4,
     layout: {
       'icon-image': ['concat', 'ac-', ['get', 'cls']],
       'icon-size': sizeExpr(s.symbolScale),
@@ -284,12 +287,12 @@ export function applyAircraftSettings(map: MlMap) {
   const s = getSettings();
   const color = aircraftColorExpression(s.colorMode, s.altitudePalette);
   map.setPaintProperty('ac-icons', 'icon-color', color as never);
-  map.setPaintProperty('ac-dots', 'circle-color', color as never);
   map.setLayoutProperty('ac-icons', 'icon-size', sizeExpr(s.symbolScale) as never);
   map.setLayoutProperty('ac-sel-icon', 'icon-size', sizeExpr(s.symbolScale * 1.18) as never);
   map.setLayerZoomRange('ac-labels', labelMinZoom(s.labelDensity), 24);
   map.setLayoutProperty('ac-heat', 'visibility', s.showHeatmap ? 'visible' : 'none');
   map.setLayoutProperty('ac-trails', 'visibility', s.showAllTrails ? 'visible' : 'none');
+  map.setLayoutProperty('ac-sel-ribbon', 'visibility', s.show3dPath ? 'visible' : 'none');
   map.setPaintProperty('ac-icons', 'icon-halo-width', ['case', ['boolean', ['feature-state', 'hover'], false], 2.4, s.highContrast ? 2.2 : 1.3] as never);
   map.setLayoutProperty('ac-labels', 'text-size', s.highContrast ? 12 : 10.5);
 }
@@ -347,6 +350,51 @@ function trailFeatures(points: TrailPoint[], head: [number, number] | null, mode
   return out;
 }
 
+/**
+ * 3-D path: one thin extruded quad per trail segment, as tall as the altitude
+ * flown there (true scale, metres). Width tracks zoom so it stays a few pixels wide.
+ */
+function ribbonFeatures(points: TrailPoint[], head: [number, number], zoom: number, mode: string): GeoJSON.Feature[] {
+  if (points.length < 2) return [];
+  const pts = [...points.slice(0, -1), { ...points[points.length - 1]!, lat: head[1], lon: head[0] }];
+  const t0 = pts[0]!.t;
+  const t1 = pts[pts.length - 1]!.t;
+  const metresPerPx = (40_075_016 * Math.cos((head[1] * Math.PI) / 180)) / (512 * 2 ** zoom);
+  const halfW = Math.max(15, metresPerPx * 1.6);
+  const out: GeoJSON.Feature[] = [];
+  const step = Math.max(1, Math.floor(pts.length / 220));
+  for (let i = step; i < pts.length; i += step) {
+    const a = pts[i - step]!;
+    const b = pts[i]!;
+    if (b.gap || a.alt === undefined || b.alt === undefined) continue;
+    const k = Math.cos((a.lat * Math.PI) / 180) || 1e-6;
+    const dx = (b.lon - a.lon) * k;
+    const dy = b.lat - a.lat;
+    const len = Math.hypot(dx, dy);
+    if (len === 0) continue;
+    const off = halfW / 111_320 / len;
+    const nx = (-dy * off) / k;
+    const ny = dx * off;
+    out.push({
+      type: 'Feature',
+      geometry: {
+        type: 'Polygon',
+        coordinates: [
+          [
+            [a.lon + nx, a.lat + ny],
+            [b.lon + nx, b.lat + ny],
+            [b.lon - nx, b.lat - ny],
+            [a.lon - nx, a.lat - ny],
+            [a.lon + nx, a.lat + ny],
+          ],
+        ],
+      },
+      properties: { c: trailColor(b, mode, t0, t1), h: Math.max(30, ((a.alt + b.alt) / 2) * 0.3048) },
+    });
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------- engine
 
 export interface AircraftEngine {
@@ -365,6 +413,8 @@ export function startAircraftEngine(map: MlMap): AircraftEngine {
   let predicate = compileFilter(useFilters.getState().filters);
   let highlight = useFilters.getState().highlightMode;
   let lastFollow = 0;
+  let lastRibbon = 0;
+  let ribbonId: string | null = null;
 
   const unsubs: (() => void)[] = [];
   unsubs.push(traffic.subscribe(() => (dirty = true)));
@@ -384,6 +434,7 @@ export function startAircraftEngine(map: MlMap): AircraftEngine {
         s.labelDensity !== prev.labelDensity ||
         s.showHeatmap !== prev.showHeatmap ||
         s.showAllTrails !== prev.showAllTrails ||
+        s.show3dPath !== prev.show3dPath ||
         s.highContrast !== prev.highContrast
       ) {
         applyAircraftSettings(map);
@@ -395,10 +446,11 @@ export function startAircraftEngine(map: MlMap): AircraftEngine {
     if (s.selectedId !== prev.selectedId || s.replay !== prev.replay) dirty = true;
   }));
 
+  let lastDrawn = 0;
   function interval(): number {
     const zoom = map.getZoom();
-    const count = traffic.tracks.size;
-    const heavy = count > 1500 ? 2 : count > 700 ? 1.4 : 1;
+    const count = lastDrawn;
+    const heavy = count > 6000 ? 3 : count > 1500 ? 2 : count > 700 ? 1.4 : 1;
     if (!traffic.smooth) return 1000;
     if (zoom < 5) return 1000 * heavy;
     if (zoom < 7) return 400 * heavy;
@@ -406,12 +458,31 @@ export function startAircraftEngine(map: MlMap): AircraftEngine {
     return 66 * heavy;
   }
 
+  const clsCache = new WeakMap<object, AircraftClass>();
+
+  /** Viewport (padded) for culling; null = draw everything (world views, globe). */
+  function cullBounds(): [number, number, number, number] | null {
+    if (map.getZoom() < 3.2) return null;
+    const b = map.getBounds();
+    const w = b.getWest();
+    const e = b.getEast();
+    if (e - w >= 300) return null;
+    const padX = (e - w) * 0.25;
+    const padY = (b.getNorth() - b.getSouth()) * 0.25;
+    return [w - padX, b.getSouth() - padY, e + padX, b.getNorth() + padY];
+  }
+
   function featureFor(t: Track, now: number): GeoJSON.Feature {
     const pos = traffic.displayPosition(t, now);
     const a = t.ac;
+    let cls = clsCache.get(a);
+    if (!cls) {
+      cls = classifyAircraft(a);
+      clsCache.set(a, cls);
+    }
     const props: Record<string, unknown> = {
       id: t.id,
-      cls: classifyAircraft(a),
+      cls,
       rot: pos.trk ?? 0,
       gnd: a.onGround ? 1 : 0,
       st: traffic.stateOf(t, now),
@@ -467,21 +538,35 @@ export function startAircraftEngine(map: MlMap): AircraftEngine {
       features.push(...replayFeatures());
       visible = features.length;
     } else {
+      const bounds = cullBounds();
+      // Very large fleets (the demo world): ground traffic only appears once zoomed in.
+      const hideGround = traffic.tracks.size > 3000 && map.getZoom() < 5;
       for (const t of traffic.tracks.values()) {
         const ageSec = traffic.ageMs(t, now) / 1000;
         const match = predicate(t.ac, ageSec);
         if (!match && !highlight && t.id !== selected) continue;
+        if (match) visible++;
+        if (t.id !== selected) {
+          if (hideGround && t.ac.onGround) continue;
+          if (bounds) {
+            let lon = t.ac.lon;
+            if (lon < bounds[0]) lon += 360;
+            else if (lon > bounds[2]) lon -= 360;
+            if (lon < bounds[0] || lon > bounds[2] || t.ac.lat < bounds[1] || t.ac.lat > bounds[3]) continue;
+          }
+        }
         const f = featureFor(t, now);
         if (!match) f.properties!.dim = 1;
-        else visible++;
         features.push(f);
-        if (showTrails && match && t.trail.length > 1) {
-          const recent = t.trail.slice(-12);
+        const trail = showTrails && match ? traffic.trailOf(t) : null;
+        if (trail && trail.length > 1) {
+          const recent = trail.slice(-12);
           const pos = f.geometry as GeoJSON.Point;
           for (const tf of trailFeatures(recent, pos.coordinates as [number, number], trailMode, 1)) trails.push(tf);
         }
       }
     }
+    lastDrawn = features.length;
     src.setData({ type: 'FeatureCollection', features });
     (map.getSource(SRC_TRAILS) as GeoJSONSource | undefined)?.setData({ type: 'FeatureCollection', features: trails });
   }
@@ -492,9 +577,12 @@ export function startAircraftEngine(map: MlMap): AircraftEngine {
     const trailSrc = map.getSource(SRC_SEL_TRAIL) as GeoJSONSource | undefined;
     if (!sel || !trailSrc) return;
     const t = traffic.get(id);
+    const ribbon = map.getSource(SRC_RIBBON) as GeoJSONSource | undefined;
     if (!t || ui().replay.active) {
       sel.setData(EMPTY);
       trailSrc.setData(EMPTY);
+      if (ribbonId) ribbon?.setData(EMPTY);
+      ribbonId = null;
       return;
     }
     if (selReveal.id !== id) selReveal = { id, start: now };
@@ -519,10 +607,16 @@ export function startAircraftEngine(map: MlMap): AircraftEngine {
 
     const reveal = Math.min(1, (now - selReveal.start) / 1100);
     const eased = 1 - (1 - reveal) ** 3;
+    const trail = traffic.trailOf(t);
     trailSrc.setData({
       type: 'FeatureCollection',
-      features: trailFeatures(t.trail, [pos.lon, pos.lat], getSettings().trailColorMode, eased),
+      features: trailFeatures(trail, [pos.lon, pos.lat], getSettings().trailColorMode, eased),
     });
+    if (ribbon && getSettings().show3dPath && (now - lastRibbon > 400 || ribbonId !== id)) {
+      lastRibbon = now;
+      ribbonId = id;
+      ribbon.setData({ type: 'FeatureCollection', features: map.getPitch() > 8 ? ribbonFeatures(trail, [pos.lon, pos.lat], map.getZoom(), getSettings().trailColorMode) : [] });
+    }
 
     // Breathing selection ring (cheap paint update; skipped with reduced motion).
     if (getSettings().motion === 'full') {
@@ -554,7 +648,7 @@ export function startAircraftEngine(map: MlMap): AircraftEngine {
   raf = requestAnimationFrame(frame);
 
   // ---------------------------------------------------------------- interaction
-  const interactive = ['ac-icons', 'ac-dots'];
+  const interactive = ['ac-icons'];
   let hoverRaf = 0;
   const onMove = (e: MapLayerMouseEvent) => {
     const f = e.features?.[0];

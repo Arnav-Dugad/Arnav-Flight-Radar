@@ -133,3 +133,8 @@ export function fmtPercent(part: number, total: number): string {
   if (!total) return '0%';
   return `${Math.round((part / total) * 100)}%`;
 }
+
+/** Hours and minutes, UTC (schedules). */
+export function fmtHmUTC(ms: number): string {
+  return new Date(ms).toISOString().slice(11, 16) + 'Z';
+}

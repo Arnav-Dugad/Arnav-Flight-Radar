@@ -7,6 +7,7 @@ import { focusAircraft } from '@/map/controller';
 import { useSettings } from '@/state/settings';
 import { traffic } from '@/state/traffic';
 import { useUI } from '@/state/ui';
+import { MovementChart, type MovementBucket } from './AirportOps';
 
 const W = 340;
 const H = 132;
@@ -101,12 +102,22 @@ export function ObservedMovements({ a }: { a: AirportDetail }) {
   const movements = observedMovements(
     a.lat,
     a.lon,
-    traffic.list().map((t) => ({ id: t.id, label: t.ac.callsign ?? t.ac.registration ?? t.ac.icao24.toUpperCase(), trail: t.trail })),
+    traffic.list().map((t) => ({ id: t.id, label: t.ac.callsign ?? t.ac.registration ?? t.ac.icao24.toUpperCase(), trail: traffic.trailOf(t) })),
   );
   // Trails are kept for the trail-length setting, so that is the counting window.
   const first = traffic.snapshots[0]?.t;
   const since = first !== undefined ? Math.max(first, traffic.serverNow(now) - traffic.trailMs) : undefined;
   const minutes = since ? (traffic.serverNow(now) - since) / 60_000 : 0;
+  const BIN = 10 * 60_000;
+  const buckets: MovementBucket[] = [];
+  if (since !== undefined && minutes >= 10) {
+    const end = traffic.serverNow(now);
+    for (let t = Math.floor(since / BIN) * BIN; t <= end; t += BIN) buckets.push({ t, arrivals: 0, departures: 0 });
+    for (const m of movements) {
+      const b = buckets[Math.floor((m.t - buckets[0]!.t) / BIN)];
+      if (b) b[m.kind === 'arrival' ? 'arrivals' : 'departures']++;
+    }
+  }
   const arr = movements.filter((m) => m.kind === 'arrival').length;
   const dep = movements.filter((m) => m.kind === 'departure').length;
   return (
@@ -124,6 +135,9 @@ export function ObservedMovements({ a }: { a: AirportDetail }) {
           </div>
         ))}
       </div>
+      {buckets.length > 1 && (
+        <MovementChart buckets={buckets} binMin={10} title="Observed movements per 10 minutes" note="Counted from this session's observations — lower bounds, not a schedule." />
+      )}
       {movements.length > 0 && (
         <ul className="glass-2 divide-y divide-[var(--line)] rounded-[14px]">
           {movements.slice(0, 8).map((m) => (

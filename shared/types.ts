@@ -67,6 +67,7 @@ export interface Aircraft {
   emergency?: string; // e.g. "general", "lifeguard" — only when not "none"
   onGround: boolean;
   military?: boolean; // from the provider's aircraft database flags
+  privacy?: 'ladd' | 'pia'; // owner requested limited display (FAA LADD) or uses a privacy address (PIA)
   positionSource: PositionSource;
   observedAt: number; // ms — when the position was last updated
   seenAt: number; // ms — when any message was last received

@@ -114,3 +114,39 @@ export function observedMovements(lat: number, lon: number, tracks: { id: string
   }
   return out.sort((a, b) => b.t - a.t);
 }
+
+export interface RunwayInUse {
+  runway: string; // landing direction, e.g. "27R"
+  basis: 'approaches' | 'wind';
+  /** Approaches observed lined up with this runway (basis "approaches"). */
+  count?: number;
+  /** Headwind component on this runway in knots (basis "wind"). */
+  headwindKt?: number;
+}
+
+/**
+ * Best guess of the runway direction in use — INFERRED, never authoritative:
+ *  1. if aircraft are currently observed lined up on final, the runway with the most of them;
+ *  2. otherwise the runway end best aligned with the reported surface wind (largest
+ *     headwind component), when the wind is at least 3 kt and not variable.
+ */
+export function inferRunwayInUse(ends: RunwayEnd[], approaches: ApproachTarget[], wind?: { dirDeg?: number; speedKt?: number }): RunwayInUse | undefined {
+  if (!ends.length) return undefined;
+  if (approaches.length) {
+    const counts = new Map<string, number>();
+    for (const a of approaches) counts.set(a.runway, (counts.get(a.runway) ?? 0) + 1);
+    const [runway, count] = [...counts.entries()].sort((x, y) => y[1] - x[1])[0]!;
+    return { runway, basis: 'approaches', count };
+  }
+  if (wind?.dirDeg === undefined || wind.speedKt === undefined || wind.speedKt < 3) return undefined;
+  let best: RunwayEnd | undefined;
+  let bestHead = -Infinity;
+  for (const e of ends) {
+    const head = wind.speedKt * Math.cos((angleDelta(e.headingDeg, wind.dirDeg) * Math.PI) / 180);
+    if (head > bestHead) {
+      bestHead = head;
+      best = e;
+    }
+  }
+  return best ? { runway: best.ident, basis: 'wind', headwindKt: Math.round(bestHead) } : undefined;
+}

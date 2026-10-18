@@ -49,6 +49,8 @@ stop a single client from flooding the API.
 | Ages are measured on the provider's clock and carried forward with our server clock, so device clock skew can't make data look fresh | `src/state/traffic.ts` |
 | Motion interpolates between real reports (cubic Hermite curve tangent to both reported tracks, or straight) and stops exactly at the newest one; a hollow ring marks it | `src/state/traffic.ts`, `src/map/aircraftLayer.ts` |
 | Demo traffic is opt-in, pauses live polling, and is labelled everywhere | `src/data/demo.ts` |
+| The demo world (`src/data/demo/sim.ts`) is a deterministic flight simulator. Its trails come from the simulated path, not stored reports, and it is lazy-loaded | `src/data/demo/` |
+| Runway-in-use and operator names are labelled as inferred | `shared/approach.ts`, `src/data/airlines.ts` |
 | Approach and movement figures are inferred geometry, labelled as such | `shared/approach.ts` |
 | Trails contain only received positions; gaps over 150 s or jumps over 1,100 kt break the line | `src/state/traffic.ts` |
 | Aircraft that vanish inside the queried area become **lost**, then are removed | `src/state/traffic.ts` |
@@ -69,8 +71,12 @@ stop a single client from flooding the API.
 - **Hover** uses `feature-state`, so highlighting is instant and doesn't rebuild data.
 - **Style swaps** use `setStyle(…, { diff: false })` behind a crossfade veil. Overlays re-install
   idempotently on `style.load`.
-- **Low zoom:** below z≈4.5 aircraft are drawn as dots. A density heatmap is available. Small airports
-  are clustered.
+- **Every zoom:** aircraft icons and large airports are drawn at all zoom levels, scaled down on world
+  views. Small airports are clustered. A density heatmap is available.
+- **Large fleets:** off-screen aircraft are culled from the source once zoomed in. Very large (demo)
+  fleets hide ground traffic below z5, and the rebuild interval adapts to how many aircraft are drawn.
+- **3D path:** when the map is tilted, the selected aircraft's trail is extruded (`fill-extrusion`) to its
+  true altitude.
 
 ## State
 

@@ -50,6 +50,10 @@ export interface Settings {
   showProfile: boolean;
   showRadar: boolean;
   showPhotos: boolean;
+  show3dPath: boolean; // extruded flight path for the selected aircraft when the map is tilted
+  showDayNight: boolean;
+  showAirspace: boolean; // FAA class airspace (United States)
+  showLightning: boolean; // NASA lightning climatology (long-term average, not live)
   emergencyAlerts: EmergencyAlerts;
   terrain3d: boolean;
   defaultView: { lat: number; lon: number; zoom: number } | null;
@@ -89,6 +93,10 @@ export const DEFAULT_SETTINGS: Settings = {
   showProfile: false,
   showRadar: false,
   showPhotos: true,
+  show3dPath: true,
+  showDayNight: false,
+  showAirspace: false,
+  showLightning: false,
   emergencyAlerts: 'in-app',
   terrain3d: false,
   defaultView: null,

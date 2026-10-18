@@ -177,14 +177,14 @@ export async function installAirportLayers(map: MlMap) {
   add('apt-large-icon', {
     type: 'symbol',
     source: SRC_LARGE,
-    minzoom: 2.5,
+    // Never disappears: large airports are drawn at every zoom, smaller when far out.
     layout: {
       'icon-image': 'apt-icon',
-      'icon-size': ['interpolate', ['linear'], ['zoom'], 2.5, 0.42, 8, 0.72, 12, 0.85],
+      'icon-size': ['interpolate', ['linear'], ['zoom'], 0, 0.24, 2.5, 0.36, 8, 0.72, 12, 0.85],
       'icon-allow-overlap': ['step', ['zoom'], false, 6, true],
-      'text-field': ['step', ['zoom'], '', 4, ['get', 'code'], 10, ['concat', ['get', 'code'], '\n', ['get', 'name']]],
+      'text-field': ['step', ['zoom'], '', 2.8, ['get', 'code'], 10, ['concat', ['get', 'code'], '\n', ['get', 'name']]],
       'text-font': ['Noto Sans Bold'],
-      'text-size': ['interpolate', ['linear'], ['zoom'], 4, 9.5, 10, 11.5],
+      'text-size': ['interpolate', ['linear'], ['zoom'], 2.8, 8.5, 4, 9.5, 10, 11.5],
       'text-offset': [0, 1.15],
       'text-anchor': 'top',
       'text-optional': true,

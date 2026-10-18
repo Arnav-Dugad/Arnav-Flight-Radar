@@ -10,14 +10,24 @@
 | **EOxCloudless 2025** | CC BY-NC-SA 4.0 for non-commercial use, with attribution. | Used only by the Satellite style, labelled as an annual cloud-free mosaic (not live), with the full EOX attribution while active. |
 
 | **RainViewer** | Free for personal/educational use; attribution; 100 req/IP/min; max zoom 7 from 2026. | Browser-side only when the radar layer is enabled; one index request per 10 minutes plus the tiles in view; latest frame only (no animation, which would exceed the limit). |
+| **OpenFlights airlines** | ODbL 1.0: attribution, share-alike for derived databases. | Downloaded at build time; the derived `airlines.json` keeps ODbL. Operator names are labelled "inferred from the callsign prefix · OpenFlights (ODbL)". |
+| **FAA ADDS Class Airspace** | Public domain U.S. Government data; not for navigation. | Browser-side viewport queries only while the layer is on, at zoom ≥ 6 and inside the US; responses reused for 1° grid cells; labelled not for navigation. |
+| **NASA GIBS (LIS lightning climatology)** | Open NASA imagery; acknowledgement requested. | Raster tiles requested by the browser only while the layer is on; labelled as a long-term climatology, never as live lightning. |
 | **Planespotters.net Photo API** | Free; photographer credit next to the image; plain link to the photo page; no storing/re-hosting; requests from a real webpage. | Requested by the viewer's browser when an aircraft panel opens; only the documented image and link hosts are accepted; the service worker never caches third-party responses. |
 
 ## Demo mode
 
 Demo mode exists because live data may be unavailable (see below). It is opt-in from the outage notice or
 Discover, never the default and never persisted. While it runs, live polling stops and all live tracks are
-cleared, so simulated and real aircraft never appear together. Simulated aircraft use `DMO` callsigns and
-non-ICAO `~d…` addresses with no registrations. The interface shows a persistent DEMO banner, a "Demo"
+cleared, so simulated and real aircraft never appear together. The simulated world uses real reference data:
+- OurAirports airports and runways;
+- OpenFlights airline names;
+- airline hubs and representative fleets, curated in `src/data/demo/fleet.ts`;
+- typical performance for each aircraft type.
+
+Every flight, registration, schedule and position is invented. Simulated aircraft carry non-ICAO
+`~…` addresses, so no photo, registry or worldwide lookup is ever attached to them. Live route
+databases are not used at all. The interface shows a persistent DEMO banner, a "Demo"
 status pill, "Simulated (demo)" attribution and badges in every panel. Analytics are labelled as describing
 simulated aircraft. Nothing simulated is recorded for replay, exported, alerted on or searched for worldwide.
 

@@ -32,8 +32,8 @@ built around three rules:
 >   live aircraft are unavailable (nothing is simulated);
 > - **`npm run dev` shows full live traffic**, because requests then come from your own connection.
 >
-> - an opt-in **demo mode** (Discover → Demo mode) shows clearly labelled simulated traffic so visitors can
->   explore the interface; it is never the default and never mixes with live data.
+> - an opt-in **demo mode** (Discover → Demo mode) simulates a whole world of traffic so visitors can
+>   explore the interface. It is clearly labelled, never the default and never mixes with live data.
 >
 > Once adsb.fi (or another permitted source) approves access, the hosted site works with no code changes.
 
@@ -52,7 +52,14 @@ built around three rules:
   straight lines, or none). It never extrapolates past the newest report, and a hollow ring marks it.
 - Hover cards, range rings, an overview minimap, and a vertical profile strip (a side view of the
   aircraft in view by altitude).
-- Precipitation radar overlay from RainViewer, METAR station layer, density heatmap and 3D terrain.
+- Aircraft and major airports stay visible at every zoom level — no collapse to dots on world views.
+- Overlays:
+  - precipitation radar from RainViewer, with colours tuned per map style
+  - METAR stations, a density heatmap and 3D terrain
+  - day/night shading with civil, nautical and astronomical twilight
+  - FAA Class B/C/D airspace (United States)
+  - NASA lightning **climatology** (long-term averages, clearly not live strikes)
+- 3D flight path: when the map is tilted, the selected aircraft's path becomes a curtain at its true altitude.
 
 **Tracking**
 - Aircraft panel with animated instruments (altitude tape, speed arc, heading compass, VSI),
@@ -63,7 +70,12 @@ built around three rules:
   gaps are never bridged.
 - Lost-tracking and stale-data banners. A selected aircraft that leaves the live area keeps updating
   through single-aircraft lookups.
-- Airframe photos from Planespotters.net with photographer credit and a link to the original.
+- Airframe photos from Planespotters.net in a small carousel (looked up by ICAO address and by
+  registration), with photographer credit and links to the originals.
+  - Photos are never shown for aircraft flagged FAA LADD or using a privacy ICAO address (PIA).
+  - You can hide photos for any individual aircraft.
+- Operator name inferred from the callsign prefix (OpenFlights), shown with a monogram badge (never a
+  trademarked logo).
 - Emergency-squawk alerts (in-app, plus optional browser notifications) for live data only.
 
 **Exploration**
@@ -75,8 +87,25 @@ built around three rules:
   - nearby observed traffic (never presented as a schedule) and nearby airports
   - an approach explorer: aircraft lined up with each runway, plotted against a 3° reference, with
     extended centrelines on the map
-  - observed arrivals and departures counted from recorded trails (lower bounds, not a schedule)
+  - observed arrivals and departures counted from recorded trails (lower bounds, not a schedule),
+    with a 10-minute movement chart
+  - the runway in use, inferred from aircraft seen on final or else the reported wind, and labelled as
+    a guess
 - METAR weather layer showing station flight categories and reported winds.
+
+**Demo world** (opt-in; everything simulated and labelled)
+- Around 15,000 simulated aircraft on desktop (about 7,000 on phones), at roughly real-world density.
+  - Over 100 real airlines fly real aircraft types from their real hubs.
+  - Routes are great circles between real airports.
+  - There are general-aviation and helicopter hops, and a night-time lull at most airports.
+- Every phase is simulated: gate, taxi, take-off and climb-out from the runway in use, cruise,
+  descent, a 12 NM final, landing and taxi-in. The aircraft then turns around for its next flight.
+- Flight cards show the route, schedule, delay and progress. Airports show arrivals/departures
+  boards, an hourly movement chart and the runway in use.
+- A time-lapse control runs the world at 1×, 5×, 15× or 30×. Search works by flight number (e.g.
+  "BA117").
+- Flights, registrations, addresses and schedules are invented. Simulated aircraft use non-ICAO `~`
+  addresses, so no real photos or records can be attached to them.
 
 **Experience modes**
 - **Analytics:** histograms, splits and bar lists, each labelled with its sample.

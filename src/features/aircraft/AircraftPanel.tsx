@@ -33,6 +33,7 @@ import { useSettings } from '@/state/settings';
 import { traffic, type Track } from '@/state/traffic';
 import { useUI } from '@/state/ui';
 import { AircraftPhoto } from './AircraftPhoto';
+import { RouteCard } from './RouteCard';
 import { AltitudeGauge, HeadingGauge, SpeedGauge, VerticalSpeedGauge } from './Gauges';
 import { TrailProfile } from './TrailProfile';
 
@@ -137,6 +138,9 @@ function AircraftDetails({ t }: { t: Track }) {
   const special = a.squawk ? SPECIAL_SQUAWKS[a.squawk] : undefined;
   const demo = a.provider === 'demo';
   const showPhotos = useSettings((s) => s.showPhotos);
+  const hiddenPhotos = useBookmarks((s) => s.hiddenPhotos);
+  const toggleHiddenPhoto = useBookmarks((s) => s.toggleHiddenPhoto);
+  const photoHidden = hiddenPhotos.includes(a.icao24);
   const glow = aircraftColor(colorMode, palette, { onGround: a.onGround, alt, gs: a.groundSpeed, vr: a.verticalRate, stale: state !== 'live' });
 
   useEffect(() => {
@@ -246,13 +250,31 @@ function AircraftDetails({ t }: { t: Track }) {
 
       {demo && (
         <div role="status" className="mx-5 mb-3 rounded-[14px] border border-[rgba(167,139,250,0.4)] bg-[rgba(167,139,250,0.1)] px-3.5 py-2.5 text-[12px] leading-snug text-[#d8cdfd]">
-          Simulated aircraft (demo mode). Its callsign, route and telemetry are invented to show how the interface works — it is not a real flight.
+          Simulated flight (demo mode). The airline, airports and aircraft type are real; the flight, registration, schedule and telemetry are invented. It is not a real aircraft.
         </div>
       )}
-      {!demo && showPhotos && !a.icao24.startsWith('~') && (
+      <div className="px-5 pb-3 empty:hidden">
+        <RouteCard ac={a} />
+      </div>
+      {!demo && a.privacy && (
+        <p className="mx-5 mb-3 rounded-[14px] border border-[var(--line)] px-3.5 py-2.5 text-[11.5px] leading-snug text-fg-3">
+          {a.privacy === 'ladd'
+            ? 'The owner of this aircraft asked for limited display (FAA LADD). Photos are not shown.'
+            : 'This aircraft uses a privacy ICAO address (PIA). Photos are not shown.'}
+        </p>
+      )}
+      {!demo && showPhotos && !a.privacy && !a.icao24.startsWith('~') && !photoHidden && (
         <div className="px-5 pb-3">
-          <AircraftPhoto hex={a.icao24} />
+          <AircraftPhoto hex={a.icao24} registration={a.registration} />
         </div>
+      )}
+      {!demo && photoHidden && (
+        <p className="mx-5 mb-3 flex items-center justify-between gap-2 text-[11.5px] text-fg-3">
+          Photos hidden for this aircraft.
+          <button type="button" className="font-medium text-[var(--accent)] hover:underline" onClick={() => toggleHiddenPhoto(a.icao24)}>
+            Show photos
+          </button>
+        </p>
       )}
 
       {/* ------------------------------------------------ state banners */}
@@ -371,7 +393,7 @@ function TrailTab({ t }: { t: Track }) {
   const units = useSettings((s) => s.units);
   const trailMode = useSettings((s) => s.trailColorMode);
   const setSetting = useSettings((s) => s.set);
-  const pts = t.trail;
+  const pts = traffic.trailOf(t);
   const duration = pts.length > 1 ? pts[pts.length - 1]!.t - pts[0]!.t : 0;
   const gaps = pts.filter((p) => p.gap).length;
   const recent = useMemo(() => [...pts].reverse().slice(0, 40), [pts]);

@@ -156,3 +156,9 @@ export const REGISTRY_COUNTRIES: RegistryCountry[] = [...new Map(BLOCKS.map((b) 
 );
 
 /** Regional-indicator emoji are intentionally NOT used; UI shows ISO codes in a badge. */
+
+/** The ICAO 24-bit address block allocated to a state, if listed. */
+export function icaoBlock(iso: string): [number, number] | undefined {
+  const b = BLOCKS.find((x) => x[2] === iso);
+  return b ? [b[0], b[1]] : undefined;
+}

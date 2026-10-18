@@ -12,8 +12,9 @@ import { getSettings, useSettings, type MapStyleId } from '@/state/settings';
 import { traffic } from '@/state/traffic';
 import { ui, useUI, type Projection } from '@/state/ui';
 import { useView } from '@/state/view';
-import { installAircraftLayers, startAircraftEngine, AIRCRAFT_LAYERS, type AircraftEngine } from './aircraftLayer';
+import { applyAircraftSettings, installAircraftLayers, startAircraftEngine, AIRCRAFT_LAYERS, type AircraftEngine } from './aircraftLayer';
 import { bindAirportInteraction, installAirportLayers, AIRPORT_LAYERS } from './airportsLayer';
+import { bindExtraOverlays, installExtraOverlays } from './extraOverlays';
 import { bindMeasure, bindRadar, bindRings, bindWeather, installCoverage, installMeasure, installRadar, installRings, installWeather, refreshWeather } from './overlays';
 import { cameraFlags, viewOffset, viewPadding } from './camera';
 import { buildStyle, TERRAIN_SOURCE } from './styles';
@@ -37,12 +38,14 @@ function currentStyle(id: MapStyleId = getSettings().mapStyle) {
 
 function installAll(m: MlMap) {
   installAircraftLayers(m);
+  applyAircraftSettings(m);
   installCoverage(m);
   installWeather(m);
   void installAirportLayers(m);
   installMeasure(m);
   installRings(m);
   void installRadar(m);
+  installExtraOverlays(m);
   installUserLocation(m);
   applyTerrain(m);
   engine?.markDirty();
@@ -81,8 +84,9 @@ export function createMap(container: HTMLElement): MlMap {
     renderWorldCopies: true,
   });
   const m = map;
+  const builtWith = { style: s.mapStyle, density: s.labelDensity };
   // Development-only handle for automated tests and debugging (not in production builds).
-  if (import.meta.env.DEV) Object.assign(window, { __arnav: { map: m, traffic } });
+  if (import.meta.env.DEV) Object.assign(window, { __arnav: { map: m, traffic, settings: useSettings, ui: useUI } });
   m.on('style.load', () => {
     installAll(m);
     setTimeout(() => ui().setStyleLoading(false), 120);
@@ -102,6 +106,7 @@ export function createMap(container: HTMLElement): MlMap {
     cleanups.push(bindRings(m));
     cleanups.push(startEmergencyAlerts());
     cleanups.push(bindRadar(m));
+    cleanups.push(bindExtraOverlays(m));
     cleanups.push(bindUrlSync(m));
     cleanups.push(bindAutoRotate(m));
     cleanups.push(bindCursor(m));
@@ -109,6 +114,10 @@ export function createMap(container: HTMLElement): MlMap {
     cleanups.push(bindSettingsToMap(m));
     cleanups.push(bindViewStore(m));
     void refreshWeather(m);
+    // Settings changed while the map was still loading (before the bindings above existed).
+    const now = getSettings();
+    if (now.mapStyle !== builtWith.style || now.labelDensity !== builtWith.density) setMapStyle(now.mapStyle);
+    else installAll(m);
 
     // Deselect when clicking empty map (aircraft/airport/weather layers handle their own clicks).
     m.on('click', (e) => {

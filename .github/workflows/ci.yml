@@ -26,9 +26,11 @@ jobs:
         run: npm run typecheck
       - name: Lint
         run: npm run lint
+      - name: Build datasets (OurAirports, OpenFlights)
+        run: npm run data:airports
       - name: Unit & integration tests
         run: npm test
-      - name: Production build (downloads OurAirports dataset)
+      - name: Production build
         run: npm run build
       - name: Performance budget
         run: npm run budget

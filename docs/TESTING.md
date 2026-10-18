@@ -1,8 +1,8 @@
 # Testing
 
 ```bash
-npm test             # Vitest: unit + integration (no network) — 90 tests
-npm run test:e2e     # Playwright against the local dev server — 21 tests
+npm test             # Vitest: unit + integration (no network) — 106 tests
+npm run test:e2e     # Playwright against the local dev server — 22 tests
 npm run test:visual  # screenshot regression vs. committed baselines (mocked feed)
 npm run budget       # performance budget (after npm run build)
 BASE_URL=https://<deployment> npm run test:e2e   # against production
@@ -24,6 +24,10 @@ BASE_URL=https://<deployment> npm run test:e2e   # against production
 | Traffic engine | interpolation never overshooting the latest report, curved motion following a turn and ending exactly on the report, reset, gap-breaking trails, lost-aircraft lifecycle, clock-skew immunity |
 | Airport intelligence | runway ends, approach detection (3° final found; climbing/off-axis/receding/high/ground rejected), observed arrivals/departures |
 | Great-circle routes | start/end/midpoint correctness |
+| Demo world | every airline hub is a real airport and every fleet type is known; worldwide density (5k–16k airborne); physically consistent legs (no teleporting, altitudes within type limits, arrival at the destination); landing and take-off on the runway in use; legs chain; balanced hub arrivals/departures with a night lull; deterministic seeds |
+| Runway in use | approaches outrank wind; headwind choice; no guess in calm/variable wind |
+| Day/night | sub-solar point at the solstice and its hourly drift; nested twilight bands; lit/dark sides |
+| Airlines & privacy | callsign-prefix extraction; OpenFlights rows; LADD/PIA flags from `dbFlags` |
 
 ## Integration (`tests/integration`)
 
@@ -61,7 +65,7 @@ platform-specific (fonts and GPU rasterization differ), so CI does not run them.
 
 | Budget | Limit | Current |
 | --- | --- | --- |
-| Initial JS (gzip) | 600 KB | ~505 KB (MapLibre ~280 KB) |
+| Initial JS (gzip) | 600 KB | ~514 KB (MapLibre ~280 KB) |
 | Initial CSS (gzip) | 32 KB | ~21 KB |
 | Largest lazy chunk | 40 KB | ~29 KB (time-zone lookup) |
 | Major airport index | 260 KB | ~212 KB |

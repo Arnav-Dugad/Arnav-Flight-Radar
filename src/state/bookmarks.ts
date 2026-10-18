@@ -38,6 +38,9 @@ interface BookmarkStore {
   aircraft: FavoriteAircraft[];
   views: SavedView[];
   recents: Recent[];
+  /** Aircraft (hex) whose photos the user chose not to see. */
+  hiddenPhotos: string[];
+  toggleHiddenPhoto: (hex: string) => void;
   toggleAirport: (ident: string) => void;
   toggleAircraft: (a: Omit<FavoriteAircraft, 'addedAt'>) => void;
   saveView: (v: Omit<SavedView, 'id' | 'createdAt'>) => void;
@@ -54,6 +57,11 @@ export const useBookmarks = create<BookmarkStore>()(
       aircraft: [],
       views: [],
       recents: [],
+      hiddenPhotos: [],
+      toggleHiddenPhoto: (hex) =>
+        set((s) => ({
+          hiddenPhotos: s.hiddenPhotos.includes(hex) ? s.hiddenPhotos.filter((x) => x !== hex) : [...s.hiddenPhotos, hex].slice(-500),
+        })),
       toggleAirport: (ident) =>
         set((s) => ({
           airports: s.airports.includes(ident) ? s.airports.filter((x) => x !== ident) : [...s.airports, ident].slice(-100),

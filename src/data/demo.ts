@@ -1,203 +1,415 @@
-// DEMO MODE — explicitly simulated traffic.
+// DEMO MODE — an explicitly simulated world.
 //
 // Exists so people can explore the interface when live data is unavailable.
+// It simulates a whole planet of traffic — real airlines on real routes between
+// real airports, with real aircraft types — including gate, taxi, take-off,
+// approach and landing activity on each airport's runway in use.
+//
 // Rules:
 //  • opt-in only, never the default, never persisted across reloads;
 //  • live polling is paused while it runs and all live tracks are cleared, so
 //    simulated and real aircraft can never appear together;
-//  • every simulated aircraft is unmistakable: callsigns start with "DMO",
-//    addresses are non-ICAO ("~d…"), there are no registrations, and the UI shows
-//    a persistent DEMO banner and badges;
-//  • nothing simulated is recorded for replay or exported.
+//  • every simulated aircraft is marked: provider "demo", non-ICAO addresses
+//    ("~…", so no real-aircraft lookups or photos can be attached), and the UI
+//    shows a persistent DEMO banner and badges;
+//  • flights, registrations, addresses and schedules are invented;
+//  • nothing simulated is recorded for replay, exported or alerted on.
 
-import type { Map as MlMap } from 'maplibre-gl';
 import { create } from 'zustand';
-import { bearingDeg, destination, distanceNm, intermediatePoint } from '@shared/geo';
-import type { Aircraft, AircraftResponse } from '@shared/types';
+import type { AirportIndexEntry, Aircraft, AircraftResponse } from '@shared/types';
+import { distanceNm } from '@shared/geo';
 import { getSettings } from '@/state/settings';
-import { traffic } from '@/state/traffic';
+import { traffic, type Track, type TrailPoint } from '@/state/traffic';
 import { ui } from '@/state/ui';
 import { loadMajorAirports } from './airports';
+import type { AirlineProfile } from './demo/fleet';
+import type { Airframe, DemoWorld, Leg, SimAirport } from './demo/sim';
 import { setFeedPaused, useFeed } from './feed';
 
-export const useDemo = create<{ active: boolean }>()(() => ({ active: false }));
+export const DEMO_SPEEDS = [1, 5, 15, 30] as const;
+
+interface DemoState {
+  active: boolean;
+  loading: boolean;
+  speed: number;
+  airborne: number;
+  ground: number;
+}
+
+export const useDemo = create<DemoState>()(() => ({ active: false, loading: false, speed: 1, airborne: 0, ground: 0 }));
 
 export const DEMO_ATTRIBUTION = { name: 'Simulated demo traffic', url: 'https://github.com/Arnav-Dugad/Arnav-Flight-Radar', license: 'Not real aircraft' };
 
-const TICK_MS = 5000;
-const FLIGHTS = 70;
+const WORLD_REGION = { lat: 0, lon: 0, radiusNm: 100_000 };
 
-const TYPES: { t: string; d: string; cat: string; kt: [number, number]; ft: [number, number] }[] = [
-  { t: 'A20N', d: 'AIRBUS A-320neo', cat: 'A3', kt: [430, 470], ft: [34000, 38000] },
-  { t: 'B38M', d: 'BOEING 737 MAX 8', cat: 'A3', kt: [430, 465], ft: [33000, 39000] },
-  { t: 'A21N', d: 'AIRBUS A-321neo', cat: 'A3', kt: [430, 470], ft: [33000, 37000] },
-  { t: 'B789', d: 'BOEING 787-9', cat: 'A5', kt: [470, 500], ft: [37000, 41000] },
-  { t: 'A359', d: 'AIRBUS A-350-900', cat: 'A5', kt: [470, 500], ft: [37000, 41000] },
-  { t: 'E190', d: 'EMBRAER ERJ-190', cat: 'A3', kt: [400, 440], ft: [30000, 36000] },
-  { t: 'AT76', d: 'ATR 72-600', cat: 'A2', kt: [250, 280], ft: [17000, 24000] },
-  { t: 'C68A', d: 'CESSNA 680A LATITUDE', cat: 'A2', kt: [420, 460], ft: [39000, 45000] },
-  { t: 'C172', d: 'CESSNA 172', cat: 'A1', kt: [100, 120], ft: [2500, 5500] },
-];
+let world: DemoWorld | null = null;
+let byId = new Map<string, Airframe>();
+let timer: ReturnType<typeof setTimeout> | undefined;
+let clock = { sim0: 0, real0: 0, speed: 1 };
+let tickNo = 0;
+let runwaysPromise: Promise<Record<string, never[]>> | null = null;
 
-interface DemoFlight {
-  n: number;
-  type: (typeof TYPES)[number];
-  from: [number, number];
-  to: [number, number];
-  dist: number;
-  cruiseKt: number;
-  cruiseFt: number;
-  startedAt: number;
+/** Simulated wall-clock time (runs faster than real time in time-lapse). */
+export function demoNow(real = Date.now()) {
+  return clock.sim0 + (real - clock.real0) * clock.speed;
 }
 
-let flights: DemoFlight[] = [];
-let timer: ReturnType<typeof setInterval> | undefined;
-let serial = 0;
-let rng = 1;
-const rand = () => ((rng = (rng * 16807) % 2147483647) / 2147483647);
-const pick = <T,>(a: T[]) => a[Math.floor(rand() * a.length)]!;
-
-async function routeEndpoints(centre: { lat: number; lon: number }): Promise<[number, number][]> {
-  try {
-    const list = await loadMajorAirports();
-    const near = list
-      .filter((a) => a.type !== 'small_airport' && distanceNm(centre.lat, centre.lon, a.lat, a.lon) < 600)
-      .map((a) => [a.lat, a.lon] as [number, number]);
-    if (near.length >= 6) return near;
-  } catch {
-    /* fall through to synthetic endpoints */
-  }
-  // Open ocean or no airports: endpoints on a ring around the centre.
-  return Array.from({ length: 12 }, (_, i) => destination(centre.lat, centre.lon, i * 30, 300));
+function tickMs() {
+  return clock.speed >= 15 ? 2000 : 3000;
 }
 
-function makeFlight(ends: [number, number][], now: number, spreadStart: boolean): DemoFlight {
-  let from = pick(ends);
-  let to = pick(ends);
-  for (let i = 0; i < 8 && distanceNm(from[0], from[1], to[0], to[1]) < 120; i++) to = pick(ends);
-  if (from === to) from = destination(to[0], to[1], rand() * 360, 200);
-  const type = pick(TYPES);
-  const dist = distanceNm(from[0], from[1], to[0], to[1]);
-  const cruiseKt = type.kt[0] + rand() * (type.kt[1] - type.kt[0]);
-  const durationMs = (dist / cruiseKt) * 3_600_000;
-  return {
-    n: ++serial,
-    type,
-    from,
-    to,
-    dist,
-    cruiseKt,
-    cruiseFt: Math.round((type.ft[0] + rand() * (type.ft[1] - type.ft[0])) / 1000) * 1000,
-    startedAt: spreadStart ? now - rand() * durationMs : now,
-  };
+export function setDemoSpeed(speed: number) {
+  const now = Date.now();
+  clock = { sim0: demoNow(now), real0: now, speed };
+  traffic.speedScale = speed;
+  traffic.expectedIntervalMs = tickMs();
+  useDemo.setState({ speed });
+  ui().announce(`Demo time-lapse ${speed}×`);
 }
 
-function state(f: DemoFlight, now: number): Aircraft | null {
-  const flown = ((now - f.startedAt) / 3_600_000) * f.cruiseKt;
-  if (flown >= f.dist) return null;
-  const frac = flown / f.dist;
-  const [lat, lon] = intermediatePoint(f.from[0], f.from[1], f.to[0], f.to[1], frac);
-  const [nlat, nlon] = intermediatePoint(f.from[0], f.from[1], f.to[0], f.to[1], Math.min(1, frac + 0.001));
-  const climbNm = Math.min(f.dist * 0.35, f.cruiseFt / 300);
-  const descentNm = Math.min(f.dist * 0.35, f.cruiseFt / 320);
-  const toGo = f.dist - flown;
-  let alt = f.cruiseFt;
-  let vr = 0;
-  let gs = f.cruiseKt;
-  if (flown < climbNm) {
-    alt = Math.max(1500, (flown / climbNm) * f.cruiseFt);
-    vr = 1800;
-    gs = 220 + (f.cruiseKt - 220) * (flown / climbNm);
-  } else if (toGo < descentNm) {
-    alt = Math.max(1200, (toGo / descentNm) * f.cruiseFt);
-    vr = -1400;
-    gs = 200 + (f.cruiseKt - 200) * (toGo / descentNm);
-  }
-  return {
-    id: `~d${f.n.toString(16).padStart(5, '0')}`,
-    icao24: `~d${f.n.toString(16).padStart(5, '0')}`,
-    callsign: `DMO${100 + (f.n % 900)}`,
-    aircraftType: f.type.t,
-    typeDescription: `${f.type.d} (simulated)`,
-    category: f.type.cat,
-    lat,
-    lon,
-    altitudeBarometric: Math.round(alt / 25) * 25,
-    groundSpeed: Math.round(gs),
-    track: Math.round(bearingDeg(lat, lon, nlat, nlon) * 10) / 10,
-    verticalRate: vr,
-    onGround: false,
-    positionSource: 'other',
-    observedAt: now,
-    seenAt: now,
-    receivedAt: now,
+function loadRunways() {
+  runwaysPromise ??= fetch('/data/airports/runways-major.json')
+    .then((r) => (r.ok ? (r.json() as Promise<{ runways: Record<string, never[]> }>) : { runways: {} }))
+    .then((j) => j.runways)
+    .catch(() => ({}));
+  return runwaysPromise;
+}
+
+function deviceScale() {
+  // Real-world density on capable devices; lighter on small or low-core devices.
+  const cores = navigator.hardwareConcurrency || 4;
+  const small = Math.min(window.innerWidth, window.innerHeight) < 600;
+  return small || cores <= 4 ? 0.4 : 0.75;
+}
+
+function toAircraft(af: Airframe, sim: number, real: number): Aircraft | null {
+  const s = world!.state(af, sim);
+  if (!s.emit) return null;
+  const leg = af.leg;
+  const a: Aircraft = {
+    id: `~${af.hex}`,
+    icao24: `~${af.hex}`,
+    callsign: leg.flight,
+    registration: af.reg,
+    aircraftType: af.type.code,
+    typeDescription: af.type.desc,
+    category: af.type.cat,
+    lat: s.lat,
+    lon: s.lon,
+    groundSpeed: Math.round(s.gs),
+    track: Math.round(s.trk * 10) / 10,
+    squawk: af.squawk,
+    onGround: s.onGround,
+    positionSource: 'adsb',
+    observedAt: real,
+    seenAt: real,
+    receivedAt: real,
     provider: 'demo',
     freshness: 'live',
   };
+  if (!s.onGround && s.alt !== undefined) {
+    a.altitudeBarometric = Math.round(s.alt / 25) * 25;
+    a.altitudeGeometric = Math.round((s.alt + 175) / 25) * 25;
+    a.verticalRate = Math.round(s.vr / 64) * 64;
+    const ext: NonNullable<Aircraft['ext']> = { navQnh: 1013.2, trueHeading: a.track! };
+    if (s.phase === 'climb' || s.phase === 'cruise') ext.navAltitudeMcp = leg.cruiseFt;
+    else if (s.phase === 'descent' || s.phase === 'approach') ext.navAltitudeMcp = Math.max(3000, Math.round((leg.to.elev + 3000) / 1000) * 1000);
+    if (s.alt > 24000) {
+      // Rough TAS → Mach at altitude (ISA, no wind): illustrative only.
+      const tempK = Math.max(216.65, 288.15 - 0.0019812 * s.alt);
+      ext.tas = Math.round(s.gs);
+      ext.mach = Math.round((s.gs / (38.967854 * Math.sqrt(tempK))) * 1000) / 1000;
+    }
+    if (af.airline) ext.ownerOperator = af.airline.name;
+    a.ext = ext;
+  } else if (af.airline) a.ext = { ownerOperator: af.airline.name };
+  return a;
 }
 
-function tick(ends: [number, number][], centre: { lat: number; lon: number }) {
-  const now = Date.now();
+function tick() {
+  if (!world) return;
+  const real = Date.now();
+  const sim = demoNow(real);
+  world.advance(sim);
+  tickNo++;
   const list: Aircraft[] = [];
-  flights = flights.map((f) => {
-    let s = state(f, now);
-    if (!s) {
-      f = makeFlight(ends, now, false);
-      s = state(f, now);
-    }
-    if (s) list.push(s);
-    return f;
-  });
+  let airborne = 0;
+  for (const af of world.airframes) {
+    const a = toAircraft(af, sim, real);
+    if (!a) continue;
+    if (!a.onGround) airborne++;
+    list.push(a);
+  }
   const resp: AircraftResponse = {
     provider: 'demo',
     attribution: DEMO_ATTRIBUTION,
-    query: { lat: centre.lat, lon: centre.lon, radiusNm: 600 },
-    providerNow: now,
-    fetchedAt: now,
-    servedAt: now,
+    query: WORLD_REGION,
+    providerNow: real,
+    fetchedAt: real,
+    servedAt: real,
     stale: false,
-    cache: { hit: false, ageMs: 0, ttlMs: TICK_MS },
+    cache: { hit: false, ageMs: 0, ttlMs: tickMs() },
     count: list.length,
     aircraft: list,
   };
-  traffic.ingest(resp, now);
-  // Simulated flights that "land" are replaced; they are not "lost" aircraft.
+  traffic.ingest(resp, real);
+  // Simulated aircraft that park and switch off are simply gone, not "lost".
   const ids = new Set(list.map((a) => a.id));
-  for (const id of [...traffic.tracks.keys()]) if (!ids.has(id)) traffic.tracks.delete(id);
+  for (const id of traffic.tracks.keys()) if (!ids.has(id) && !traffic.pinned.has(id)) traffic.tracks.delete(id);
+  useDemo.setState({ airborne, ground: list.length - airborne });
+  timer = setTimeout(tick, tickMs());
 }
 
-export async function startDemo(map: MlMap) {
+// ---------------------------------------------------------------- trails
+
+const trailCache = new Map<string, { tick: number; full: boolean; pts: TrailPoint[] }>();
+
+function demoTrail(t: Track, full: boolean): TrailPoint[] | undefined {
+  const af = byId.get(t.id);
+  if (!world || !af) return undefined;
+  const c = trailCache.get(t.id);
+  if (c && c.tick === tickNo && c.full === full) return c.pts;
+  const sim = demoNow();
+  const pts = world.trail(af, sim, full ? Infinity : 6 * 60_000).map((p) => {
+    const tp: TrailPoint = { lat: p.lat, lon: p.lon, t: p.t, gs: p.gs, vr: p.vr };
+    if (p.alt !== undefined) tp.alt = p.alt;
+    return tp;
+  });
+  if (trailCache.size > 4000) trailCache.clear();
+  trailCache.set(t.id, { tick: tickNo, full, pts });
+  return pts;
+}
+
+// ---------------------------------------------------------------- lifecycle
+
+export async function startDemo() {
   if (useDemo.getState().active) return;
-  useDemo.setState({ active: true });
+  useDemo.setState({ active: true, loading: true, speed: 1 });
   setFeedPaused(true);
   ui().select(null);
   ui().setReplay({ active: false, playing: false, index: 0 });
   traffic.reset();
   traffic.record = false;
-  traffic.expectedIntervalMs = TICK_MS;
+  traffic.storeTrails = false;
+  traffic.trailProvider = (t) => demoTrail(t, ui().selectedId === t.id);
   useFeed.setState({ status: 'live', message: undefined, errorCode: undefined });
-  const c = map.getCenter();
-  const centre = { lat: c.lat, lon: c.lng };
-  rng = Math.max(1, Math.floor(Math.abs(c.lat * 1000 + c.lng * 100)) % 2147483646);
-  const ends = await routeEndpoints(centre);
+  let airports: AirportIndexEntry[] = [];
+  let runways: Record<string, never[]> = {};
+  let Sim: typeof import('./demo/sim') | null = null;
+  try {
+    // The simulator and its fleet tables load only when demo mode is used.
+    [airports, runways, Sim] = await Promise.all([loadMajorAirports(), loadRunways(), import('./demo/sim')]);
+  } catch {
+    /* handled below */
+  }
   if (!useDemo.getState().active) return;
+  if (!airports.length || !Sim) {
+    useDemo.setState({ loading: false });
+    ui().toast({ kind: 'error', title: 'Demo mode is unavailable', body: 'The airport dataset could not be loaded.' });
+    stopDemo();
+    return;
+  }
   const now = Date.now();
-  flights = Array.from({ length: FLIGHTS }, () => makeFlight(ends, now, true));
-  tick(ends, centre);
-  timer = setInterval(() => tick(ends, centre), TICK_MS);
+  clock = { sim0: now, real0: now, speed: 1 };
+  traffic.speedScale = 1;
+  traffic.expectedIntervalMs = tickMs();
+  world = new Sim.DemoWorld(Math.floor(now / 86_400_000) % 2147483646 || 7, airports, runways);
+  world.populate(now, deviceScale());
+  byId = new Map(world.airframes.map((af) => [`~${af.hex}`, af]));
+  useDemo.setState({ loading: false });
+  tick();
 }
 
 export function stopDemo() {
   if (!useDemo.getState().active) return;
-  clearInterval(timer);
-  flights = [];
+  clearTimeout(timer);
+  world = null;
+  byId = new Map();
+  trailCache.clear();
   ui().select(null);
   traffic.reset();
   const s = getSettings();
   traffic.record = s.recordSession;
+  traffic.storeTrails = true;
+  traffic.trailProvider = null;
+  traffic.speedScale = 1;
   traffic.expectedIntervalMs = s.pollIntervalSec * 1000;
-  useDemo.setState({ active: false });
+  useDemo.setState({ active: false, loading: false, speed: 1, airborne: 0, ground: 0 });
   setFeedPaused(false);
 }
 
 export const isDemo = () => useDemo.getState().active;
+export const isDemoId = (id: string | null | undefined) => !!id && byId.has(id);
+
+// ---------------------------------------------------------------- flight info
+
+export type FlightStatus = 'Scheduled' | 'Boarding' | 'Departed' | 'Taxiing' | 'En route' | 'Approach' | 'Landed' | 'Arrived';
+
+export interface DemoFlightInfo {
+  flight: string;
+  flightIata?: string;
+  airline?: Pick<AirlineProfile, 'icao' | 'iata' | 'name' | 'country'>;
+  from: SimAirport;
+  to: SimAirport;
+  std: number;
+  sta: number;
+  atd?: number; // actual off-block
+  eta: number; // estimated on-block
+  ata?: number;
+  takeoff: number;
+  landing: number;
+  progress: number; // 0..1 of distance
+  flownNm: number;
+  totalNm: number;
+  status: FlightStatus;
+  cruiseFt: number;
+  delayMin: number;
+}
+
+function legInfo(af: Airframe, leg: Leg, sim: number): DemoFlightInfo {
+  const totalNm = Math.max(1, distanceNm(leg.from.lat, leg.from.lon, leg.to.lat, leg.to.lon));
+  let flownNm = 0;
+  if (sim >= leg.tOn) flownNm = totalNm;
+  else if (sim > leg.tTakeoff && world) {
+    const s = world.state(af, sim);
+    flownNm = Math.max(0, Math.min(totalNm, totalNm - distanceNm(s.lat, s.lon, leg.to.lat, leg.to.lon)));
+  }
+  const phase = world?.state(af, sim).phase;
+  let status: FlightStatus;
+  if (sim >= leg.tOn) status = 'Arrived';
+  else if (sim < leg.tOff) status = leg.tOff - sim < 35 * 60_000 ? 'Boarding' : 'Scheduled';
+  else if (sim < leg.tTakeoff) status = 'Taxiing';
+  else if (sim >= leg.tLand) status = 'Landed';
+  else if (phase === 'approach') status = 'Approach';
+  else status = 'En route';
+  const info: DemoFlightInfo = {
+    flight: leg.flight,
+    from: leg.from,
+    to: leg.to,
+    std: leg.std,
+    sta: leg.sta,
+    eta: leg.tOn,
+    takeoff: leg.tTakeoff,
+    landing: leg.tLand,
+    progress: flownNm / totalNm,
+    flownNm,
+    totalNm,
+    status,
+    cruiseFt: leg.cruiseFt,
+    delayMin: Math.round((leg.tOn - leg.sta) / 60_000),
+  };
+  if (leg.flightIata) info.flightIata = leg.flightIata;
+  if (af.airline) info.airline = { icao: af.airline.icao, iata: af.airline.iata, name: af.airline.name, country: af.airline.country };
+  if (sim >= leg.tOff) info.atd = leg.tOff;
+  if (sim >= leg.tOn) info.ata = leg.tOn;
+  return info;
+}
+
+/** Simulated route and schedule for a demo aircraft. */
+export function demoFlight(id: string | null | undefined): DemoFlightInfo | undefined {
+  const af = id ? byId.get(id) : undefined;
+  if (!af || !world) return undefined;
+  const sim = demoNow();
+  // Shortly after arrival the aircraft still shows the flight it just completed.
+  const leg = sim < af.leg.tOff && af.prev && sim - af.prev.tOn < 15 * 60_000 ? af.prev : af.leg;
+  return legInfo(af, leg, sim);
+}
+
+export interface BoardRow {
+  id: string; // aircraft id ('~hex')
+  flight: string;
+  flightIata?: string;
+  airline?: string;
+  airlineIata?: string;
+  other: SimAirport;
+  scheduled: number;
+  estimated: number;
+  actual?: number;
+  status: FlightStatus;
+  type: string;
+  reg: string;
+  delayMin: number;
+}
+
+/** Simulated arrivals/departures board for an airport. */
+export function demoBoard(ident: string, opts: { pastMin?: number; aheadMin?: number } = {}): { arrivals: BoardRow[]; departures: BoardRow[] } | undefined {
+  if (!world) return undefined;
+  const sim = demoNow();
+  const past = (opts.pastMin ?? 60) * 60_000;
+  const ahead = (opts.aheadMin ?? 180) * 60_000;
+  const arrivals: BoardRow[] = [];
+  const departures: BoardRow[] = [];
+  const row = (af: Airframe, leg: Leg, dep: boolean): BoardRow => {
+    const info = legInfo(af, leg, sim);
+    const r: BoardRow = {
+      id: `~${af.hex}`,
+      flight: leg.flight,
+      other: dep ? leg.to : leg.from,
+      scheduled: dep ? leg.std : leg.sta,
+      estimated: dep ? leg.tOff : leg.tOn,
+      status: info.status,
+      type: af.type.code,
+      reg: af.reg,
+      delayMin: Math.round(((dep ? leg.tOff : leg.tOn) - (dep ? leg.std : leg.sta)) / 60_000),
+    };
+    if (leg.flightIata) r.flightIata = leg.flightIata;
+    if (af.airline) {
+      r.airline = af.airline.name;
+      r.airlineIata = af.airline.iata;
+    }
+    const act = dep ? info.atd : info.ata;
+    if (act !== undefined) r.actual = act;
+    return r;
+  };
+  for (const af of world.airframes) {
+    if (af.ga) continue;
+    for (const leg of af.prev ? [af.prev, af.leg] : [af.leg]) {
+      if (leg.from.ident === ident && leg.tOff > sim - past && leg.std < sim + ahead) departures.push(row(af, leg, true));
+      if (leg.to.ident === ident && leg.tOn > sim - past && leg.sta < sim + ahead) arrivals.push(row(af, leg, false));
+    }
+  }
+  arrivals.sort((a, b) => a.scheduled - b.scheduled);
+  departures.sort((a, b) => a.scheduled - b.scheduled);
+  return { arrivals, departures };
+}
+
+/** Simulated runway in use at an airport (landing direction). */
+export function demoRunwayInUse(ident: string): string | undefined {
+  return world?.airports.get(ident)?.inUse.ident;
+}
+
+/** Hourly simulated movements at an airport over the last `hours` and the next few. */
+export function demoMovementsByHour(ident: string, hours = 6): { t: number; arrivals: number; departures: number }[] | undefined {
+  const b = demoBoard(ident, { pastMin: hours * 60, aheadMin: 120 });
+  if (!b) return undefined;
+  const sim = demoNow();
+  const h0 = Math.floor(sim / 3_600_000) * 3_600_000 - (hours - 1) * 3_600_000;
+  const buckets = Array.from({ length: hours + 2 }, (_, i) => ({ t: h0 + i * 3_600_000, arrivals: 0, departures: 0 }));
+  const put = (t: number, k: 'arrivals' | 'departures') => {
+    const i = Math.floor((t - h0) / 3_600_000);
+    if (i >= 0 && i < buckets.length) buckets[i]![k]++;
+  };
+  for (const r of b.arrivals) put(r.actual ?? r.estimated, 'arrivals');
+  for (const r of b.departures) put(r.actual ?? r.estimated, 'departures');
+  return buckets;
+}
+
+/** Search simulated flights by flight number (ICAO or IATA), callsign or registration. */
+export function demoSearch(q: string, limit = 8): { id: string; label: string; sub: string }[] {
+  if (!world) return [];
+  const n = q.trim().toUpperCase().replace(/[\s-]/g, '');
+  if (n.length < 2) return [];
+  const out: { id: string; label: string; sub: string }[] = [];
+  for (const af of world.airframes) {
+    const leg = af.leg;
+    const hit = leg.flight === n || leg.flightIata === n || af.reg.replace(/-/g, '') === n || leg.flight.startsWith(n) || leg.flightIata?.startsWith(n);
+    if (!hit) continue;
+    out.push({
+      id: `~${af.hex}`,
+      label: leg.flightIata ? `${leg.flightIata} · ${leg.flight}` : leg.flight,
+      sub: `${leg.from.iata ?? leg.from.ident} → ${leg.to.iata ?? leg.to.ident} · ${af.type.code} · ${af.reg}`,
+    });
+    if (out.length >= limit) break;
+  }
+  return out;
+}
