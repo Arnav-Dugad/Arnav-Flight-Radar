@@ -11,6 +11,7 @@ import { EmptyState } from '@/components/ui/Feedback';
 import { Stat } from '@/components/ui/Data';
 import { GlassButton, Section } from '@/components/ui/Glass';
 import { Panel } from '@/components/ui/Sheet';
+import { useDemo } from '@/data/demo';
 import { compileFilter } from '@/lib/filters';
 import { fmtAltitude, fmtSpeed } from '@/lib/format';
 import { useTrafficVersion } from '@/lib/hooks';
@@ -34,6 +35,7 @@ export function AnalyticsPanel() {
   const [table, setTable] = useState(false);
   const version = useTrafficVersion();
   const meta = traffic.meta;
+  const demo = useDemo((d) => d.active);
 
   const population = useMemo(() => {
     let list = traffic.current();
@@ -99,9 +101,15 @@ export function AnalyticsPanel() {
             { value: 'filtered', label: 'Filtered' },
           ]}
         />
-        <p className="rounded-[12px] bg-[var(--line)] px-3 py-2 text-[11.5px] leading-relaxed text-fg-2">
-          <span className="font-semibold text-fg">Sample: {s.sample} aircraft.</span> {describe}
-        </p>
+        {demo ? (
+          <p className="rounded-[12px] border border-[rgba(167,139,250,0.4)] bg-[rgba(167,139,250,0.1)] px-3 py-2 text-[11.5px] leading-relaxed text-[#d8cdfd]">
+            <span className="font-semibold">Demo mode:</span> these figures describe {s.sample} simulated aircraft. They are not real traffic statistics.
+          </p>
+        ) : (
+          <p className="rounded-[12px] bg-[var(--line)] px-3 py-2 text-[11.5px] leading-relaxed text-fg-2">
+            <span className="font-semibold text-fg">Sample: {s.sample} aircraft.</span> {describe}
+          </p>
+        )}
 
         {s.sample === 0 ? (
           <EmptyState icon={<AnalyticsIcon />} title="No aircraft in this sample" body="Pan to a busier area or change the population." />

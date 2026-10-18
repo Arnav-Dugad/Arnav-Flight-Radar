@@ -10,6 +10,7 @@ import type { Aircraft, AirportIndexEntry, Country } from '@shared/types';
 import { AircraftGlyph, AirportIcon, GlobeIcon } from '@/components/icons';
 import { Kbd, Spinner } from '@/components/ui/Feedback';
 import { HUBS, airportByCode, loadAllAirports, loadCountries, loadMajorAirports } from '@/data/airports';
+import { useDemo } from '@/data/demo';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { fmtAltitude } from '@/lib/format';
@@ -71,7 +72,8 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
   const parsed = useMemo(() => classifyAircraftQuery(q, force), [q, force]);
   // Only identifier-like input triggers the worldwide lookup automatically: plain
   // words ("mumbai") would waste the shared upstream budget. Chips can force it.
-  const identifierLike = !!force || /[\d-]/.test(q) || parsed?.kind === 'hex';
+  const demo = useDemo((s) => s.active);
+  const identifierLike = !demo && (!!force || /[\d-]/.test(q) || parsed?.kind === 'hex');
   useEffect(() => {
     if (!parsed || q.trim().length < 3 || !identifierLike) {
       setRemote({ state: 'idle', list: [] });
@@ -306,7 +308,7 @@ function SearchDialog({ onClose }: { onClose: () => void }) {
           <Kbd className="max-md:hidden">Esc</Kbd>
         </div>
 
-        {parsed && q.trim().length >= 3 && (
+        {parsed && q.trim().length >= 3 && !demo && (
           <div className="flex items-center gap-1.5 border-b border-[var(--line)] px-5 py-2 text-[11.5px] text-fg-3">
             <span>Look up worldwide as</span>
             {(['callsign', 'registration', 'hex', 'sqk'] as const).map((k) => {

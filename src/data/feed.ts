@@ -36,6 +36,14 @@ export const useFeed = create<FeedState>()(() => ({ status: 'connecting', inFlig
 
 const MIN_GAP_MS = 3000;
 
+// Demo mode pauses live polling entirely so simulated and live data never mix.
+let feedPaused = false;
+let kickFeed: (() => void) | null = null;
+export function setFeedPaused(paused: boolean) {
+  feedPaused = paused;
+  if (!paused) kickFeed?.();
+}
+
 export function startFeed(map: MlMap): () => void {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let moveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -48,7 +56,8 @@ export function startFeed(map: MlMap): () => void {
   const syncTunables = () => {
     const s = getSettings();
     traffic.expectedIntervalMs = s.pollIntervalSec * 1000;
-    traffic.smooth = s.smoothMotion === 'interpolate' && s.motion !== 'off';
+    traffic.smooth = s.smoothMotion !== 'off' && s.motion !== 'off';
+    traffic.curved = s.smoothMotion === 'curved';
     traffic.trailMs = s.trailMinutes * 60_000;
     traffic.staleSec = s.staleAfterSec;
     traffic.lostSec = s.lostAfterSec;
@@ -90,7 +99,7 @@ export function startFeed(map: MlMap): () => void {
   }
 
   async function tick() {
-    if (stopped) return;
+    if (stopped || feedPaused) return;
     if (document.hidden) {
       useFeed.setState({ status: 'paused', message: 'Paused while this tab is in the background.' });
       return; // resumed by visibilitychange
@@ -151,7 +160,7 @@ export function startFeed(map: MlMap): () => void {
 
   const onMoveEnd = () => {
     // Ambient globe rotation must never spend upstream requests.
-    if (cameraFlags.autoRotating) return;
+    if (cameraFlags.autoRotating || feedPaused) return;
     clearTimeout(moveTimer);
     moveTimer = setTimeout(() => {
       const key = regionKey(desiredRegion());
@@ -161,17 +170,23 @@ export function startFeed(map: MlMap): () => void {
   map.on('moveend', onMoveEnd);
 
   const onVisibility = () => {
-    if (!document.hidden) {
+    if (!document.hidden && !feedPaused) {
       useFeed.setState({ status: traffic.meta ? 'live' : 'connecting', message: undefined });
       schedule(Date.now() - lastFetchAt > 5000 ? 0 : 5000);
     }
   };
   document.addEventListener('visibilitychange', onVisibility);
 
+  kickFeed = () => {
+    lastKey = '';
+    useFeed.setState({ status: 'connecting', message: undefined, errorCode: undefined });
+    schedule(0);
+  };
   schedule(0);
 
   return () => {
     stopped = true;
+    kickFeed = null;
     clearTimeout(timer);
     clearTimeout(moveTimer);
     abort?.abort();

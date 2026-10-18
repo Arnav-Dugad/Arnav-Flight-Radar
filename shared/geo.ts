@@ -56,6 +56,22 @@ export function destination(lat: number, lon: number, bearing: number, distNm: n
   return [p2 * R2D, normalizeLon(l2 * R2D)];
 }
 
+/** Point at fraction f (0–1) along the great circle from point 1 to point 2. */
+export function intermediatePoint(lat1: number, lon1: number, lat2: number, lon2: number, f: number): [number, number] {
+  const p1 = lat1 * D2R;
+  const l1 = lon1 * D2R;
+  const p2 = lat2 * D2R;
+  const l2 = lon2 * D2R;
+  const d = distanceNm(lat1, lon1, lat2, lon2) / EARTH_RADIUS_NM;
+  if (d < 1e-9) return [lat1, lon1];
+  const a = Math.sin((1 - f) * d) / Math.sin(d);
+  const b = Math.sin(f * d) / Math.sin(d);
+  const x = a * Math.cos(p1) * Math.cos(l1) + b * Math.cos(p2) * Math.cos(l2);
+  const y = a * Math.cos(p1) * Math.sin(l1) + b * Math.cos(p2) * Math.sin(l2);
+  const z = a * Math.sin(p1) + b * Math.sin(p2);
+  return [Math.atan2(z, Math.sqrt(x * x + y * y)) * R2D, normalizeLon(Math.atan2(y, x) * R2D)];
+}
+
 /** Linear interpolation between two positions (fine for the short spans between reports). */
 export function lerpPosition(a: [number, number], b: [number, number], t: number): [number, number] {
   let dLon = b[1] - a[1];

@@ -1,5 +1,6 @@
 import { motion } from 'motion/react';
 import { AnimatedNumber } from '@/components/ui/AnimatedNumber';
+import { useDemo } from '@/data/demo';
 import { useFeed } from '@/data/feed';
 import { cn } from '@/lib/cn';
 import { fmtAge } from '@/lib/format';
@@ -21,32 +22,37 @@ export function LiveStatus({ compact = false }: { compact?: boolean }) {
   const status = useFeed((s) => s.status);
   const message = useFeed((s) => s.message);
   const replay = useUI((s) => s.replay.active);
+  const demo = useDemo((s) => s.active);
   const openPanel = useUI((s) => s.openPanel);
   const meta = traffic.meta;
   const count = traffic.current().length;
   const age = meta ? traffic.serverNow(now) - meta.fetchedAt : undefined;
-  const tone = replay ? { dot: 'bg-[#a78bfa] text-[#a78bfa]', label: 'Replay' } : TONE[status];
+  const tone = demo
+    ? { dot: 'bg-[#a78bfa] text-[#a78bfa]', label: 'Demo' }
+    : replay
+      ? { dot: 'bg-[#a78bfa] text-[#a78bfa]', label: 'Replay' }
+      : TONE[status];
 
   return (
     <motion.button
       type="button"
       onClick={() => openPanel('data')}
       whileTap={{ scale: 0.97 }}
-      title={message ?? 'Live data status — open data & coverage'}
-      aria-label={`${tone.label}. ${count} aircraft in the queried area. ${message ?? ''}`}
+      title={demo ? 'Demo mode: simulated aircraft, not real flights' : (message ?? 'Live data status — open data & coverage')}
+      aria-label={`${tone.label}. ${count} ${demo ? 'simulated aircraft' : 'aircraft in the queried area'}. ${message ?? ''}`}
       className={cn(
         'glass-2 flex h-9 items-center gap-2 rounded-full pl-3 pr-3.5 text-[12px] font-medium text-fg-2 transition-colors hover:text-fg',
         compact && 'h-8 pl-2.5 pr-3',
       )}
     >
-      <span className={cn('size-2 rounded-full', tone.dot, (status === 'live' || replay) && 'pulse-dot')} />
+      <span className={cn('size-2 rounded-full', tone.dot, (status === 'live' || replay || demo) && 'pulse-dot')} />
       <span className="font-semibold uppercase tracking-[0.12em] text-fg">{tone.label}</span>
       {!compact && <span className="h-3.5 w-px bg-[var(--line-strong)]" />}
       <span className="tnum text-fg">
         <AnimatedNumber value={count} />
       </span>
-      {!compact && <span>aircraft</span>}
-      {age !== undefined && !compact && <span className="tnum text-fg-3">· {fmtAge(age)}</span>}
+      {!compact && <span>{demo ? 'simulated' : 'aircraft'}</span>}
+      {age !== undefined && !compact && !demo && <span className="tnum text-fg-3">· {fmtAge(age)}</span>}
     </motion.button>
   );
 }

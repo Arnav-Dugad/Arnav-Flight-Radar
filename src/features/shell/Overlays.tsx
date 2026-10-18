@@ -13,6 +13,7 @@ import { useTour } from '@/map/tour';
 import { useSettings } from '@/state/settings';
 import { traffic } from '@/state/traffic';
 import { useUI } from '@/state/ui';
+import { startDemo, stopDemo, useDemo } from '@/data/demo';
 import { useFeed } from '@/data/feed';
 import { LiveStatus } from './LiveStatus';
 
@@ -21,7 +22,6 @@ export function FollowBanner() {
   const following = useUI((s) => s.following);
   const paused = useUI((s) => s.followPaused);
   const id = useUI((s) => s.selectedId);
-  const mobile = useIsMobile();
   const t = useSelectedTrack();
   const label = t?.ac.callsign ?? t?.ac.registration ?? id?.toUpperCase();
   const lost = t ? traffic.stateOf(t) === 'lost' : true;
@@ -32,7 +32,7 @@ export function FollowBanner() {
           initial={{ opacity: 0, y: -12, scale: 0.96 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: -12, scale: 0.96 }}
-          className={`glass pointer-events-auto absolute left-1/2 z-30 flex -translate-x-1/2 items-center gap-2.5 rounded-full py-1.5 pl-3.5 pr-1.5 ${mobile ? 'top-[66px]' : 'top-[84px]'}`}
+          className="glass pointer-events-auto flex items-center gap-2.5 rounded-full py-1.5 pl-3.5 pr-1.5"
           role="status"
         >
           <FollowIcon size={16} className={paused ? 'text-fg-3' : 'text-[var(--color-amber)]'} />
@@ -222,15 +222,15 @@ export function TourBadge() {
 /** Honest notices: provider outage/refusal, or nothing reported in the live area. */
 export function CoverageNotice() {
   useTrafficVersion();
-  const mobile = useIsMobile();
   const openPanel = useUI((s) => s.openPanel);
   const following = useUI((s) => s.following);
   const status = useFeed((s) => s.status);
   const message = useFeed((s) => s.message);
   const code = useFeed((s) => s.errorCode);
+  const demo = useDemo((s) => s.active);
   const meta = traffic.meta;
-  const outage = status === 'error' || (status === 'degraded' && !!code);
-  const empty = !outage && !!meta && meta.count === 0 && !following;
+  const outage = !demo && (status === 'error' || (status === 'degraded' && !!code));
+  const empty = !demo && !outage && !!meta && meta.count === 0 && !following;
   const show = outage || empty;
   return (
     <AnimatePresence>
@@ -241,7 +241,7 @@ export function CoverageNotice() {
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -10 }}
           role={outage ? 'alert' : 'status'}
-          className={`glass pointer-events-auto absolute left-1/2 z-20 w-[min(460px,calc(100vw-24px))] -translate-x-1/2 rounded-[18px] px-4 py-3 ${mobile ? 'top-[70px]' : 'top-[84px]'}`}
+          className="glass pointer-events-auto w-[min(460px,calc(100vw-24px))] rounded-[18px] px-4 py-3"
         >
           {outage ? (
             <>
@@ -254,6 +254,12 @@ export function CoverageNotice() {
                   Provider status
                 </button>
               </p>
+              <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                <GlassButton size="sm" onClick={() => getMap() && void startDemo(getMap()!)}>
+                  Explore with simulated demo traffic
+                </GlassButton>
+                <span className="text-[11px] text-fg-3">Clearly labelled; never mixed with live data.</span>
+              </div>
             </>
           ) : (
             <>
@@ -269,5 +275,41 @@ export function CoverageNotice() {
         </motion.div>
       )}
     </AnimatePresence>
+  );
+}
+
+/** Persistent, unmissable label while demo mode is on. */
+export function DemoBanner() {
+  const demo = useDemo((s) => s.active);
+  return (
+    <AnimatePresence>
+      {demo && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -10 }}
+          role="status"
+          className="pointer-events-auto flex items-center gap-3 rounded-full border border-[rgba(167,139,250,0.45)] bg-[rgba(76,52,160,0.82)] py-1.5 pl-4 pr-1.5 text-[12.5px] text-white shadow-xl backdrop-blur-md"
+        >
+          <span className="rounded-full bg-white/15 px-2 py-0.5 text-[10.5px] font-bold uppercase tracking-[0.14em]">Demo</span>
+          <span className="font-medium max-[420px]:hidden">Simulated aircraft — not real flights</span>
+          <button type="button" onClick={stopDemo} className="rounded-full bg-white px-3 py-1 text-[12px] font-semibold text-[#2c1d6b] hover:bg-white/90">
+            Exit demo
+          </button>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+/** Top-centre stack so banners never overlap each other. */
+export function TopNotices() {
+  const mobile = useIsMobile();
+  return (
+    <div className={`pointer-events-none absolute left-1/2 z-30 flex -translate-x-1/2 flex-col items-center gap-2 ${mobile ? 'top-[68px]' : 'top-[84px]'}`}>
+      <DemoBanner />
+      <FollowBanner />
+      <CoverageNotice />
+    </div>
   );
 }

@@ -13,6 +13,7 @@ import {
   InspectorIcon,
   LearnIcon,
   MeasureIcon,
+  PlaneIcon,
   PresentationIcon,
   SpotterIcon,
   TimelineIcon,
@@ -20,9 +21,10 @@ import {
 import { GlassButton, Section } from '@/components/ui/Glass';
 import { Panel } from '@/components/ui/Sheet';
 import { HUBS } from '@/data/airports';
+import { startDemo, stopDemo, useDemo } from '@/data/demo';
 import { fmtAltitude, fmtSpeed } from '@/lib/format';
 import { useTrafficVersion } from '@/lib/hooks';
-import { focusAircraft, setProjection, startFollow } from '@/map/controller';
+import { focusAircraft, getMap, setProjection, startFollow } from '@/map/controller';
 import { startTour, stopTour, useTour } from '@/map/tour';
 import { useSettings } from '@/state/settings';
 import { traffic } from '@/state/traffic';
@@ -41,6 +43,7 @@ export function DiscoverPanel() {
   const open = useUI((s) => s.panel === 'discover');
   const openPanel = useUI((s) => s.openPanel);
   const ui = useUI();
+  const demo = useDemo((d) => d.active);
   const units = useSettings((s) => s.units);
   useTrafficVersion();
   const stats = computeStats(traffic.current());
@@ -78,6 +81,17 @@ export function DiscoverPanel() {
       run: () => openPanel('inspector'),
     },
     { key: 'data', title: 'Data & coverage', body: 'Provider health, freshness and queried areas.', icon: <DataIcon />, run: () => openPanel('data') },
+    {
+      key: 'demo',
+      title: demo ? 'Exit demo mode' : 'Demo mode',
+      body: demo ? 'Return to live data.' : 'Clearly labelled simulated traffic for exploring the interface.',
+      icon: <PlaneIcon />,
+      run: () => {
+        if (demo) stopDemo();
+        else if (getMap()) void startDemo(getMap()!);
+        openPanel(null);
+      },
+    },
     {
       key: 'measure',
       title: 'Measure',

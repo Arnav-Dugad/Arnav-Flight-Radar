@@ -12,7 +12,8 @@
 // A field that the provider did not report is OMITTED (undefined) — never
 // zero-filled and never guessed. The UI renders it as "Not available".
 
-export type ProviderId = 'adsbfi';
+/** 'demo' is explicitly simulated traffic, generated in the browser and never mixed with live data. */
+export type ProviderId = 'adsbfi' | 'demo';
 
 export type PositionSource = 'adsb' | 'mlat' | 'tisb' | 'adsr' | 'adsc' | 'modes' | 'other';
 
